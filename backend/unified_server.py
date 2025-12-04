@@ -112,6 +112,7 @@ GOOGLE_REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI", "http://localhost:5000/go
 GOOGLE_SCOPES = ["https://www.googleapis.com/auth/calendar.events"]
 
 SOCKET_SERVER_URL = os.getenv("SOCKET_SERVER_URL", "http://localhost:4000")
+FRONTEND_BASE_URL = os.getenv("FRONTEND_BASE_URL", "http://localhost:3000")
 
 
 def _build_google_oauth_flow(state: str | None = None):
@@ -1809,7 +1810,7 @@ def forgot_password():
             return jsonify({"status": "error", "message": "Failed to generate reset token"}), 500
 
         # build reset link -> point to your create_new_password page
-        reset_link = f"http://localhost:3000/create_new_password.html?token={token}"
+        reset_link = f"{FRONTEND_BASE_URL.rstrip('/')}/create_new_password.html?token={token}"
 
         # Prepare email content
         subject = "Reset Your Password"
