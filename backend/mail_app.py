@@ -52,7 +52,17 @@ def send_email_brevo(subject, recipients, body, html=None):
         "to": to_formatted,
         "subject": subject,
         "textContent": body,
+        "headers": {
+            "X-Mailin-custom": "disable-tracking"
+        },
+        "params": {
+            "DISABLE_TRACKING": True
+        }
     }
+    # Disable click tracking to avoid broken redirect links
+    payload["trackClicks"] = False
+    payload["trackOpens"] = False
+    
     if html:
         payload["htmlContent"] = html
     
