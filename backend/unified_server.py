@@ -1816,8 +1816,8 @@ def forgot_password():
         if not token:
             return jsonify({"status": "error", "message": "Failed to generate reset token"}), 500
 
-        # build reset link -> point to your create_new_password page
-        reset_link = f"http://localhost:3000/create_new_password.html?token={token}"
+        # build reset link -> point to deployed frontend
+        reset_link = f"{FRONTEND_BASE_URL}/create_new_password.html?token={token}"
 
         # Prepare email content
         subject = "Reset Your Password"
