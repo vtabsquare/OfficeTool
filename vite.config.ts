@@ -18,7 +18,6 @@ export default defineConfig(({ mode }) => {
           input: {
             main: path.resolve(__dirname, 'index.html'),
             login: path.resolve(__dirname, 'login.html'),
-            forgot_password: path.resolve(__dirname, 'forgot_password.html'),
             create_new_password: path.resolve(__dirname, 'create_new_password.html'),
           },
         },
