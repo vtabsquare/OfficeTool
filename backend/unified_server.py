@@ -1779,19 +1779,31 @@ def login():
 
 @app.route("/api/forgot-password", methods=["POST"])
 def forgot_password():
+    """Password reset request handler with debug logging."""
+    import sys
+    print("[FORGOT-PWD] Handler started", flush=True)
+    
     data = request.get_json(silent=True) or {}
-    email = data.get("email")
+    user_email = data.get("email")
 
-    if not email:
+    if not user_email:
+        print("[FORGOT-PWD] No email provided", flush=True)
         return jsonify({"status": "error", "message": "Email required"}), 400
 
+    print(f"[FORGOT-PWD] Processing request for: {user_email}", flush=True)
+
     try:
+        # Step 1: Get access token (with timeout logging)
+        print("[FORGOT-PWD] Step 1: Getting access token...", flush=True)
         access_token = get_access_token()
         if not access_token:
+            print("[FORGOT-PWD] Failed to get access token", flush=True)
             return jsonify({"status": "error", "message": "Failed to obtain access token"}), 500
+        print("[FORGOT-PWD] Access token obtained", flush=True)
 
-        # Lookup login table by username/email
-        url = f"{BASE_URL}/crc6f_hr_login_detailses?$filter=crc6f_username eq '{email}'"
+        # Step 2: Lookup user in Dataverse
+        print("[FORGOT-PWD] Step 2: Looking up user in Dataverse...", flush=True)
+        url = f"{BASE_URL}/crc6f_hr_login_detailses?$filter=crc6f_username eq '{user_email}'"
         headers = {
             "Authorization": f"Bearer {access_token}",
             "Content-Type": "application/json",
@@ -1800,28 +1812,35 @@ def forgot_password():
             "Accept": "application/json"
         }
 
-        res = requests.get(url, headers=headers, timeout=15)
+        res = requests.get(url, headers=headers, timeout=10)
         res.raise_for_status()
         result = res.json()
+        print(f"[FORGOT-PWD] Dataverse lookup complete, found {len(result.get('value', []))} records", flush=True)
 
         if not result.get("value"):
+            print(f"[FORGOT-PWD] Email not found: {user_email}", flush=True)
             return jsonify({"status": "error", "message": "Email not found"}), 404
 
-        # If there are multiple, take first
         record = result["value"][0]
         record_id = record.get("crc6f_hr_login_detailsid")
+        print(f"[FORGOT-PWD] Found user record: {record_id}", flush=True)
 
-        # generate token (your function)
-        token = generate_reset_token(email)
+        # Step 3: Generate reset token
+        print("[FORGOT-PWD] Step 3: Generating reset token...", flush=True)
+        token = generate_reset_token(user_email)
         if not token:
+            print("[FORGOT-PWD] Failed to generate token", flush=True)
             return jsonify({"status": "error", "message": "Failed to generate reset token"}), 500
+        print("[FORGOT-PWD] Token generated", flush=True)
 
-        # build reset link -> point to deployed frontend
+        # Step 4: Build reset link
         reset_link = f"{FRONTEND_BASE_URL}/create_new_password.html?token={token}"
+        print(f"[FORGOT-PWD] Reset link: {reset_link}", flush=True)
 
-        # Prepare email content
+        # Step 5: Send email
+        print("[FORGOT-PWD] Step 5: Sending email...", flush=True)
         subject = "Reset Your Password"
-        text_body = f"Hello,\n\nClick the link below to reset your password (28 minutes expiry):\n\n{reset_link}\n\nIf you did not request this, ignore this message."
+        text_body = f"Hello,\n\nClick the link below to reset your password (expires in 28 minutes):\n\n{reset_link}\n\nIf you did not request this, ignore this message."
         html_body = (
             f"<p>Hello,</p>"
             f"<p>Click the link below to reset your password (link expires soon):</p>"
@@ -1829,24 +1848,30 @@ def forgot_password():
             f"<p>If you did not request this, ignore this message.</p>"
         )
 
-        # Use your send_email signature: subject, recipients (list), body, html
         sent = False
         try:
-            sent = send_email(subject=subject, recipients=[email], body=text_body, html=html_body)
-        except Exception:
-            # don't leak internal stack to client; log server-side
+            sent = send_email(subject=subject, recipients=[user_email], body=text_body, html=html_body)
+            print(f"[FORGOT-PWD] send_email returned: {sent}", flush=True)
+        except Exception as mail_err:
+            print(f"[FORGOT-PWD] Email send exception: {mail_err}", flush=True)
             traceback.print_exc()
 
         if not sent:
+            print("[FORGOT-PWD] Email not sent", flush=True)
             return jsonify({"status": "error", "message": "Failed to send reset email"}), 500
 
-        # optional: store token/expiry in your Dataverse record if needed (not shown)
+        print("[FORGOT-PWD] Success - email sent", flush=True)
         return jsonify({"status": "success", "message": "Reset email sent"}), 200
 
+    except requests.Timeout:
+        print("[FORGOT-PWD] Request timeout (Dataverse)", flush=True)
+        return jsonify({"status": "error", "message": "Request timeout"}), 504
     except requests.HTTPError as e:
+        print(f"[FORGOT-PWD] HTTP error: {e}", flush=True)
         traceback.print_exc()
         return jsonify({"status": "error", "message": "Upstream API error", "detail": str(e)}), 502
-    except Exception:
+    except Exception as e:
+        print(f"[FORGOT-PWD] Unexpected error: {e}", flush=True)
         traceback.print_exc()
         return jsonify({"status": "error", "message": "Internal server error"}), 500
 
