@@ -601,28 +601,28 @@ body.dark-theme #global-incoming-call .incoming-call-btn-decline {
   filter: drop-shadow(0 2px 6px rgba(79, 70, 229, 0.2));
 }
 
-/* Active State - Subtle Neon Accent */
+/* Active State - Subtle Neon Accent (light mode tuned brighter) */
 .nav-link.active {
-  background: rgba(129, 140, 248, 0.12);
+  background: rgba(129, 140, 248, 0.08);
   backdrop-filter: blur(12px);
   color: var(--primary-color);
-  border-color: rgba(129, 140, 248, 0.25);
+  border-color: rgba(129, 140, 248, 0.18);
   transform: translateX(3px);
 
   /* Soft Glow */
   box-shadow:
-    0 4px 12px rgba(129, 140, 248, 0.15),
+    0 4px 12px rgba(129, 140, 248, 0.12),
     inset 0 1px 0 rgba(255, 255, 255, 0.2),
     inset -3px 0 0 var(--primary-color);
 }
 
 .nav-link.active::before {
-  background: rgba(129, 140, 248, 0.08);
+  background: rgba(129, 140, 248, 0.06);
 }
 
 .nav-link.active i {
   color: var(--primary-color);
-  filter: drop-shadow(0 2px 8px rgba(79, 70, 229, 0.3));
+  filter: drop-shadow(0 2px 8px rgba(79, 70, 229, 0.25));
   transform: scale(1.05);
 }
 
