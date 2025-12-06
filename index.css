@@ -398,7 +398,20 @@ body.dark-theme #global-incoming-call .incoming-call-btn-decline {
   filter: drop-shadow(0 2px 6px rgba(79, 70, 229, 0.25));
 }
 
-#app-container.sidebar-hidden .nav-link.active {
+body:not(.dark-theme) #app-container.sidebar-hidden .nav-link.active {
+  background: rgba(129, 140, 248, 0.08);
+  border: 1px solid rgba(129, 140, 248, 0.2);
+  box-shadow: 0 6px 18px rgba(148, 163, 184, 0.4);
+  transform: none;
+}
+
+body:not(.dark-theme) #app-container.sidebar-hidden .nav-link.active i {
+  color: var(--primary-color);
+  transform: scale(1.05);
+  filter: drop-shadow(0 2px 6px rgba(79, 70, 229, 0.25));
+}
+
+body.dark-theme #app-container.sidebar-hidden .nav-link.active {
   background:
     radial-gradient(circle at 35% 30%, rgba(99, 102, 241, 0.55), transparent 60%),
     rgba(15, 23, 42, 0.65);
@@ -409,7 +422,7 @@ body.dark-theme #global-incoming-call .incoming-call-btn-decline {
   transform: none;
 }
 
-#app-container.sidebar-hidden .nav-link.active i {
+body.dark-theme #app-container.sidebar-hidden .nav-link.active i {
   color: var(--primary-color);
   transform: scale(1.08);
   filter: drop-shadow(0 4px 10px rgba(79, 70, 229, 0.4));
