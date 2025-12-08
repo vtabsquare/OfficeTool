@@ -2,16 +2,18 @@ import { state } from '../state.js';
 
 // Check if current user is admin (EMP001 or bala.t@vtab.com)
 const isAdminUser = () => {
-    const empId = String(state.user?.id || '').trim().toUpperCase();
-    const email = String(state.user?.email || '').trim().toLowerCase();
+    const user = state.user || {};
+    const empId = String(user.id || '').trim().toUpperCase();
+    const email = String(user.email || '').trim().toLowerCase();
     return empId === 'EMP001' || email === 'bala.t@vtab.com';
 };
 
 // Check if current user is L3 level (HR/Admin with onboarding access)
 const isL3User = () => {
-    const designation = String(state.user?.designation || '').trim().toLowerCase();
-    const empId = String(state.user?.id || '').trim().toUpperCase();
-    const email = String(state.user?.email || '').trim().toLowerCase();
+    const user = state.user || {};
+    const designation = String(user.designation || '').trim().toLowerCase();
+    const empId = String(user.id || '').trim().toUpperCase();
+    const email = String(user.email || '').trim().toLowerCase();
     // L3 users: Admin, HR Manager, or specific employee IDs
     return isAdminUser() || designation.includes('hr') || designation.includes('manager') || empId === 'EMP001' || email === 'bala.t@vtab.com';
 };
