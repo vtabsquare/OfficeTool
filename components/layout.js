@@ -141,6 +141,7 @@ export const getSidebarHTML = () => {
 
     </ul>
 `;
+};
 
 const getGreeting = () => {
     const hour = new Date().getHours();
