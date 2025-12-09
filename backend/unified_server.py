@@ -10355,6 +10355,106 @@ def update_comp_off(employee_id):
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
+# ================== AI ASSISTANT ==================
+from ai_gemini import ask_gemini
+from ai_dataverse_service import build_ai_context
+
+@app.route("/api/ai/query", methods=["POST"])
+def ai_query():
+    """
+    AI Assistant endpoint - answers questions using Gemini + Dataverse data.
+    
+    Request body:
+        - question: str (required)
+        - scope: str (optional) - 'general', 'attendance', 'leave', 'employee', etc.
+        - history: list (optional) - previous chat messages
+        - currentUser: dict (optional) - user info
+    """
+    try:
+        data = request.get_json(force=True)
+        question = data.get("question", "").strip()
+        
+        if not question:
+            return jsonify({
+                "success": False,
+                "error": "Question is required"
+            }), 400
+        
+        # Extract user info
+        current_user = data.get("currentUser", {})
+        user_meta = {
+            "name": current_user.get("name", "User"),
+            "email": current_user.get("email", ""),
+            "employee_id": current_user.get("employee_id") or current_user.get("id", ""),
+            "designation": current_user.get("designation", ""),
+            "is_admin": current_user.get("is_admin", False),
+        }
+        
+        # Determine scope from question keywords
+        scope = data.get("scope", "general")
+        question_lower = question.lower()
+        
+        if any(kw in question_lower for kw in ["attendance", "check-in", "checkin", "check-out", "checkout", "hours", "time"]):
+            scope = "attendance"
+        elif any(kw in question_lower for kw in ["leave", "vacation", "sick", "holiday", "pto", "time off"]):
+            scope = "leave"
+        elif any(kw in question_lower for kw in ["employee", "staff", "team", "people", "department"]):
+            scope = "employee"
+        elif any(kw in question_lower for kw in ["asset", "laptop", "equipment", "device"]):
+            scope = "assets"
+        elif any(kw in question_lower for kw in ["project", "client"]):
+            scope = "projects"
+        elif any(kw in question_lower for kw in ["intern", "trainee"]):
+            scope = "interns"
+        
+        # Get Dataverse token and build context
+        token = get_access_token()
+        data_context = build_ai_context(token, user_meta, scope)
+        
+        # Get chat history
+        history = data.get("history", [])
+        
+        # Call Gemini
+        result = ask_gemini(
+            question=question,
+            data_context=data_context,
+            user_meta=user_meta,
+            history=history
+        )
+        
+        if result.get("success"):
+            return jsonify({
+                "success": True,
+                "answer": result.get("answer"),
+                "scope": scope,
+                "timestamp": data_context.get("timestamp")
+            })
+        else:
+            return jsonify({
+                "success": False,
+                "error": result.get("error", "Failed to get AI response")
+            }), 500
+            
+    except Exception as e:
+        print(f"[AI] Error in ai_query: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+
+@app.route("/api/ai/health", methods=["GET"])
+def ai_health():
+    """Check if AI service is available."""
+    return jsonify({
+        "status": "ok",
+        "service": "AI Assistant",
+        "model": "Gemini 2.0 Flash"
+    })
+
+
 # ================== MAIN ==================
 if __name__ == '__main__':
     print("\n" + "=" * 80)

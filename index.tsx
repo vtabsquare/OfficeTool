@@ -10,6 +10,7 @@ import {
   handleRequestCompOff,
 } from "./pages/comp_off.js";
 import { connectSocket } from './src/socket.js';
+import { initAiAssistant as setupAiAssistant } from './components/AiAssistant.js';
 
 // --- EVENT HANDLERS ---
 
@@ -255,6 +256,9 @@ const init = async () => {
     document.getElementById('header')!.innerHTML = getHeaderHTML(state.user, state.timer);
 
     initTheme();
+
+    // Initialize AI Assistant (global chatbot)
+    setupAiAssistant();
 
     setupRealtimeCallClient();
 
