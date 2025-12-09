@@ -127,29 +127,33 @@ function setupAiEvents() {
     const input = document.getElementById('ai-input');
     const sendBtn = document.getElementById('ai-send');
     
-    closeBtn?.addEventListener('click', toggleAiPanel);
+    if (closeBtn) closeBtn.addEventListener('click', toggleAiPanel);
     
-    input?.addEventListener('input', () => {
-        sendBtn.disabled = !input.value.trim();
-    });
+    if (input) {
+        input.addEventListener('input', () => {
+            if (sendBtn) sendBtn.disabled = !input.value.trim();
+        });
+        
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey && input.value.trim()) {
+                e.preventDefault();
+                sendMessage(input.value.trim());
+            }
+        });
+    }
     
-    input?.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' && !e.shiftKey && input.value.trim()) {
-            e.preventDefault();
-            sendMessage(input.value.trim());
-        }
-    });
-    
-    sendBtn?.addEventListener('click', () => {
-        if (input?.value.trim()) {
-            sendMessage(input.value.trim());
-        }
-    });
+    if (sendBtn) {
+        sendBtn.addEventListener('click', () => {
+            if (input && input.value.trim()) {
+                sendMessage(input.value.trim());
+            }
+        });
+    }
     
     // Suggestion clicks
     document.querySelectorAll('.ai-suggestion').forEach(btn => {
         btn.addEventListener('click', () => {
-            sendMessage(btn.dataset.question);
+            sendMessage(btn.dataset.question || '');
         });
     });
 }
@@ -161,7 +165,7 @@ async function sendMessage(question) {
     const messagesContainer = document.getElementById('ai-messages');
     
     // Clear welcome if first message
-    const welcome = messagesContainer.querySelector('.ai-welcome');
+    const welcome = messagesContainer?.querySelector('.ai-welcome');
     if (welcome) welcome.remove();
     
     // Add user message
@@ -171,7 +175,8 @@ async function sendMessage(question) {
     // Clear input
     if (input) {
         input.value = '';
-        document.getElementById('ai-send').disabled = true;
+        const sendBtn = document.getElementById('ai-send');
+        if (sendBtn) sendBtn.disabled = true;
     }
     
     // Show loading
@@ -211,6 +216,8 @@ async function sendMessage(question) {
 
 function appendMessage(role, text) {
     const container = document.getElementById('ai-messages');
+    if (!container) return;
+    
     const msgDiv = document.createElement('div');
     msgDiv.className = `ai-message ai-message-${role}`;
     
@@ -241,6 +248,8 @@ function formatAiText(text) {
 
 function appendLoading() {
     const container = document.getElementById('ai-messages');
+    if (!container) return '';
+    
     const id = 'loading-' + Date.now();
     const loadingDiv = document.createElement('div');
     loadingDiv.id = id;
@@ -265,7 +274,8 @@ function appendLoading() {
 }
 
 function removeLoading(id) {
-    document.getElementById(id)?.remove();
+    const el = document.getElementById(id);
+    if (el) el.remove();
 }
 
 function addAiStyles() {

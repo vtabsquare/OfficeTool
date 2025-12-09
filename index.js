@@ -20,6 +20,7 @@ import { renderAssetsPage, fetchAssets } from './pages/assets.js'; // adjust pat
 import { handleInboxRejectLeave, handleAttendanceRejectReport, handleCompOffReject, handleTimesheetReject } from './pages/shared.js';
 import { updateNotificationBadge, handleNotificationBellClick, startNotificationPolling } from './features/notificationApi.js';
 import { connectSocket } from './src/socket.js';
+import { initAiAssistant } from './components/AiAssistant.js';
 
 const API_BASE_URL =
   (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_BASE_URL)
@@ -443,6 +444,9 @@ const init = async () => {
   }
 
   initTheme();
+
+  // Initialize AI Assistant (global chatbot)
+  initAiAssistant();
 
   setupRealtimeCallClient();
 

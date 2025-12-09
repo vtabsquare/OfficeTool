@@ -10,7 +10,7 @@ import {
   handleRequestCompOff,
 } from "./pages/comp_off.js";
 import { connectSocket } from './src/socket.js';
-import { initAiAssistant as setupAiAssistant } from './components/AiAssistant.js';
+import { initAiAssistant as setupAiAssistant } from './components/AiAssistant';
 
 // --- EVENT HANDLERS ---
 
