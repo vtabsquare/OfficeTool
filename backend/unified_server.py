@@ -10356,7 +10356,7 @@ def update_comp_off(employee_id):
 
 
 # ================== AI ASSISTANT ==================
-from ai_gemini import ask_gemini
+from ai_hf import ask_hf
 from ai_dataverse_service import build_ai_context
 
 @app.route("/api/ai/query", methods=["POST"])
@@ -10415,7 +10415,7 @@ def ai_query():
         history = data.get("history", [])
         
         # Call Gemini
-        result = ask_gemini(
+        result = ask_hf(
             question=question,
             data_context=data_context,
             user_meta=user_meta,
@@ -10451,7 +10451,8 @@ def ai_health():
     return jsonify({
         "status": "ok",
         "service": "AI Assistant",
-        "model": "Gemini 2.0 Flash"
+        "model": "Hugging Face Inference",
+        "backend_model_id": os.getenv("HF_MODEL_ID", "mistralai/Mistral-7B-Instruct-v0.2")
     })
 
 
