@@ -2219,42 +2219,35 @@ export const renderMeetPage = async () => {
         body.dark-theme .meet-employee-card p { color: #e2e8f0; }
 
         /* --- Call Modal --- */
-        /* Keep the participant panel anchored near the call area without full-page blur */
+        /* Globally centered overlay with semi-transparent backdrop */
         .meet-call-modal {
             position: fixed;
             inset: 0;
-            padding: 16px;
             display: flex;
             align-items: center;
             justify-content: center;
             z-index: 9999;
-            background: transparent;
-            backdrop-filter: none;
-            -webkit-backdrop-filter: none;
+            background: rgba(15, 23, 42, 0.6);
+            backdrop-filter: blur(4px);
+            -webkit-backdrop-filter: blur(4px);
         }
         .meet-call-modal.hidden { display: none; }
         .meet-call-modal-card {
-            width: min(380px, 92vw);
+            position: relative;
+            width: min(400px, 90vw);
             background: linear-gradient(160deg, #0f172a, #111827);
             border-radius: 16px;
-            padding: 18px 18px 14px;
-            box-shadow: 0 18px 48px rgba(0, 0, 0, 0.45);
-            max-height: 68vh;
+            padding: 20px 20px 16px;
+            box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
+            max-height: 72vh;
             overflow-y: auto;
             border: 1px solid rgba(148, 163, 184, 0.4);
             color: #e5e7eb;
-            pointer-events: auto;
         }
         @media (max-width: 768px) {
-            .meet-call-modal {
-                inset: 0;
-                padding: 12px;
-                align-items: flex-end;
-                justify-content: center;
-            }
             .meet-call-modal-card {
-                width: min(420px, 96vw);
-                max-height: 64vh;
+                width: min(420px, 94vw);
+                max-height: 68vh;
             }
         }
         .meet-call-banner {
@@ -3229,13 +3222,19 @@ export const renderMeetPage = async () => {
         } catch (_) {
         }
         if (callCloseBtn) {
-            callCloseBtn.addEventListener('click', closeCallModal);
-        }
-        callModal?.addEventListener('click', (ev) => {
-            if (ev.target === callModal) {
+            callCloseBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
                 closeCallModal();
-            }
-        });
+            });
+        }
+        if (callModal) {
+            callModal.addEventListener('click', (ev) => {
+                if (ev.target === callModal) {
+                    closeCallModal();
+                }
+            });
+        }
 
         loadEmployeeDirectory()
             .then(() => {
