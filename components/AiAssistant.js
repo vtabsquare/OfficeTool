@@ -229,14 +229,21 @@ async function sendMessage(question) {
 function showActionSuccess(actionResult) {
     // Show a brief toast/notification for successful actions
     if (actionResult.employee_id) {
-        console.log(`[AI] Employee created: ${actionResult.employee_id}`);
-        // Optionally trigger a page refresh or update the employee list
-        if (window.location.hash === '#/employees') {
-            // Refresh the employees page if we're on it
-            setTimeout(() => {
+        console.log(`[AI] Employee action completed: ${actionResult.employee_id}`);
+        
+        // Trigger a page refresh to show updated data
+        // Works for both create and update actions
+        setTimeout(() => {
+            // If on employees page, refresh it
+            if (window.location.hash === '#/employees' || window.location.hash.startsWith('#/employees')) {
                 window.dispatchEvent(new HashChangeEvent('hashchange'));
-            }, 1500);
-        }
+            }
+            
+            // Dispatch a custom event that other components can listen to
+            window.dispatchEvent(new CustomEvent('employeeDataChanged', {
+                detail: { employee_id: actionResult.employee_id, action: actionResult.message }
+            }));
+        }, 500);
     }
 }
 
