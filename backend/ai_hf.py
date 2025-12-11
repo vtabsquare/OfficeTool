@@ -10,8 +10,9 @@ from dotenv import load_dotenv
 load_dotenv("id.env")
 
 HF_API_KEY = os.getenv("HF_API_KEY") or os.getenv("HUGGINGFACE_API_KEY")
-HF_MODEL_ID = os.getenv("HF_MODEL_ID", "mistralai/Mistral-7B-Instruct-v0.2")
-HF_API_URL = f"https://api-inference.huggingface.co/models/{HF_MODEL_ID}"
+HF_MODEL_ID = os.getenv("HF_MODEL_ID", "mistralai/Mistral-7B-Instruct-v0.3")
+# Use the new router endpoint (api-inference.huggingface.co is deprecated)
+HF_API_URL = f"https://router.huggingface.co/hf-inference/models/{HF_MODEL_ID}"
 
 
 def build_system_prompt(user_meta: Dict[str, Any]) -> str:
@@ -111,9 +112,7 @@ def ask_hf(
             "temperature": 0.7,
             "top_p": 0.95,
             "do_sample": True,
-        },
-        "options": {
-            "wait_for_model": True,
+            "return_full_text": False,  # Don't echo the prompt
         },
     }
 

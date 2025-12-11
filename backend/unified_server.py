@@ -10399,7 +10399,14 @@ def ai_query():
         # Check for automation flow first
         automation_result = process_automation(question, automation_state)
         
-        if automation_result.get("is_automation"):
+        # If there's an active automation flow OR this triggers a new one, handle it
+        # This ensures we NEVER fall back to HF during a multi-step automation
+        has_active_flow = (
+            automation_state and 
+            automation_state.get("active_flow") is not None
+        )
+        
+        if automation_result.get("is_automation") or has_active_flow:
             response_data = {
                 "success": True,
                 "answer": automation_result.get("response"),
