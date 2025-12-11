@@ -350,6 +350,25 @@ Please provide the **Employee ID** or **Email** of the employee you want to edit
         state.reset()
         return "No problem! Edit cancelled. Let me know if you need anything else. 👋", state, None
     
+    # Handle confirmation FIRST (before other checks)
+    if state.awaiting_confirmation:
+        answer = user_message.strip().lower()
+        if answer in ['yes', 'y', 'confirm', 'save', 'ok']:
+            # Execute the update
+            action = {
+                "type": "update_employee",
+                "employee_id": state.edit_target.get("employee_id"),
+                "record_guid": state.edit_target.get("record_guid"),
+                "updates": state.collected_data.get("updates", {})
+            }
+            state.reset()
+            return "✅ Updating employee record...", state, action
+        elif answer in ['no', 'n', 'cancel']:
+            state.reset()
+            return "Update cancelled. Let me know if you need anything else! 👋", state, None
+        else:
+            return "Please type **'yes'** to confirm the update, or **'no'** to cancel.", state, None
+    
     # Step 0: Looking up the employee
     if state.current_step == 0 and state.edit_target is None:
         # User provided employee ID or email - we need to look them up
@@ -426,25 +445,6 @@ Enter the new value (or type **'skip'** to keep current):"""
         
         response = f"✓ Got it!\n\n{_build_edit_menu(state.edit_target, state.collected_data.get('updates', {}))}"
         return response, state, None
-    
-    # Handle confirmation
-    if state.awaiting_confirmation:
-        answer = user_message.strip().lower()
-        if answer in ['yes', 'y', 'confirm', 'save', 'ok']:
-            # Execute the update
-            action = {
-                "type": "update_employee",
-                "employee_id": state.edit_target.get("employee_id"),
-                "record_guid": state.edit_target.get("record_guid"),
-                "updates": state.collected_data.get("updates", {})
-            }
-            state.reset()
-            return "✅ Updating employee record...", state, action
-        elif answer in ['no', 'n', 'cancel']:
-            state.reset()
-            return "Update cancelled. Let me know if you need anything else! 👋", state, None
-        else:
-            return "Please type **'yes'** to confirm the update, or **'no'** to cancel.", state, None
     
     # Fallback
     return "I didn't understand that. Please try again or type **'cancel'** to exit.", state, None
