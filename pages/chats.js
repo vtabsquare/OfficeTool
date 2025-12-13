@@ -15,7 +15,7 @@ import {
   deleteGroup,
   leaveDirectChat,
   sendWithProgress,
-} from "../features/chatApi.js";
+} from "../features/chatapi.js";
 
 import {
   initSocket,
