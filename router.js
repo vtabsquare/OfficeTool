@@ -45,6 +45,7 @@ const loaders = {
   "/team-management": async () => (await import('./pages/teamManagement.js')).renderTeamManagementPage,
   "/inbox": async () => (await import('./pages/shared.js')).renderInboxPage,
   "/meet": async () => (await import('./pages/shared.js')).renderMeetPage,
+  "/chat": async () => (await import('./pages/chats.js')).renderChatPage,
   "/time-tracker": async () => (await import('./pages/shared.js')).renderTimeTrackerPage,
   "/time-my-tasks": async () => (await import('./pages/shared.js')).renderMyTasksPage,
   "/time-my-timesheet": async () => (await import('./pages/shared.js')).renderMyTimesheetPage,

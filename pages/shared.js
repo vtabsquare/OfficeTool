@@ -3252,6 +3252,13 @@ export const renderMeetPage = async () => {
             });
         }
 
+        if (callCloseBtn) {
+            callCloseBtn.addEventListener('click', closeCallModal);
+        }
+        if (callCancelBtn) {
+            callCancelBtn.addEventListener('click', closeCallModal);
+        }
+
         loadEmployeeDirectory()
             .then(() => {
                 buildEmployeeCards();
