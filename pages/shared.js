@@ -3222,6 +3222,8 @@ export const renderMeetPage = async () => {
         if (!form || !resultEl) return;
 
         attachCallListEvents();
+
+        // Expose participant update handler for socket events from index.js
         const applyServerParticipantUpdate = (payload) => {
             try {
                 if (!payload || !Array.isArray(payload.participants)) return;
@@ -3244,19 +3246,47 @@ export const renderMeetPage = async () => {
                 try { closeCallModal(); } catch (_) {}
             }
         };
+
+        // Expose handler globally so index.js socket listener can call it
+        try {
+            window.__onParticipantUpdate = applyServerParticipantUpdate;
+        } catch (_) {}
+
+        // Cleanup helper so router can hide/stop Meet UI artifacts when navigating away
+        window.__cleanupMeetUI = () => {
+            try {
+                if (typeof stopRingTone === 'function') stopRingTone();
+                if (typeof closeCallModal === 'function') closeCallModal();
+                if (callBanner) callBanner.classList.add('hidden');
+                callDecisions = new Map();
+                serverParticipantStatuses = new Map();
+            } catch (err) {
+                console.warn('cleanupMeetUI error', err);
+            }
+            try {
+                window.__onParticipantUpdate = null;
+            } catch (_) {}
+        };
+
         if (callModal) {
+            // Close on backdrop click
             callModal.addEventListener('click', (ev) => {
                 if (ev.target === callModal) {
                     closeCallModal();
                 }
             });
-        }
 
-        if (callCloseBtn) {
-            callCloseBtn.addEventListener('click', closeCallModal);
-        }
-        if (callCancelBtn) {
-            callCancelBtn.addEventListener('click', closeCallModal);
+            // Event delegation for close/cancel buttons (works even after modal is moved to body)
+            callModal.addEventListener('click', (ev) => {
+                const target = ev.target;
+                const closeBtn = target.closest('#meet-call-close');
+                const cancelBtn = target.closest('#meet-call-cancel');
+                if (closeBtn || cancelBtn) {
+                    ev.preventDefault();
+                    ev.stopPropagation();
+                    closeCallModal();
+                }
+            });
         }
 
         loadEmployeeDirectory()
