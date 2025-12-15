@@ -11038,7 +11038,9 @@ def get_login_events():
         record_map = {}
         for r in records:
             emp = (r.get(LA_FIELD_EMPLOYEE_ID) or "").strip().upper()
-            dt = (r.get(LA_FIELD_DATE) or "").strip()
+            dt_raw = (r.get(LA_FIELD_DATE) or "").strip()
+            # Normalize DateTime (2025-12-15T00:00:00Z) to date-only (2025-12-15)
+            dt = dt_raw[:10] if dt_raw else ""
             if emp and dt:
                 record_map[f"{emp}|{dt}"] = r
 
