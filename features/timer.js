@@ -14,22 +14,51 @@ const getGeolocation = () => {
             resolve(null);
             return;
         }
+
+        let resolved = false;
+
+        // Try high accuracy first with longer timeout
         navigator.geolocation.getCurrentPosition(
             (pos) => {
+                if (resolved) return;
+                resolved = true;
                 const location = {
                     lat: pos.coords.latitude,
                     lng: pos.coords.longitude,
                     accuracy_m: pos.coords.accuracy,
                     source: 'browser',
                 };
-                console.log('[TIMER] Geolocation captured:', location);
+                console.log('[TIMER] Geolocation captured (high accuracy):', location);
                 resolve(location);
             },
             (err) => {
-                console.warn('[TIMER] Geolocation error:', err.message);
-                resolve(null);
+                console.warn('[TIMER] High accuracy geolocation error:', err.message);
+                // Fallback: try with low accuracy (faster, uses network/WiFi)
+                if (!resolved) {
+                    navigator.geolocation.getCurrentPosition(
+                        (pos) => {
+                            if (resolved) return;
+                            resolved = true;
+                            const location = {
+                                lat: pos.coords.latitude,
+                                lng: pos.coords.longitude,
+                                accuracy_m: pos.coords.accuracy,
+                                source: 'browser-lowaccuracy',
+                            };
+                            console.log('[TIMER] Geolocation captured (low accuracy):', location);
+                            resolve(location);
+                        },
+                        (err2) => {
+                            if (resolved) return;
+                            resolved = true;
+                            console.warn('[TIMER] Low accuracy geolocation also failed:', err2.message);
+                            resolve(null);
+                        },
+                        { enableHighAccuracy: false, timeout: 15000, maximumAge: 60000 }
+                    );
+                }
             },
-            { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 }
+            { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
         );
     });
 };
