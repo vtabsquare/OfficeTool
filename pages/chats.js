@@ -15,6 +15,7 @@ import {
   deleteGroup,
   leaveDirectChat,
   sendWithProgress,
+  sendMultipleFilesApi,
 } from "../features/chatapi.js";
 
 import {
@@ -1547,6 +1548,37 @@ body.dark .msg-time {
   font-size: 18px;
   pointer-events: none;
 }
+.wa-img-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 10px;
+  max-height: 420px;
+  overflow-y: auto;
+}
+
+.wa-img-wrap {
+  position: relative;
+}
+
+.wa-img-wrap img {
+  width: 100%;
+  height: 120px;
+  object-fit: cover;
+  border-radius: 10px;
+}
+
+.wa-remove {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  background: rgba(0,0,0,.6);
+  color: #fff;
+  border: none;
+  border-radius: 50%;
+  width: 22px;
+  height: 22px;
+  cursor: pointer;
+}
 
 
     `;
@@ -1643,9 +1675,12 @@ body.dark .msg-time {
           <button class="media-option" id="recordVoiceBtn"><i class="fa-solid fa-microphone"></i> Voice</button>
         </div>
       </div>
-      <input type="file" id="hiddenImageInput" accept="image/*" style="display:none;" />
-      <input type="file" id="hiddenVideoInput" accept="video/*" style="display:none;" />
-      <input type="file" id="hiddenFileInput" style="display:none;" />
+      <input type="file" id="hiddenImageInput" accept="image/*" multiple style="display:none;" />
+      <input type="file" id="hiddenVideoInput" accept="video/*" multiple style="display:none;" />
+      <input type="file" id="hiddenAudioInput" accept="audio/*" multiple style="display:none;" />
+      <input type="file" id="hiddenFileInput" multiple style="display:none;" />
+
+
 
 
       <!-- SEND button last -->
@@ -1729,43 +1764,78 @@ body.dark .msg-time {
     const imgInput = document.getElementById("hiddenImageInput");
     const videoInput = document.getElementById("hiddenVideoInput");
     const fileInput = document.getElementById("hiddenFileInput");
+    const audioInput = document.getElementById("hiddenAudioInput");
 
     if (imgInput) {
       imgInput.onchange = (e) => {
-        const file = e.target.files?.[0];
+        const files = Array.from(e.target.files || []);
         e.target.value = "";
-        if (!file) return;
+        if (!files.length) return;
+
         if (!window.currentConversationId) {
           alert("Open a conversation first.");
           return;
         }
-        openFilePreviewModal(file); // show preview — DON'T upload yet
+
+        if (files.length === 1) {
+          openFilePreviewModal(files[0]);
+        } else {
+          openFilePreviewModal(files); // reuse same modal
+        }
+      };
+    }
+    if (videoInput) {
+      videoInput.onchange = (e) => {
+        const files = Array.from(e.target.files || []);
+        e.target.value = "";
+        if (!files.length) return;
+
+        if (!window.currentConversationId) {
+          alert("Open a conversation first.");
+          return;
+        }
+
+        if (files.length === 1) {
+          openFilePreviewModal(files[0]);
+        } else {
+          openFilePreviewModal(files); // reuse same modal
+        }
       };
     }
 
-    if (videoInput) {
-      videoInput.onchange = (e) => {
-        const file = e.target.files?.[0];
+    if (audioInput) {
+      audioInput.onchange = (e) => {
+        const files = Array.from(e.target.files || []);
         e.target.value = "";
-        if (!file) return;
+        if (!files.length) return;
         if (!window.currentConversationId) {
           alert("Open a conversation first.");
           return;
         }
-        openFilePreviewModal(file);
+
+        if (files.length === 1) {
+          openFilePreviewModal(files[0]);
+        } else {
+          openFilePreviewModal(files); // reuse same modal
+        }
       };
     }
 
     if (fileInput) {
       fileInput.onchange = (e) => {
-        const file = e.target.files?.[0];
+        const files = Array.from(e.target.files || []);
         e.target.value = "";
-        if (!file) return;
+        if (!files.length) return;
         if (!window.currentConversationId) {
           alert("Open a conversation first.");
           return;
         }
-        openFilePreviewModal(file);
+
+        if (files.length === 1) {
+          openFilePreviewModal(files[0]);
+        } else {
+          openFilePreviewModal(files); // pass array
+        }
       };
     }
 
@@ -2071,6 +2141,9 @@ body.dark .msg-time {
     document.getElementById("hiddenImageInput").click();
   document.getElementById("uploadVideoBtn").onclick = () =>
     document.getElementById("hiddenVideoInput").click();
+  document.getElementById("recordVoiceBtn").onclick = () =>
+    document.getElementById("hiddenAudioInput").click();
+
   document.getElementById("uploadFileBtn").onclick = () =>
     document.getElementById("hiddenFileInput").click();
 
@@ -2289,58 +2362,140 @@ body.dark .msg-time {
   }
 
   /* ---------- 1) preview modal (WhatsApp-like) ---------- */
-  function openFilePreviewModal(file) {
-    if (!file) return;
+  function openFilePreviewModal(input) {
+    const files = Array.isArray(input) ? input : [input];
+    if (!files.length) return;
 
-    const isImage = file.type.startsWith("image/");
-    const isVideo = file.type.startsWith("video/");
-    const isAudio = file.type.startsWith("audio/");
+    let previewHtml = `<div style="display:flex;flex-wrap:wrap;gap:10px;justify-content:center;margin-bottom:10px;">`;
 
-    let previewHtml = `<div style="text-align:center;margin-bottom:10px;">`;
-    if (isImage) {
+    files.forEach((file) => {
       const url = URL.createObjectURL(file);
-      previewHtml += `<img src="${url}" style="max-width:640px;max-height:360px;border-radius:8px;display:block;margin:0 auto;"/>`;
-    } else if (isVideo) {
-      const url = URL.createObjectURL(file);
-      previewHtml += `<video controls style="max-width:640px;max-height:360px;display:block;margin:0 auto;"><source src="${url}"></video>`;
-    } else if (isAudio) {
-      const url = URL.createObjectURL(file);
-      previewHtml += `<audio controls src="${url}" style="display:block;margin:0 auto;"></audio>`;
-    } else {
-      previewHtml += `<div style="padding:18px;border-radius:8px;background:var(--muted-bg);font-weight:600;">${escapeHtml(
-        file.name
-      )}</div>`;
-    }
+
+      if (file.type.startsWith("image/")) {
+        previewHtml += `
+        <img src="${url}"
+             style="width:120px;height:120px;object-fit:cover;border-radius:8px;" />`;
+      } else if (file.type.startsWith("video/")) {
+        previewHtml += `
+        <video src="${url}" controls
+               style="width:160px;border-radius:8px;"></video>`;
+      } else if (file.type.startsWith("audio/")) {
+        previewHtml += `
+        <audio src="${url}" controls style="width:220px;"></audio>`;
+      } else {
+        previewHtml += `
+        <div style="padding:12px 16px;border-radius:8px;
+                    background:var(--muted-bg);font-weight:600;">
+          <i class="fa fa-file"></i> ${escapeHtml(file.name)}
+        </div>`;
+      }
+    });
+
     previewHtml += `</div>`;
 
-    // Create modal markup (simple, re-usable). Use your existing renderModal if you prefer.
     const modal = document.createElement("div");
     modal.className = "wh-preview-modal";
     modal.innerHTML = `
-    <div class="wh-preview-backdrop" style="position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:99999;">
-      <div class="wh-preview-box" style="background:var(--bg-panel);padding:18px;border-radius:14px;max-width:720px;width:90%;box-shadow:0 8px 30px rgba(0,0,0,0.6);">
+    <div class="wh-preview-backdrop"
+         style="position:fixed;inset:0;background:rgba(0,0,0,0.6);
+                display:flex;align-items:center;justify-content:center;z-index:99999;">
+      <div class="wh-preview-box"
+           style="background:var(--bg-panel);padding:18px;border-radius:14px;
+                  max-width:720px;width:90%;box-shadow:0 8px 30px rgba(0,0,0,0.6);">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
           <h3 style="margin:0;">Preview</h3>
-          <button class="wh-preview-close" title="Close" style="background:transparent;border:none;color:var(--muted);font-size:18px;">×</button>
+          <button class="wh-preview-close"
+                  style="background:transparent;border:none;font-size:18px;">×</button>
         </div>
+
         <div class="wh-preview-body">${previewHtml}</div>
+
         <div style="text-align:center;margin-top:12px;">
-          <button class="wh-preview-cancel btn-secondary" style="margin-right:10px;padding:8px 12px;border-radius:8px;">Cancel</button>
-          <button class="wh-preview-send btn-primary" style="padding:8px 12px;border-radius:8px;">Send</button>
+          <button class="wh-preview-cancel btn-secondary"
+                  style="margin-right:10px;">Cancel</button>
+          <button class="wh-preview-send btn-primary">Send</button>
         </div>
       </div>
     </div>
   `;
 
-    modal.file = file;
+    modal._files = files; // ✅ IMPORTANT
     document.body.appendChild(modal);
 
-    modal.querySelector(".wh-preview-close").onclick = () => modal.remove();
-    modal.querySelector(".wh-preview-cancel").onclick = () => modal.remove();
+    modal.querySelector(".wh-preview-close").onclick = modal.querySelector(
+      ".wh-preview-cancel"
+    ).onclick = () => modal.remove();
+
     modal.querySelector(".wh-preview-send").onclick = async () => {
       modal.remove();
-      // Call the upload path — use uploadStart so we keep the same optimistic bubble + progress UI
-      await sendFileAfterPreview(file);
+
+      // ✅ SINGLE vs MULTIPLE (NO BREAKING)
+      if (files.length === 1) {
+        await sendFileAfterPreview(files[0]);
+      } else {
+        await sendMultipleFilesAfterPreview(files);
+      }
+    };
+  }
+
+  function openMultiImagePreviewModal(files) {
+    let selectedFiles = [...files];
+
+    const renderGrid = () => {
+      return selectedFiles
+        .map((file, idx) => {
+          const url = URL.createObjectURL(file);
+          return `
+          <div class="wa-img-wrap">
+            <img src="${url}" />
+            <button class="wa-remove" data-idx="${idx}">×</button>
+          </div>
+        `;
+        })
+        .join("");
+    };
+
+    const modal = document.createElement("div");
+    modal.className = "wh-preview-modal";
+    modal.innerHTML = `
+  <div class="wh-preview-backdrop" style="position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:99999;">
+    <div style="background:var(--bg-panel);padding:16px;border-radius:14px;max-width:760px;width:90%;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+        <h3>Send ${selectedFiles.length} images</h3>
+        <button class="wa-close">×</button>
+      </div>
+
+      <div class="wa-img-grid">
+        ${renderGrid()}
+      </div>
+
+      <div style="text-align:center;margin-top:14px;">
+        <button class="btn-secondary wa-cancel">Cancel</button>
+        <button class="btn-primary wa-send">Send</button>
+      </div>
+    </div>
+  </div>
+  `;
+
+    document.body.appendChild(modal);
+
+    // remove image
+    modal.onclick = (e) => {
+      if (e.target.classList.contains("wa-remove")) {
+        const idx = Number(e.target.dataset.idx);
+        selectedFiles.splice(idx, 1);
+        if (!selectedFiles.length) modal.remove();
+        else modal.querySelector(".wa-img-grid").innerHTML = renderGrid();
+      }
+    };
+
+    modal.querySelector(".wa-close").onclick = modal.querySelector(
+      ".wa-cancel"
+    ).onclick = () => modal.remove();
+
+    modal.querySelector(".wa-send").onclick = async () => {
+      modal.remove();
+      await sendMultipleFilesDirect(selectedFiles);
     };
   }
 
@@ -2383,8 +2538,8 @@ body.dark .msg-time {
     const formData = new FormData();
     formData.append("conversation_id", window.currentConversationId);
     formData.append("sender_id", state.user?.id);
-    formData.append("file", file);
-
+    // formData.append("file", file);
+    formData.append("files", file);
     const { xhr, promise } = sendWithProgress(formData, (percent) => {
       updateUploadProgress(tempId, percent);
     });
@@ -2406,6 +2561,53 @@ body.dark .msg-time {
       markUploadFailed(tempId);
     }
   }
+  async function sendMultipleFilesAfterPreview(files) {
+    for (const file of files) {
+      await sendFileAfterPreview(file);
+    }
+  }
+
+  async function sendMultipleFilesDirect(files) {
+    if (!files.length || !window.currentConversationId) return;
+
+    const tempId = makeTempId();
+
+    // optimistic bubble (same as before)
+    addMessageToUI(
+      {
+        temp_id: tempId,
+        conversation_id: window.currentConversationId,
+        sender_id: state.user?.id,
+        message_type: "file",
+        file_name: `${files.length} files`,
+        mime_type: "application/octet-stream",
+        created_on: new Date().toISOString(),
+        _is_temp_upload: true,
+      },
+      true,
+      tempId,
+      { is_group: window.currentConversation?.is_group }
+    );
+
+    insertProgressUI(tempId);
+
+    try {
+      const res = await sendMultipleFilesApi({
+        conversation_id: window.currentConversationId,
+        sender_id: state.user?.id,
+        files,
+        onProgress: (percent) => {
+          updateUploadProgress(tempId, percent);
+        },
+      });
+
+      finalizeUploadBubble(tempId, res);
+    } catch (err) {
+      console.error("Multi-file upload failed", err);
+      markUploadFailed(tempId);
+    }
+  }
+
   function insertProgressUI(tempId) {
     const bubble = document.querySelector(
       `.chat-msg[data-msgid="${tempId}"], .chat-msg[data-tempid="${tempId}"]`
@@ -2513,26 +2715,6 @@ body.dark .msg-time {
     if (opts.is_group && messageObj.sender_id !== "system") {
       let senderName = messageObj.sender_name || messageObj.sender;
 
-      if (
-        !senderName &&
-        window.conversationList &&
-        window.currentConversationId
-      ) {
-        const convo = window.conversationList.find(
-          (c) =>
-            String(c.conversation_id) === String(window.currentConversationId)
-        );
-
-        if (convo && Array.isArray(convo.members)) {
-          const senderUser = convo.members.find(
-            (m) => String(m.id) === String(messageObj.sender_id)
-          );
-          if (senderUser && senderUser.name) {
-            senderName = senderUser.name;
-          }
-        }
-      }
-
       if (senderName) {
         const colors = [
           "#f87171",
@@ -2594,7 +2776,7 @@ body.dark .msg-time {
       ) {
         FILE_URL = mu;
       } else {
-        FILE_URL = `/chat/file/${mu}`;
+        FILE_URL = `/chat/file-download/${mu}`;
       }
     }
 
@@ -2665,16 +2847,15 @@ body.dark .msg-time {
     }
 
     // GENERIC FILE (pdf/docx/pptx/zip etc.)
+    // GENERIC FILE (pdf/docx/pptx/zip etc.)
     else if (mType !== "text") {
       const fname = escapeHtml(messageObj.file_name || "download");
 
       contentHtml = `
-      <div class="msg-file-wrap">
-        <i class="fa-solid fa-file"></i>
-        <a href="${
-          FILE_URL || "#"
-        }" download="${fname}" target="_blank" rel="noopener">${fname}</a>
-    `;
+  <div class="msg-file-wrap file-wrap" data-file="${rawMediaId}">
+    <i class="fa-solid fa-file"></i>
+    <div class="file-name">${fname}</div>
+`;
 
       if (!isMine && rawMediaId && !hasDownloadedOnce(rawMediaId)) {
         contentHtml += waDownloadIcon(rawMediaId);
@@ -2770,7 +2951,7 @@ body.dark .msg-time {
 
     // Build final URL (server.media_url should be id or full path)
     const mediaId = server.media_url || server.mediaId || "";
-    const url = mediaId ? `/chat/file/${mediaId}` : "";
+    const url = mediaId ? `/chat/file-download/${mediaId}` : "";
     const mime = (server.mime_type || server.mime || "").toLowerCase();
 
     // find content container inside bubble
@@ -2879,6 +3060,7 @@ body.dark .msg-time {
           temp_id: null,
           conversation_id: convId,
           sender_id: server.sender_id || state.user?.id,
+          sender_name: server.sender_name || state.user?.name, // ✅ ADD THIS
           message_type: mime.startsWith("image/")
             ? "image"
             : mime.startsWith("video/")
@@ -2927,6 +3109,88 @@ body.dark .msg-time {
       <i class="fa-solid fa-check-circle"></i>
     </div>
   `;
+  }
+  function markUploadFailed(tempId) {
+    const el = document.querySelector(
+      `.chat-msg[data-msgid="${tempId}"], .chat-msg[data-tempid="${tempId}"]`
+    );
+    if (!el) return;
+
+    el.classList.add("upload-failed");
+
+    const meta = el.querySelector(".msg-meta-row");
+    if (meta) {
+      meta.insertAdjacentHTML(
+        "beforeend",
+        `<span class="upload-failed-text">Failed</span>`
+      );
+    }
+  }
+  function openMultiFilePreviewModal(files) {
+    // 🔹 reuse the SAME modal used by openFilePreviewModal
+    const modal = document.getElementById("mediaPreviewModal");
+    if (!modal) {
+      console.error("mediaPreviewModal not found");
+      return;
+    }
+
+    const body = modal.querySelector(".media-preview-body");
+    if (!body) {
+      console.error("media-preview-body not found");
+      return;
+    }
+
+    body.innerHTML = ""; // clear old preview
+
+    files.forEach((file) => {
+      const type = file.type || "";
+      const url = URL.createObjectURL(file);
+
+      let el;
+
+      // IMAGE
+      if (type.startsWith("image/")) {
+        el = document.createElement("img");
+        el.src = url;
+        el.className = "preview-image";
+      }
+
+      // VIDEO
+      else if (type.startsWith("video/")) {
+        el = document.createElement("video");
+        el.src = url;
+        el.controls = true;
+        el.className = "preview-video";
+      }
+
+      // AUDIO
+      else if (type.startsWith("audio/")) {
+        el = document.createElement("audio");
+        el.src = url;
+        el.controls = true;
+      }
+
+      // DOCUMENTS (pdf, pptx, excel, pbix, zip…)
+      else {
+        el = document.createElement("div");
+        el.className = "preview-file";
+        el.innerHTML = `
+        <i class="fa-solid fa-file"></i>
+        <span>${file.name}</span>
+      `;
+      }
+
+      body.appendChild(el);
+    });
+
+    // 🔹 SEND button → upload happens here
+    const sendBtn = modal.querySelector(".preview-send-btn");
+    sendBtn.onclick = () => {
+      closeMediaPreviewModal();
+      sendMultipleFilesDirect(files);
+    };
+
+    openMediaPreviewModal();
   }
 
   // utility to escape HTML used in finalizeUploadBubble and anywhere you need it
@@ -4333,11 +4597,18 @@ body.dark .msg-time {
 
   function subscribePresenceForList() {
     const users = [];
-    window.conversationList.forEach((c) => {
+
+    const list = window.conversationCache;
+    if (!Array.isArray(list)) return;
+
+    list.forEach((c) => {
       (c.members || []).forEach((u) => {
-        if (!users.includes(u.id)) users.push(u.id);
+        if (u?.id && !users.includes(u.id)) {
+          users.push(u.id);
+        }
       });
     });
+
     if (users.length && getSocket()) {
       emit("subscribe_presence", { user_ids: users });
     }

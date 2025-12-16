@@ -212,13 +212,24 @@ def _get_employee_name_by_id(emp_id):
 # Normalize message record
 # --------------------------------------------------------------
 
-def normalize_message(rec):
+def normalize_message(rec, emp_map=None):
     if not rec:
         return {}
+
+    sender_id = rec.get("crc6f_sender_id")
+
+    sender_name = None
+    if emp_map and sender_id:
+        sender_name = emp_map.get(sender_id)
+
+    if not sender_name:
+        sender_name = sender_id  # final fallback
+
     return {
         "message_id": rec.get("crc6f_message_id"),
         "conversation_id": rec.get("crc6f_conversation_id"),
-        "sender_id": rec.get("crc6f_sender_id"),
+        "sender_id": sender_id,
+        "sender_name": sender_name,
         "message_type": rec.get("crc6f_message_type"),
         "message_text": rec.get("crc6f_message_text"),
         "media_url": rec.get("crc6f_media_url"),
@@ -226,6 +237,49 @@ def normalize_message(rec):
         "mime_type": rec.get("crc6f_mime_type"),
         "created_on": rec.get("createdon"),
     }
+
+def build_employee_name_map():
+    """
+    Build { employee_id: full_name } map once per request
+    """
+    try:
+        rows = dataverse_get(EMPLOYEE_ENTITY_SET).get("value", [])
+        emp_map = {}
+
+        for r in rows:
+            emp_id = r.get("crc6f_employeeid")
+            if not emp_id:
+                continue
+
+            fn = r.get("crc6f_firstname") or ""
+            ln = r.get("crc6f_lastname") or ""
+            full = (fn + " " + ln).strip()
+
+            emp_map[emp_id] = full if full else emp_id
+
+        return emp_map
+
+    except Exception:
+        traceback.print_exc()
+        return {}
+
+def dataverse_upload_file(entity_set, row_guid, file_column, binary):
+    """
+    Uploads binary to Dataverse File column
+    """
+    url = f"{RESOURCE}/api/data/v9.2/{entity_set}({row_guid})/{file_column}"
+    headers = {
+        "Authorization": f"Bearer {_get_oauth_token()}",
+        "Content-Type": "application/octet-stream"
+    }
+    r = requests.put(url, headers=headers, data=binary, timeout=60)
+    r.raise_for_status()
+
+
+def generate_file_id():
+    ts = datetime.datetime.utcnow().strftime("%Y%m%d")
+    rand = uuid.uuid4().hex[:8].upper()
+    return f"FILE-{ts}-{rand}"
 
 
 # --------------------------------------------------------------
@@ -432,7 +486,13 @@ def get_messages(conversation_id):
 
         q = f"$filter=crc6f_conversation_id eq '{conversation_id}'&$orderby=createdon asc&$top=1000"
         rows = dataverse_get(MSG_ENTITY_SET, q).get("value", [])
-        out = [normalize_message(r) for r in rows]
+        emp_map = build_employee_name_map()
+
+        out = [
+            normalize_message(r, emp_map)
+            for r in rows
+        ]
+
 
         
         return jsonify(out)
@@ -488,156 +548,131 @@ def send_text():
 # --------------------------------------------------------------
 # SEND FILE MESSAGE (UPLOAD ANNOTATION + MESSAGE)
 # --------------------------------------------------------------
-@chat_bp.route("/send-file", methods=["POST"])
-def send_file():
+@chat_bp.route("/send-files", methods=["POST"])
+def send_files():
     try:
-        conv = request.form.get("conversation_id")
-        sender = request.form.get("sender_id")
-        f = request.files.get("file")
+        conversation_id = request.form.get("conversation_id")
+        sender_id = request.form.get("sender_id")
+        files = request.files.getlist("files")
 
-        if not conv or not sender or not f:
-            return jsonify({"error": "conversation_id, sender_id, file required"}), 400
+        if not conversation_id or not sender_id or not files:
+            return jsonify({"error": "conversation_id, sender_id, files required"}), 400
 
-        # ---------- SAFE MIME CHECK ----------
-        SAFE_MIME = {
-            "image/png", "image/jpeg", "image/jpg", "image/webp",
-            "video/mp4", "video/webm",
-            "audio/mpeg", "audio/mp3", "audio/wav",
-            "application/pdf",
-            "application/msword",
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            "application/vnd.ms-excel",
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            "application/zip"
-        }
+        attachments = []
 
-        if f.mimetype not in SAFE_MIME:
-            return jsonify({"error": "unsafe_file_type", "mime": f.mimetype}), 400
+        for f in files:
+            raw = f.read()
+            file_id = generate_file_id()
 
-        # ---------- BASE64 ENCODE ----------
-        file_bytes = f.read()
-        encoded = base64.b64encode(file_bytes).decode("utf-8")
+            # 1️⃣ Create Dataverse row (metadata only)
+            meta = {
+                "crc6f_file_id": str(file_id),
+                "crc6f_conversationid": str(conversation_id),
+                "crc6f_filename": f.filename,
+                "crc6f_filesize": str(len(raw)),     # ✅ MUST BE STRING
+                "crc6f_mimetype": f.mimetype or "application/octet-stream",
+            }
 
-        # ---------- CREATE ANNOTATION ----------
-        ann_payload = {
-            "filename": f.filename,
-            "mimetype": f.mimetype,
-            "documentbody": encoded,
-            "isdocument": True,      # REQUIRED!!
-            "subject": f.filename,   # REQUIRED!!
-            "notetext": ""           # REQUIRED FIELD FOR ANNOTATIONS
-        }
 
-        ann_res = dataverse_create(ANNOTATION_ENTITY_SET, ann_payload)
+            res = dataverse_create("crc6f_hr_fileattachments", meta)
 
-        annotation_raw = (
-            ann_res.get("annotationid")
-            or ann_res.get("id")
-            or ann_res.get("entity_reference")
-        )
+            # Extract Dataverse row GUID
+            ent = res.get("entity_reference")
+            row_guid = ent.split("(")[1].replace(")", "")
 
-        if not annotation_raw:
-            raise RuntimeError("Dataverse did not return annotationid")
+            # 2️⃣ Upload binary to File column
+            dataverse_upload_file(
+                "crc6f_hr_fileattachments",
+                row_guid,
+                "crc6f_fileupload",
+                raw
+            )
+            # 3️⃣ CREATE CHAT MESSAGE ROW (THIS IS THE FIX)
+            message_id = f"msg_{uuid.uuid4()}"
 
-        # Extract GUID from "(guid)"
-        if "(" in annotation_raw:
-            annotation_id = annotation_raw.split("(")[1].replace(")", "")
-        else:
-            annotation_id = annotation_raw.strip()
+            dataverse_create(MSG_ENTITY_SET, {
+                "crc6f_message_id": message_id,
+                "crc6f_conversation_id": conversation_id,
+                "crc6f_sender_id": sender_id,
+                "crc6f_message_type": (
+                    "image" if f.mimetype.startswith("image/")
+                    else "video" if f.mimetype.startswith("video/")
+                    else "audio" if f.mimetype.startswith("audio/")
+                    else "file"
+                ),
+                "crc6f_media_url": str(file_id),          # 🔥 LINK TO FILE
+                "crc6f_file_name": f.filename,
+                "crc6f_mime_type": f.mimetype,
+            })
+            # 🔔 4️⃣ REALTIME SOCKET EMIT (ADD EXACTLY HERE)
+            emit_socket_event("new_message", {
+                "message_id": message_id,
+                "conversation_id": conversation_id,
+                "sender_id": sender_id,
+                "message_type": (
+                    "image" if f.mimetype.startswith("image/")
+                    else "video" if f.mimetype.startswith("video/")
+                    else "audio" if f.mimetype.startswith("audio/")
+                    else "file"
+                ),
+                "media_url": str(file_id),
+                "file_name": f.filename,
+                "mime_type": f.mimetype,
+            })
 
-        # ---------- CREATE CHAT MESSAGE ----------
-        message_id = str(uuid.uuid4())
 
-        msg_payload = {
-            "crc6f_message_id": message_id,
-            "crc6f_conversation_id": conv,
-            "crc6f_sender_id": sender,
-            "crc6f_message_type": (
-                "image" if f.mimetype.startswith("image") else
-                "video" if f.mimetype.startswith("video") else
-                "audio" if f.mimetype.startswith("audio") else
-                "file"
-            ),
-            "crc6f_media_url": annotation_id,
-            "crc6f_file_name": f.filename,
-            "crc6f_mime_type": f.mimetype
-        }
 
-        dataverse_create(MSG_ENTITY_SET, msg_payload)
-
-        # ---------- SOCKET PUSH ----------
-        emit_socket_event("new_message", {
-            "message_id": message_id,
-            "conversation_id": conv,
-            "sender_id": sender,
-            "message_type": msg_payload["crc6f_message_type"],
-            "media_url": annotation_id,
-            "file_name": f.filename,
-            "mime_type": f.mimetype,
-            "created_on": datetime.datetime.utcnow().isoformat()
-        })
+            attachments.append({
+                "file_id": file_id,
+                "file_name": f.filename,
+                "mime_type": f.mimetype,
+                "file_size": len(raw)
+            })
 
         return jsonify({
             "ok": True,
-            "message_id": message_id,
-            "file_name": f.filename,
-            "mime_type": f.mimetype,
-            "media_url": annotation_id
+            "attachments": attachments
         })
 
     except Exception as e:
         traceback.print_exc()
-        return jsonify({"error": "file_failed", "details": str(e)}), 500
+        return jsonify({"error": "send_files_failed", "details": str(e)}), 500
 
 # --------------------------------------------------------------
 # DOWNLOAD FILE FROM DATAVERSE (ANNOTATION)
 # --------------------------------------------------------------
-@chat_bp.route("/file/<annotation_id>", methods=["GET"])
-def download_file(annotation_id):
+@chat_bp.route("/file-download/<string:file_id>", methods=["GET"])
+def download_file(file_id):
     try:
-        # ---------- FETCH ANNOTATION ----------
-        url = f"{RESOURCE}/api/data/v9.2/annotations({annotation_id})?$select=filename,mimetype,documentbody"
-        headers = {
-            "Authorization": f"Bearer {_get_oauth_token()}",
-            "Accept": "application/json"
-        }
+        q = f"$filter=crc6f_file_id eq '{file_id}'&$top=1"
+        rows = dataverse_get("crc6f_hr_fileattachments", q).get("value", [])
 
-        r = requests.get(url, headers=headers, timeout=30)
-
-        if r.status_code != 200:
+        if not rows:
             return Response("File not found", status=404)
 
-        meta = r.json()
+        rec = rows[0]
 
-        file_name = meta.get("filename", f"file_{annotation_id}")
-        mime_type = meta.get("mimetype", "application/octet-stream")
-        documentbody = meta.get("documentbody")
+        row_guid = rec["crc6f_hr_fileattachmentid"]
+        filename = rec.get("crc6f_filename")
+        mime = rec.get("crc6f_mimetype") or "application/octet-stream"
 
-        if not documentbody:
-            return Response("File contents missing", status=404)
+        # Fetch binary from File column
+        url = f"{RESOURCE}/api/data/v9.2/crc6f_hr_fileattachments({row_guid})/crc6f_fileupload/$value"
+        headers = {"Authorization": f"Bearer {_get_oauth_token()}"}
 
-        # ---------- DECODE BASE64 ----------
-        try:
-            clean_b64 = "".join(documentbody.split())
-            binary = base64.b64decode(clean_b64)
-        except Exception:
-            return Response("Corrupted file in Dataverse", status=500)
+        r = requests.get(url, headers=headers, timeout=60)
+        r.raise_for_status()
 
-        # ---------- INLINE FOR IMAGES/VIDEOS/AUDIO ----------
-        inline_types = ("image/", "video/", "audio/")
-        disposition = "inline" if mime_type.startswith(inline_types) else "attachment"
-
-        resp = Response(binary, mimetype=mime_type)
-        resp.headers["Content-Disposition"] = f'{disposition}; filename="{file_name}"'
-        resp.headers["Content-Length"] = str(len(binary))
+        resp = Response(r.content, mimetype=mime)
+        resp.headers["Content-Disposition"] = f'attachment; filename="{filename}"'
+        resp.headers["Content-Length"] = str(len(r.content))
         resp.headers["Cache-Control"] = "no-store"
 
         return resp
 
-    except Exception as e:
+    except Exception:
         traceback.print_exc()
         return Response("Server error", status=500)
-
 
 
 # ================================================================

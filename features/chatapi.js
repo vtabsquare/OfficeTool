@@ -154,7 +154,7 @@ export function sendWithProgress(formData, onProgress) {
   const xhr = new XMLHttpRequest();
 
   const promise = new Promise((resolve, reject) => {
-    xhr.open("POST", `${CHAT_API_BASE}/send-file`, true);
+    xhr.open("POST", `${CHAT_API_BASE}/send-files`, true);
 
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable && onProgress) {
@@ -183,6 +183,26 @@ export function sendWithProgress(formData, onProgress) {
 
   // return both so caller can access xhr.abort() and await promise
   return { xhr, promise };
+}
+export function sendMultipleFilesApi({
+  conversation_id,
+  sender_id,
+  files,
+  onProgress,
+  onCancelRef,
+}) {
+  const form = new FormData();
+  form.append("conversation_id", conversation_id);
+  form.append("sender_id", sender_id);
+
+  [...files].forEach((file) => {
+    form.append("files", file);
+  });
+
+  const { xhr, promise } = sendWithProgress(form, onProgress);
+
+  if (onCancelRef) onCancelRef.current = xhr;
+  return promise;
 }
 
 // --------------------------------------------------
