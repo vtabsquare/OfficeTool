@@ -90,69 +90,45 @@ export const renderChatPage = async () => {
     const style = document.createElement("style");
     style.id = "chatStyles";
     style.innerHTML = `:root{
-      --bg: #f6f8fb; /* page background */
-      --surface: #ffffff; /* right panel background */
-      --panel: #f5f7fb; /* left panel */
-      --muted: #6b7280;
-      --text: #0f1724;
-      --primary: #6c63ff;
-      --accent: #6b46ff;
-      --border: rgba(15,23,36,0.06);
-      --hover: rgba(15,23,36,0.03);
-      --input-bg: rgba(15,23,36,0.03);
+      /* WhatsApp-inspired Light Mode */
+      --bg: #efeae2; /* WhatsApp chat background */
+      --surface: #ffffff;
+      --panel: #ffffff;
+      --muted: #667781;
+      --text: #111b21;
+      --primary: #00a884; /* WhatsApp green */
+      --accent: #25d366; /* WhatsApp light green */
+      --border: #e9edef;
+      --hover: rgba(0,0,0,0.05);
+      --input-bg: #f0f2f5;
       --card: #ffffff;
-      --chip: rgba(15,23,36,0.04);
-      --shadow: 0 12px 30px rgba(2, 6, 23, 0.08);
-      --shadow-soft: 0 8px 20px rgba(2, 6, 23, 0.06);
-      --bubble-in: #f3f4f6;
+      --chip: #e9edef;
+      --shadow: 0 1px 3px rgba(11,20,26,0.08);
+      --shadow-soft: 0 1px 2px rgba(11,20,26,0.04);
+      --bubble-out: #d9fdd3; /* WhatsApp sent message */
+      --bubble-in: #ffffff; /* WhatsApp received message */
+      --header-bg: #f0f2f5;
+      --chat-bg: url("data:image/svg+xml,%3Csvg width='100' height='100' xmlns='http://www.w3.org/2000/svg'%3E%3Cdefs%3E%3Cpattern id='p' width='20' height='20' patternUnits='userSpaceOnUse'%3E%3Ccircle cx='2' cy='2' r='1' fill='%23d1d7db' opacity='0.3'/%3E%3C/pattern%3E%3C/defs%3E%3Crect fill='url(%23p)' width='100' height='100'/%3E%3C/svg%3E");
     }
 
-    /* -------------------------
-       DARK MODE (exact variables you provided)
-       To enable dark mode, add: document.body.classList.add('dark-mode')
-       ------------------------- */
-    .dark-mode{
-      --bg:#0f1724; /* page background */
-      --surface:#0b1220; /* right panel background */
-      --panel:#0e1824; /* left panel */
-      --muted:#88a0b3;
-      --text:#e6eef6;
-      --primary:#5b3df5;
-      --accent:#6b46ff;
-      --border: rgba(255,255,255,0.04);
-      --hover: rgba(255,255,255,0.02);
-      --input-bg: rgba(255,255,255,0.02);
-      --card: #0b1220;
+    /* WhatsApp-inspired Dark Mode */
+    .dark-mode, [data-theme='dark'] {
+      --bg: #0b141a; /* WhatsApp dark background */
+      --surface: #111b21;
+      --panel: #111b21;
+      --muted: #8696a0;
+      --text: #e9edef;
+      --primary: #00a884;
+      --accent: #25d366;
+      --border: #222d34;
+      --hover: rgba(255,255,255,0.06);
+      --input-bg: #2a3942;
+      --card: #1f2c33;
+      --chip: #2a3942;
+      --bubble-out: #005c4b; /* WhatsApp dark sent */
+      --bubble-in: #1f2c33; /* WhatsApp dark received */
+      --header-bg: #202c33;
     }
-      :root {
-        /* Light mode */
-        --bg: #f5f6fa;
-        --surface: #ffffff;
-        --panel: #ffffff;
-        --card: #ffffff;
-        --input-bg: #f0f2f5;
-
-        --text: #1f2937;
-        --muted: #6b7280;
-        --primary: #5b3df5;
-        --accent: #6b46ff;
-        --border: rgba(0,0,0,0.12);
-        --hover: rgba(0,0,0,0.04);
-        }
-
-        /* Dark mode override */
-        [data-theme='dark'] {
-        --bg:#0f1724;
-        --surface:#0b1220;
-        --panel:#0e1824;
-        --card:#0b1220;
-        --input-bg:rgba(255,255,255,0.05);
-
-        --text:#e6eef6;
-        --muted:#94a3b8;
-        --border:rgba(255,255,255,0.08);
-        --hover:rgba(255,255,255,0.06);
-        }
 
 
     /* container */
@@ -229,24 +205,28 @@ export const renderChatPage = async () => {
     }
 
     .chat-tab.active{
-      background: linear-gradient(180deg, rgba(91,61,245,0.18), rgba(107,70,255,0.10));
-      color: var(--text);
-      box-shadow: inset 0 0 0 1px rgba(91,61,245,0.12);
+      background: rgba(0,168,132,0.15);
+      color: var(--primary);
+      font-weight: 600;
     }
 
     #createNewChat{
-      background: linear-gradient(180deg,var(--primary),var(--accent));
+      background: var(--primary);
       border:none;
       color:white;
-      width:44px;
-      height:44px;
-      border-radius: 12px;
+      width:40px;
+      height:40px;
+      border-radius: 50%;
       display:flex;
       align-items:center;
       justify-content:center;
-      box-shadow: 0 10px 26px rgba(91,61,245,0.18);
       cursor:pointer;
       font-size:16px;
+      transition: background 0.15s ease;
+    }
+
+    #createNewChat:hover{
+      background: var(--accent);
     }
 
     .chat-search{
@@ -486,17 +466,17 @@ export const renderChatPage = async () => {
 
     .msg-sent{
       margin-left:auto;
-      background: linear-gradient(180deg,var(--primary),var(--accent));
-      color:white;
-      border-bottom-right-radius: 8px;
+      background: var(--bubble-out);
+      color: var(--text);
+      border-bottom-right-radius: 4px;
+      box-shadow: 0 1px 0.5px rgba(11,20,26,0.13);
     }
 
     .msg-received{
       background: var(--bubble-in);
-      color:var(--text);
-      border-bottom-left-radius: 8px;
-      border: 1px solid rgba(0,0,0,0.04);
-      box-shadow: none;
+      color: var(--text);
+      border-bottom-left-radius: 4px;
+      box-shadow: 0 1px 0.5px rgba(11,20,26,0.13);
     }
 
     .msg-content{ display:block; }
@@ -570,8 +550,8 @@ export const renderChatPage = async () => {
     }
 
     .icon-btn:hover{
-      background: rgba(91,61,245,0.08);
-      transform: translateY(-1px);
+      background: rgba(0,168,132,0.1);
+      color: var(--primary);
     }
 
     .chat-input input[type="text"]{
@@ -586,18 +566,22 @@ export const renderChatPage = async () => {
     }
 
     .send-btn{
-      width: 52px;
-      height: 52px;
-      border-radius: 16px;
-      background: linear-gradient(180deg,var(--primary),var(--accent));
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      background: var(--primary);
       border:none;
       color:white;
       display:flex;
       align-items:center;
       justify-content:center;
       cursor:pointer;
-      box-shadow: 0 14px 34px rgba(91,61,245,0.20);
       font-size:18px;
+      transition: background 0.15s ease;
+    }
+
+    .send-btn:hover{
+      background: var(--accent);
     }
 
     /* media menu (anchored near header) */
@@ -2281,9 +2265,25 @@ body.dark .msg-time {
       // 3️⃣ Refresh left list – cheap
       renderConversationList();
 
-      // 4️⃣ Only render if active conversation is open
+      // 4️⃣ Only render if active conversation is open AND not already shown
       if (convId === window.currentConversationId) {
-        addMessageToUI(msg, msg.sender_id === state.user.id, msg.message_id, {
+        const isMine = String(msg.sender_id) === String(state.user?.id);
+        
+        // Skip if this is my own message (already shown optimistically)
+        // Check by temp_id or message_id to avoid duplicates
+        const existingEl = document.querySelector(
+          `[data-msgid="${msg.message_id}"], [data-tempid="${msg.temp_id}"]`
+        );
+        if (existingEl) {
+          // Update the existing element's data-msgid if needed
+          if (msg.message_id && existingEl.dataset.tempid) {
+            existingEl.setAttribute("data-msgid", msg.message_id);
+            existingEl.removeAttribute("data-tempid");
+          }
+          return; // Don't add duplicate
+        }
+        
+        addMessageToUI(msg, isMine, msg.message_id, {
           is_group: window.currentConversation?.is_group || false,
         });
       }
@@ -2725,35 +2725,56 @@ body.dark .msg-time {
    * - If server returns HTML or incorrect headers, fetch as blob and force-download
    */
   async function downloadFileRobust(url, filename, mime) {
+    // Ensure URL has proper base
+    let downloadUrl = url;
+    if (url && !url.startsWith('http') && !url.startsWith('blob:') && !url.startsWith('data:')) {
+      const apiBase = window.API_BASE_URL || '';
+      downloadUrl = url.startsWith('/') ? `${apiBase}${url}` : `${apiBase}/${url}`;
+    }
+
     try {
-      // Try simple anchor download first (fastest)
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = filename || "";
-      a.target = "_blank";
+      // Use fetch with auth headers for authenticated download
+      const token = state.user?.token || '';
+      const headers = {};
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      const resp = await fetch(downloadUrl, { 
+        credentials: 'include',
+        headers 
+      });
+      
+      if (!resp.ok) {
+        throw new Error(`Download failed: ${resp.status} ${resp.statusText}`);
+      }
+
+      const blob = await resp.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = filename || 'download';
+      a.style.display = 'none';
       document.body.appendChild(a);
       a.click();
       a.remove();
+      
+      // Clean up blob URL after download
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
     } catch (err) {
-      // fallback to fetch-as-blob
+      console.error('downloadFileRobust failed:', err);
+      
+      // Fallback: try direct anchor download
       try {
-        const resp = await fetch(url, { credentials: "include" });
-        if (!resp.ok) throw new Error("Download fetch failed: " + resp.status);
-        const blob = await resp.blob();
-        const blobUrl = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = blobUrl;
-        a.download = filename || "file";
+        const a = document.createElement('a');
+        a.href = downloadUrl;
+        a.download = filename || '';
+        a.target = '_blank';
         document.body.appendChild(a);
         a.click();
         a.remove();
-        // free object url
-        setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
       } catch (e) {
-        console.error("downloadFileRobust failed", e);
-        alert(
-          "Download failed. Please ask server admin to ensure file endpoint returns raw file bytes with correct Content-Type and Content-Disposition headers."
-        );
+        console.error('Fallback download also failed:', e);
+        showToast('Download failed. Please try again.');
       }
     }
   }
@@ -3173,7 +3194,9 @@ body.dark .msg-time {
       ) {
         FILE_URL = mu;
       } else {
-        FILE_URL = `/chat/file-download/${mu}`;
+        // Use the correct file download endpoint
+        const apiBase = window.API_BASE_URL || '';
+        FILE_URL = `${apiBase}/chat/file/${mu}`;
       }
     }
 
@@ -3342,7 +3365,8 @@ body.dark .msg-time {
 
     // Build final URL (server.media_url should be id or full path)
     const mediaId = server.media_url || server.mediaId || "";
-    const url = mediaId ? `/chat/file-download/${mediaId}` : "";
+    const apiBase = window.API_BASE_URL || '';
+    const url = mediaId ? `${apiBase}/chat/file/${mediaId}` : "";
     const mime = (server.mime_type || server.mime || "").toLowerCase();
 
     // find content container inside bubble
