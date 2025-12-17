@@ -793,15 +793,20 @@ def get_group_members(conversation_id):
         for r in rows:
             uid = r.get("crc6f_user_id")
             name = _get_employee_name_by_id(uid)
+
+            # Best-effort admin detection:
+            # - Prefer stored member field crc6f_is_admin when present
+            # - Otherwise fall back to server-side heuristic _is_group_admin
+            if r.get("crc6f_is_admin") is not None:
+                is_admin = bool(r.get("crc6f_is_admin"))
+            else:
+                is_admin = _is_group_admin(conversation_id, uid)
+
             out.append({
                 "id": uid,
                 "name": name,
                 "joined_on": r.get("crc6f_joined_on"),
-                "is_admin": (
-                    bool(r.get("crc6f_is_admin"))
-                    if r.get("crc6f_is_admin") is not None
-                    else False
-                ),
+                "is_admin": is_admin,
                 "is_muted": (
                     bool(r.get("crc6f_is_muted"))
                     if r.get("crc6f_is_muted") is not None
@@ -815,6 +820,81 @@ def get_group_members(conversation_id):
     except Exception as e:
         traceback.print_exc()
         return jsonify({"error": "fetch_members_failed", "details": str(e)}), 500
+
+
+# --------------------------------------------------------------
+# GET GROUP ICON (data url stored in crc6f_icon_url)
+# --------------------------------------------------------------
+@chat_bp.route("/group/<string:conversation_id>/icon", methods=["GET"])
+def get_group_icon(conversation_id):
+    try:
+        q = f"$filter=crc6f_conversationid eq '{conversation_id}'&$top=1"
+        resp = dataverse_get(CONV_ENTITY_SET, q)
+        rows = resp.get("value", []) if resp else []
+        if not rows:
+            return jsonify({"error": "conversation_not_found"}), 404
+
+        conv = rows[0]
+        icon_url = conv.get("crc6f_icon_url") or ""
+        return jsonify({"conversation_id": conversation_id, "icon_url": icon_url}), 200
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": "get_icon_failed", "details": str(e)}), 500
+
+
+# --------------------------------------------------------------
+# UPDATE GROUP ICON
+# POST /chat/group/<conversation_id>/icon
+# Accepts multipart form-data: file=<image>
+# Stores a data URL in crc6f_icon_url (best-effort, no schema changes)
+# --------------------------------------------------------------
+@chat_bp.route("/group/<string:conversation_id>/icon", methods=["POST"])
+def update_group_icon(conversation_id):
+    try:
+        actor_id = request.form.get("actor_id") or request.form.get("user_id")
+        if not actor_id:
+            return jsonify({"error": "actor_id_required"}), 400
+
+        if not _is_group_admin(conversation_id, actor_id):
+            return jsonify({"error": "forbidden", "details": "admin_required"}), 403
+
+        f = request.files.get("file")
+        if not f:
+            return jsonify({"error": "file_required"}), 400
+
+        raw = f.read()
+        if not raw:
+            return jsonify({"error": "empty_file"}), 400
+
+        # Build data URL to avoid needing a new file column / schema change.
+        mime = f.mimetype or "application/octet-stream"
+        b64 = base64.b64encode(raw).decode("utf-8")
+        data_url = f"data:{mime};base64,{b64}"
+
+        # Fetch conversation row
+        q = f"$filter=crc6f_conversationid eq '{conversation_id}'&$top=1"
+        resp = dataverse_get(CONV_ENTITY_SET, q)
+        rows = resp.get("value", []) if resp else []
+        if not rows:
+            return jsonify({"error": "conversation_not_found"}), 404
+
+        conv = rows[0]
+        guid = conv.get("crc6f_hr_chat_conversationid") or conv.get("crc6f_hr_chat_conversationsid") or extract_guid(conv)
+        if not guid:
+            return jsonify({"error": "cannot_determine_guid"}), 500
+        guid = str(guid).strip().replace("(", "").replace(")", "")
+
+        try:
+            dataverse_update(CONV_ENTITY_SET, guid, {"crc6f_icon_url": data_url})
+        except Exception:
+            return jsonify({"error": "icon_field_missing"}), 501
+
+        emit_socket_event("group_updated", {"conversation_id": conversation_id})
+        return jsonify({"ok": True, "icon_url": data_url}), 200
+
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": "update_icon_failed", "details": str(e)}), 500
 
 
 # --------------------------------------------------------------

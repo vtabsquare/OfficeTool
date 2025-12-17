@@ -18,6 +18,7 @@ import {
   leaveGroup,
   makeGroupAdmin,
   updateGroupDescription,
+  updateGroupIcon,
   leaveDirectChat,
   sendWithProgress,
   sendMultipleFilesApi,
@@ -5551,7 +5552,7 @@ body.dark .msg-time {
 
     // Archive handler
     menu.querySelector(".menu-archive").addEventListener("click", async () => {
-      const convo = (window.conversationList || []).find(
+      const convo = (window.conversationCache || []).find(
         (c) => c.conversation_id === conversationId
       );
       if (!convo) return;
@@ -5570,7 +5571,7 @@ body.dark .msg-time {
 
     // handlers
     menu.querySelector(".menu-edit").addEventListener("click", async () => {
-      const convo = (window.conversationList || []).find(
+      const convo = (window.conversationCache || []).find(
         (c) => c.conversation_id === conversationId
       );
       if (!convo) return;
@@ -5595,7 +5596,7 @@ body.dark .msg-time {
     });
 
     menu.querySelector(".menu-delete").addEventListener("click", async () => {
-      const convo = (window.conversationList || []).find(
+      const convo = (window.conversationCache || []).find(
         (c) => c.conversation_id === conversationId
       );
       if (!convo) return;
@@ -6726,6 +6727,38 @@ async function openGroupInfoPanel(conversation_id) {
 
   document.getElementById("closeGroupInfoBtn").onclick = closePanel;
   overlay.onclick = closePanel;
+
+  // Group icon change (admin only)
+  const avatarEl = document.getElementById("groupInfoAvatar");
+  if (avatarEl && isMeAdmin) {
+    avatarEl.style.cursor = "pointer";
+    avatarEl.title = "Change icon";
+    avatarEl.onclick = async () => {
+      const input = document.createElement("input");
+      input.type = "file";
+      input.accept = "image/*";
+      input.onchange = async () => {
+        const file = input.files?.[0];
+        if (!file) return;
+        try {
+          await updateGroupIcon(conversation_id, file);
+
+          // Refresh conversation list (so icon appears in future panel opens and list)
+          if (typeof window.refreshConversationList === "function") {
+            await window.refreshConversationList();
+          }
+
+          // Re-open panel to show new icon
+          closePanel();
+          setTimeout(() => openGroupInfoPanel(conversation_id), 350);
+        } catch (err) {
+          console.error("updateGroupIcon failed:", err);
+          alert("Failed to update group icon");
+        }
+      };
+      input.click();
+    };
+  }
 
   // Mute toggle
   document.getElementById("muteGroupRow").onclick = async () => {

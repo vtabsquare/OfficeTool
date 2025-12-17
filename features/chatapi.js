@@ -356,6 +356,16 @@ export function updateGroupDescription(conversationId, description) {
   });
 }
 
+export function updateGroupIcon(conversationId, file) {
+  const form = new FormData();
+  form.append("actor_id", state.user?.id || "");
+  form.append("file", file);
+  return apiFetch(`/group/${conversationId}/icon`, {
+    method: "POST",
+    body: form,
+  });
+}
+
 export function leaveDirectChat(conversationId, userId) {
   return apiFetch(`/direct/${conversationId}/${userId}`, {
     method: "DELETE",
