@@ -2950,7 +2950,10 @@ body.dark .msg-time {
       convo.last_message_time = payload.created_on;
       convo.last_message = payload.message_text || payload.file_name || "";
       convo.last_sender = payload.sender_id;
-      renderConversationList(); // Re-render to move chat to top
+      const currentFilter = (document.getElementById("chatSearchInput")?.value || "")
+        .trim()
+        .toLowerCase();
+      renderConversationList(currentFilter); // Re-render to move chat to top
     }
 
     emit("send_message", payload, (err, res) => {
@@ -5327,7 +5330,7 @@ body.dark .msg-time {
 
       // Unread count badge
       const unreadCount = convo.unread_count || 0;
-      const unreadBadgeHtml = unreadCount > 0 
+      const unreadBadgeHtml = unreadCount > 0 && String(convo.conversation_id) !== String(window.currentConversationId)
         ? `<span class="unread-badge" style="
             background:#00a884;
             color:#fff;
@@ -5417,7 +5420,10 @@ body.dark .msg-time {
     // Clear unread count when opening conversation
     if (convo.unread_count > 0) {
       convo.unread_count = 0;
-      renderConversationList();
+      const currentFilter = (document.getElementById("chatSearchInput")?.value || "")
+        .trim()
+        .toLowerCase();
+      renderConversationList(currentFilter);
     }
 
     const displayName = getTargetDisplayName(convo);
