@@ -338,6 +338,13 @@ def get_conversations(user_id):
                 if last_msg_sender:
                     last_sender_name = _get_employee_name_by_id(last_msg_sender)
 
+            # Best-effort: fetch description, icon_url, created_by, created_on
+            description = conv.get("crc6f_description") or ""
+            icon_url = conv.get("crc6f_icon_url") or ""
+            created_by = conv.get("crc6f_created_by") or ""
+            created_on = conv.get("createdon") or ""
+            created_by_name = _get_employee_name_by_id(created_by) if created_by else ""
+
             results.append({
                 "conversation_id": cid,
                 "name": name,
@@ -349,6 +356,11 @@ def get_conversations(user_id):
                 "last_sender": last_msg_sender,
                 "last_sender_name": last_sender_name,
                 "last_message_time": last_msg_time,
+                "description": description,
+                "icon_url": icon_url,
+                "created_by": created_by,
+                "created_by_name": created_by_name,
+                "created_on": created_on,
             })
 
         
@@ -444,11 +456,23 @@ def create_group():
     cid = str(uuid.uuid4())
 
     try:
-        dataverse_create(CONV_ENTITY_SET, {
+        conv_payload = {
             "crc6f_conversationid": cid,
             "crc6f_empname": name,
             "crc6f_isgroup": "true",
-        })
+        }
+        # Best-effort: store creator_id for "created by" info
+        if creator:
+            conv_payload["crc6f_created_by"] = creator
+        try:
+            dataverse_create(CONV_ENTITY_SET, conv_payload)
+        except Exception:
+            # Fallback without created_by if field doesn't exist
+            dataverse_create(CONV_ENTITY_SET, {
+                "crc6f_conversationid": cid,
+                "crc6f_empname": name,
+                "crc6f_isgroup": "true",
+            })
 
         for uid in members:
             member_payload = {
@@ -1162,6 +1186,50 @@ def make_admin(conversation_id):
     except Exception as e:
         traceback.print_exc()
         return jsonify({"error": "make_admin_failed", "details": str(e)}), 500
+
+
+# --------------------------------------------------------------
+# UPDATE GROUP DESCRIPTION
+# PATCH /chat/group/<conversation_id>/description
+# Body: { "description": "New description", "sender_id": "..." }
+# --------------------------------------------------------------
+@chat_bp.route("/group/<string:conversation_id>/description", methods=["PATCH"])
+def update_group_description(conversation_id):
+    try:
+        payload = request.get_json() or {}
+        description = payload.get("description", "")
+        sender_id = payload.get("sender_id")
+
+        if not sender_id:
+            return jsonify({"error": "sender_id_required"}), 400
+
+        if not _is_group_admin(conversation_id, sender_id):
+            return jsonify({"error": "forbidden", "details": "admin_required"}), 403
+
+        # Fetch conversation row
+        q = f"$filter=crc6f_conversationid eq '{conversation_id}'&$top=1"
+        resp = dataverse_get(CONV_ENTITY_SET, q)
+        rows = resp.get("value", []) if resp else []
+        if not rows:
+            return jsonify({"error": "conversation_not_found"}), 404
+
+        rec = rows[0]
+        guid = rec.get("crc6f_hr_chat_conversationid") or extract_guid(rec)
+        if not guid:
+            return jsonify({"error": "cannot_determine_guid"}), 500
+        guid = guid.strip().replace("(", "").replace(")", "")
+
+        try:
+            dataverse_update(CONV_ENTITY_SET, guid, {"crc6f_description": description})
+        except Exception:
+            return jsonify({"error": "description_field_missing"}), 501
+
+        emit_socket_event("group_updated", {"conversation_id": conversation_id})
+        return jsonify({"ok": True, "description": description}), 200
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": "update_description_failed", "details": str(e)}), 500
+
 
 # --------------------------------------------------------------
 # PATCH — EDIT MESSAGE

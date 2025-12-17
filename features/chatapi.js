@@ -341,6 +341,21 @@ export function makeGroupAdmin(conversationId, userId, isAdmin = true) {
   });
 }
 
+// --------------------------------------------------
+// 17) UPDATE GROUP DESCRIPTION
+// PATCH /chat/group/<conversation_id>/description
+// Body: { description, sender_id }
+// --------------------------------------------------
+export function updateGroupDescription(conversationId, description) {
+  return apiFetch(`/group/${conversationId}/description`, {
+    method: "PATCH",
+    body: JSON.stringify({
+      description: description || "",
+      sender_id: state.user?.id,
+    }),
+  });
+}
+
 export function leaveDirectChat(conversationId, userId) {
   return apiFetch(`/direct/${conversationId}/${userId}`, {
     method: "DELETE",

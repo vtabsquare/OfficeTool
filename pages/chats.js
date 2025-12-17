@@ -17,6 +17,7 @@ import {
   muteGroup,
   leaveGroup,
   makeGroupAdmin,
+  updateGroupDescription,
   leaveDirectChat,
   sendWithProgress,
   sendMultipleFilesApi,
@@ -6165,178 +6166,287 @@ async function openGroupInfoPanel(conversation_id) {
   const me = String(state.user.id);
   let members;
 
-  if (window.groupMemberCache[conversation_id]) {
-    members = window.groupMemberCache[conversation_id];
-  } else {
-    try {
-      members = await getGroupMembers(conversation_id);
-    } catch {
-      members = convo.members || [];
-    }
-    window.groupMemberCache[conversation_id] = members;
+  // Always fetch fresh from backend for panel
+  try {
+    members = await getGroupMembers(conversation_id);
+  } catch {
+    members = convo.members || [];
   }
+  window.groupMemberCache[conversation_id] = members;
 
   const myRow = (members || []).find((m) => String(m.id) === me) || {};
   const isMeAdmin = Boolean(myRow.is_admin);
   const isMuted = Boolean(myRow.is_muted);
 
-  // const members = convo.members || [];
+  const groupName = convo.display_name || convo.name || "Group";
+  const groupInitial = (groupName[0] || "G").toUpperCase();
+  const groupIcon = convo.icon_url || null;
 
-  // Build member list display + selection
+  // Build member list HTML (WhatsApp style)
   const memberListHTML = (members || [])
     .map((m) => {
       const isMe = String(m.id) === me;
       const isAdmin = Boolean(m.is_admin);
-      const canRemove = isMeAdmin && !isMe;
-      const canMakeAdmin = isMeAdmin && !isMe && !isAdmin;
+      const initial = (m.name || "U")[0].toUpperCase();
 
       return `
-        <div class="group-member-item" style="display:flex;align-items:center;gap:10px;justify-content:space-between;">
-          <div style="display:flex;align-items:center;gap:10px;min-width:0;">
-            ${
-              isMeAdmin && !isMe
-                ? `<input type="checkbox" class="removeMemberChk" value="${m.id}">`
-                : ""
-            }
-            <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${m.name}${
-              isMe ? " (You)" : ""
-            }${isAdmin ? " <span style=\"color:var(--muted);font-size:12px;\">Admin</span>" : ""}</span>
+        <div class="group-info-member-item" data-user-id="${m.id}">
+          <div class="group-info-member-avatar">${initial}</div>
+          <div class="group-info-member-info">
+            <div class="group-info-member-name">${m.name}${isMe ? " (You)" : ""}</div>
           </div>
-          <div style="display:flex;gap:8px;">
-            ${
-              canMakeAdmin
-                ? `<button type="button" class="btn btn-secondary makeAdminBtn" data-user-id="${m.id}" style="padding:6px 10px;font-size:12px;">Make admin</button>`
-                : ""
-            }
-            ${
-              canRemove
-                ? `<button type="button" class="btn btn-danger removeOneBtn" data-user-id="${m.id}" style="padding:6px 10px;font-size:12px;">Remove</button>`
-                : ""
-            }
-          </div>
+          ${isAdmin ? `<span class="group-info-member-badge">Group admin</span>` : ""}
         </div>`;
     })
     .join("");
 
-  // ACTUAL MODAL
-  const html = `
-    <div class="group-info-container">
-      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;">
-        <div style="min-width:0;">
-          <div style="font-size:16px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${
-            convo.display_name || convo.name || "Group"
-          }</div>
-          <div style="font-size:12px;color:var(--muted);margin-top:4px;">${
-            members.length
-          } members</div>
+  // Remove existing panel if any
+  const existingPanel = document.getElementById("groupInfoPanel");
+  if (existingPanel) existingPanel.remove();
+  const existingOverlay = document.getElementById("groupInfoOverlay");
+  if (existingOverlay) existingOverlay.remove();
+
+  // Create overlay
+  const overlay = document.createElement("div");
+  overlay.id = "groupInfoOverlay";
+  overlay.className = "group-info-overlay";
+  document.body.appendChild(overlay);
+
+  // Create panel
+  const panel = document.createElement("div");
+  panel.id = "groupInfoPanel";
+  panel.className = "group-info-panel";
+  panel.innerHTML = `
+    <div class="group-info-panel-header">
+      <button class="close-btn" id="closeGroupInfoBtn"><i class="fa-solid fa-xmark"></i></button>
+      <h2>Group info</h2>
+    </div>
+    <div class="group-info-panel-body">
+      <!-- Icon section -->
+      <div class="group-info-icon-section">
+        <div class="group-info-avatar" id="groupInfoAvatar">
+          ${groupIcon ? `<img src="${groupIcon}" alt="Group icon">` : groupInitial}
         </div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;">
-          <button id="muteGroupBtn" type="button" class="btn btn-secondary">${
-            isMuted ? "Unmute" : "Mute"
-          } group</button>
-          <button id="leaveGroupBtn" type="button" class="btn btn-danger">Leave group</button>
+        <div class="group-info-name-row">
+          <span class="group-info-name" id="groupInfoName">${groupName}</span>
+          ${isMeAdmin ? `<button class="edit-btn" id="editGroupNameBtn"><i class="fa-solid fa-pencil"></i></button>` : ""}
+        </div>
+        <div class="group-info-subtitle">Group · ${members.length} members</div>
+      </div>
+
+      <!-- Description section -->
+      <div class="group-info-section">
+        <div class="group-info-description">
+          <span class="group-info-description-text" id="groupDescText">${convo.description || "Add group description"}</span>
+          ${isMeAdmin ? `<button class="edit-btn" id="editGroupDescBtn"><i class="fa-solid fa-pencil"></i></button>` : ""}
         </div>
       </div>
 
-      <hr class="divider"/>
+      <!-- Created info -->
+      <div class="group-info-created">
+        Group created by ${convo.created_by_name || "unknown"}, ${convo.created_on ? new Date(convo.created_on).toLocaleDateString() : ""}
+      </div>
 
-      <h3 class="section-title">Members</h3>
+      <!-- Mute notifications -->
+      <div class="group-info-action-row" id="muteGroupRow">
+        <i class="fa-solid fa-bell${isMuted ? "-slash" : ""}"></i>
+        <span>${isMuted ? "Unmute" : "Mute"} notifications</span>
+      </div>
 
-      <div class="member-list">
+      <!-- Members section -->
+      <div class="group-info-members-header">
+        <span>${members.length} members</span>
+        <button class="search-btn" id="searchMembersBtn"><i class="fa-solid fa-magnifying-glass"></i></button>
+      </div>
+
+      <!-- Add member (admin only) -->
+      ${isMeAdmin ? `
+      <div class="group-info-action-row green" id="addMemberRow">
+        <i class="fa-solid fa-user-plus"></i>
+        <span>Add member</span>
+      </div>
+      ` : ""}
+
+      <!-- Member list -->
+      <div id="groupInfoMemberList">
         ${memberListHTML}
       </div>
 
-      <div class="actions-row" style="margin-top:12px;display:${
-        isMeAdmin ? "flex" : "none"
-      };gap:10px;">
-        <button id="addMembersBtn" class="btn btn-primary">+ Add Members</button>
-        <button id="deleteMembersBtn" class="btn btn-danger">Remove selected</button>
+      <!-- Add to favorites -->
+      <div class="group-info-action-row" id="addFavoritesRow" style="border-top: 8px solid var(--surface-alt, #202c33);margin-top:8px;">
+        <i class="fa-regular fa-heart"></i>
+        <span>Add to favorites</span>
+      </div>
+
+      <!-- Exit group -->
+      <div class="group-info-action-row red" id="exitGroupRow">
+        <i class="fa-solid fa-arrow-right-from-bracket"></i>
+        <span>Exit group</span>
       </div>
     </div>
   `;
+  document.body.appendChild(panel);
 
-  renderModal("Group Info", html, [], "large");
+  // Animate open
+  requestAnimationFrame(() => {
+    panel.classList.add("open");
+    overlay.classList.add("open");
+  });
 
-  const muteBtn = document.getElementById("muteGroupBtn");
-  if (muteBtn) {
-    muteBtn.onclick = async () => {
-      try {
-        await muteGroup(conversation_id, !isMuted);
-        delete window.groupMemberCache[conversation_id];
-        closeModal();
-        setTimeout(() => openGroupInfoPanel(conversation_id), 150);
-      } catch (err) {
-        console.error("muteGroup failed:", err);
-        alert("Failed to update mute");
+  // Close handlers
+  const closePanel = () => {
+    panel.classList.remove("open");
+    overlay.classList.remove("open");
+    setTimeout(() => {
+      panel.remove();
+      overlay.remove();
+    }, 300);
+  };
+
+  document.getElementById("closeGroupInfoBtn").onclick = closePanel;
+  overlay.onclick = closePanel;
+
+  // Mute toggle
+  document.getElementById("muteGroupRow").onclick = async () => {
+    try {
+      await muteGroup(conversation_id, !isMuted);
+      delete window.groupMemberCache[conversation_id];
+      closePanel();
+      setTimeout(() => openGroupInfoPanel(conversation_id), 350);
+    } catch (err) {
+      console.error("muteGroup failed:", err);
+      alert("Failed to update mute");
+    }
+  };
+
+  // Exit group
+  document.getElementById("exitGroupRow").onclick = async () => {
+    if (!confirm("Exit this group?")) return;
+    try {
+      await leaveGroup(conversation_id);
+      closePanel();
+      if (typeof window.refreshConversationList === "function") {
+        await window.refreshConversationList();
       }
+    } catch (err) {
+      console.error("leaveGroup failed:", err);
+      alert("Failed to leave group");
+    }
+  };
+
+  // Add member (admin only)
+  const addMemberRow = document.getElementById("addMemberRow");
+  if (addMemberRow) {
+    addMemberRow.onclick = () => {
+      closePanel();
+      setTimeout(() => openAddMembersPanel(conversation_id), 350);
     };
   }
 
-  const leaveBtn = document.getElementById("leaveGroupBtn");
-  if (leaveBtn) {
-    leaveBtn.onclick = async () => {
-      if (!confirm("Leave this group?")) return;
+  // Edit group name (admin only)
+  const editNameBtn = document.getElementById("editGroupNameBtn");
+  if (editNameBtn) {
+    editNameBtn.onclick = async () => {
+      const newName = prompt("Enter new group name:", groupName);
+      if (!newName || newName.trim() === groupName) return;
       try {
-        await leaveGroup(conversation_id);
-        closeModal();
+        await renameGroup(conversation_id, newName.trim());
+        delete window.groupMemberCache[conversation_id];
         if (typeof window.refreshConversationList === "function") {
           await window.refreshConversationList();
         }
+        closePanel();
+        setTimeout(() => openGroupInfoPanel(conversation_id), 350);
       } catch (err) {
-        console.error("leaveGroup failed:", err);
-        alert("Failed to leave group");
+        console.error("rename failed:", err);
+        alert("Failed to rename group");
       }
     };
   }
 
-  // Attach actions
-  const addBtn = document.getElementById("addMembersBtn");
-  if (addBtn) {
-    addBtn.onclick = () => {
-      closeModal();
-      setTimeout(() => {
-        openAddMembersPanel(conversation_id);
-      }, 10);
+  // Edit group description (admin only)
+  const editDescBtn = document.getElementById("editGroupDescBtn");
+  if (editDescBtn) {
+    editDescBtn.onclick = async () => {
+      const currentDesc = convo.description || "";
+      const newDesc = prompt("Enter group description:", currentDesc);
+      if (newDesc === null || newDesc === currentDesc) return;
+      try {
+        await updateGroupDescription(conversation_id, newDesc.trim());
+        if (typeof window.refreshConversationList === "function") {
+          await window.refreshConversationList();
+        }
+        closePanel();
+        setTimeout(() => openGroupInfoPanel(conversation_id), 350);
+      } catch (err) {
+        console.error("update description failed:", err);
+        alert("Failed to update description");
+      }
     };
   }
 
-  const delBtn = document.getElementById("deleteMembersBtn");
-  if (delBtn) {
-    delBtn.onclick = () => performRemoveMembers(conversation_id);
+  // Member click (admin can remove/make admin)
+  if (isMeAdmin) {
+    document.querySelectorAll(".group-info-member-item").forEach((item) => {
+      item.onclick = () => {
+        const uid = item.dataset.userId;
+        if (!uid || uid === me) return;
+
+        const member = members.find((m) => String(m.id) === uid);
+        if (!member) return;
+
+        const isAdmin = Boolean(member.is_admin);
+        const actions = [];
+        if (!isAdmin) actions.push("Make admin");
+        actions.push("Remove from group");
+        actions.push("Cancel");
+
+        const choice = prompt(
+          `${member.name}\n\nChoose action:\n${actions.map((a, i) => `${i + 1}. ${a}`).join("\n")}\n\nEnter number:`
+        );
+        const idx = parseInt(choice, 10) - 1;
+        if (isNaN(idx) || idx < 0 || idx >= actions.length) return;
+
+        const action = actions[idx];
+        if (action === "Make admin") {
+          makeGroupAdmin(conversation_id, uid, true)
+            .then(() => {
+              delete window.groupMemberCache[conversation_id];
+              closePanel();
+              setTimeout(() => openGroupInfoPanel(conversation_id), 350);
+            })
+            .catch((err) => {
+              console.error("make admin failed:", err);
+              alert("Failed to make admin");
+            });
+        } else if (action === "Remove from group") {
+          if (!confirm(`Remove ${member.name} from group?`)) return;
+          removeMembersFromGroup(conversation_id, [uid])
+            .then(() => {
+              delete window.groupMemberCache[conversation_id];
+              closePanel();
+              setTimeout(() => openGroupInfoPanel(conversation_id), 350);
+            })
+            .catch((err) => {
+              console.error("remove member failed:", err);
+              alert("Failed to remove member");
+            });
+        }
+      };
+    });
   }
 
-  document.querySelectorAll(".removeOneBtn").forEach((btn) => {
-    btn.addEventListener("click", async () => {
-      const uid = btn.dataset.userId;
-      if (!uid) return;
-      if (!confirm("Remove this member?")) return;
-      try {
-        await removeMembersFromGroup(conversation_id, [uid]);
-        delete window.groupMemberCache[conversation_id];
-        closeModal();
-        setTimeout(() => openGroupInfoPanel(conversation_id), 150);
-      } catch (err) {
-        console.error("remove member failed:", err);
-        alert("Failed to remove member");
-      }
-    });
-  });
-
-  document.querySelectorAll(".makeAdminBtn").forEach((btn) => {
-    btn.addEventListener("click", async () => {
-      const uid = btn.dataset.userId;
-      if (!uid) return;
-      try {
-        await makeGroupAdmin(conversation_id, uid, true);
-        delete window.groupMemberCache[conversation_id];
-        closeModal();
-        setTimeout(() => openGroupInfoPanel(conversation_id), 150);
-      } catch (err) {
-        console.error("make admin failed:", err);
-        alert("Failed to make admin");
-      }
-    });
-  });
+  // Add to favorites (local storage for now)
+  document.getElementById("addFavoritesRow").onclick = () => {
+    const favs = JSON.parse(localStorage.getItem("favoriteChats") || "[]");
+    if (favs.includes(conversation_id)) {
+      alert("Already in favorites");
+    } else {
+      favs.push(conversation_id);
+      localStorage.setItem("favoriteChats", JSON.stringify(favs));
+      alert("Added to favorites");
+    }
+  };
 }
 
 async function openAddMembersPanel(conversation_id) {
