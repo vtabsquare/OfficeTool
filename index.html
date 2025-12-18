@@ -4,6 +4,179 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>VTAB SQUARE</title>
+    <!-- Critical inline CSS for modals to prevent FOUC (Flash of Unstyled Content) -->
+    <style>
+        /* Modal Critical CSS - Prevents unstyled modal flash on first load */
+        .modal-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.5);
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1100;
+            opacity: 0;
+            visibility: hidden;
+            transition: opacity 0.3s ease, visibility 0.3s ease;
+            padding: 2rem 1rem;
+            overflow-y: auto;
+        }
+        .modal-overlay.visible {
+            opacity: 1;
+            visibility: visible;
+        }
+        .modal {
+            background: #ffffff;
+            border-radius: 20px;
+            width: 100%;
+            max-width: 640px;
+            max-height: 90vh;
+            display: flex;
+            flex-direction: column;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+            transform: translateY(10px) scale(0.98);
+            opacity: 0;
+            transition: all 0.3s ease;
+            overflow: hidden;
+        }
+        .modal-overlay.visible .modal {
+            transform: translateY(0) scale(1);
+            opacity: 1;
+        }
+        .modal-header {
+            padding: 24px 32px 16px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid rgba(0,0,0,0.08);
+        }
+        .modal-header h2 {
+            margin: 0;
+            font-size: 1.35rem;
+            font-weight: 600;
+            color: #1f2937;
+        }
+        .modal-close-btn {
+            background: transparent;
+            border: none;
+            font-size: 1.5rem;
+            color: #9ca3af;
+            cursor: pointer;
+            width: 32px;
+            height: 32px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 50%;
+            transition: all 0.2s ease;
+        }
+        .modal-close-btn:hover {
+            background: #f3f4f6;
+            color: #374151;
+        }
+        .modal-body {
+            padding: 24px 32px;
+            overflow-y: auto;
+            flex: 1;
+        }
+        .modal-footer {
+            padding: 16px 32px 24px;
+            display: flex;
+            justify-content: flex-end;
+            gap: 12px;
+            border-top: 1px solid rgba(0,0,0,0.08);
+        }
+        .modal-footer .btn {
+            padding: 12px 24px;
+            border-radius: 10px;
+            font-weight: 600;
+            font-size: 0.95rem;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            min-width: 100px;
+        }
+        .modal-footer .btn-secondary {
+            background: #f3f4f6;
+            border: 1px solid #e5e7eb;
+            color: #374151;
+        }
+        .modal-footer .btn-primary {
+            background: linear-gradient(135deg, #2563eb, #7c3aed);
+            border: none;
+            color: white;
+            box-shadow: 0 4px 14px rgba(37, 99, 235, 0.4);
+        }
+        /* Form sections inside modal */
+        .form-section {
+            background: rgba(248, 250, 252, 0.8);
+            border: 1px solid rgba(226, 232, 240, 0.8);
+            border-radius: 16px;
+            padding: 1.5rem;
+            margin-bottom: 1rem;
+        }
+        .form-group {
+            margin-bottom: 1rem;
+        }
+        .form-group label {
+            display: block;
+            font-weight: 500;
+            color: #374151;
+            margin-bottom: 0.5rem;
+            font-size: 0.9rem;
+        }
+        .form-group input,
+        .form-group select,
+        .form-group textarea {
+            width: 100%;
+            padding: 12px 16px;
+            border: 1px solid #e5e7eb;
+            border-radius: 12px;
+            font-size: 0.95rem;
+            background: #ffffff;
+            color: #1f2937;
+            transition: border-color 0.2s ease, box-shadow 0.2s ease;
+            box-sizing: border-box;
+        }
+        .form-group input:focus,
+        .form-group select:focus,
+        .form-group textarea:focus {
+            outline: none;
+            border-color: #2563eb;
+            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+        }
+        /* Dark theme modal overrides */
+        body.dark-theme .modal {
+            background: #1e293b;
+        }
+        body.dark-theme .modal-header h2 {
+            color: #f1f5f9;
+        }
+        body.dark-theme .modal-header,
+        body.dark-theme .modal-footer {
+            border-color: rgba(255,255,255,0.1);
+        }
+        body.dark-theme .form-section {
+            background: rgba(30, 41, 59, 0.8);
+            border-color: rgba(71, 85, 105, 0.5);
+        }
+        body.dark-theme .form-group label {
+            color: #e2e8f0;
+        }
+        body.dark-theme .form-group input,
+        body.dark-theme .form-group select,
+        body.dark-theme .form-group textarea {
+            background: #0f172a;
+            border-color: #475569;
+            color: #f1f5f9;
+        }
+        body.dark-theme .modal-footer .btn-secondary {
+            background: #334155;
+            border-color: #475569;
+            color: #f1f5f9;
+        }
+    </style>
     <link rel="stylesheet" href="theme.css">
     <link rel="stylesheet" href="index.css">
     <link rel="stylesheet" href="modern-ui.css">
