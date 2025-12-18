@@ -3282,6 +3282,10 @@ export const renderMeetPage = async () => {
                 if (callBanner) callBanner.classList.add('hidden');
                 callDecisions = new Map();
                 serverParticipantStatuses = new Map();
+                // Remove modal from document.body to prevent it from persisting across pages
+                if (callModal && callModal.parentElement === document.body) {
+                    callModal.remove();
+                }
             } catch (err) {
                 console.warn('cleanupMeetUI error', err);
             }
