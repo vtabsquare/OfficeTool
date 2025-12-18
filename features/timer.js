@@ -83,160 +83,198 @@ export const updateTimerDisplay = () => {
 };
 
 const startTimer = async () => {
-    // Capture location before check-in
-    const location = await getGeolocation();
+    // ⚡ OPTIMISTIC UI UPDATE - Start timer INSTANTLY on click
+    const clickTime = Date.now();
+    const previousSeconds = typeof state.timer.lastDuration === 'number' ? state.timer.lastDuration : 0;
     
-    // Call backend check-in with location
+    // Immediately update UI state
+    state.timer.isRunning = true;
+    state.timer.startTime = clickTime;
+    state.timer.lastDuration = previousSeconds;
+    if (state.timer.intervalId) clearInterval(state.timer.intervalId);
+    state.timer.intervalId = setInterval(updateTimerDisplay, 1000);
+    updateTimerButton();
+    updateTimerDisplay();
+    
+    // Save optimistic state to localStorage
+    const uid = String(state.user.id || '').toUpperCase();
+    const today = new Date();
+    const dateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
     try {
-        const { record_id, checkin_time, total_seconds_today } = await checkIn(state.user.id, location);
-        // Update local timer state only after successful backend check-in
-        state.timer.isRunning = true;
-
-        const backendSeconds = Number(total_seconds_today || 0);
-        const previousSeconds =
-            typeof state.timer.lastDuration === 'number'
-                ? state.timer.lastDuration
-                : 0;
-        // Never shrink the timer: prefer the larger of local paused value and backend total
-        const baseSeconds = Math.max(previousSeconds, backendSeconds);
-
-        state.timer.lastDuration = baseSeconds;
-        state.timer.startTime = Date.now();
-        state.timer.intervalId = setInterval(updateTimerDisplay, 1000);
-        try {
-            const uid = String(state.user.id || '').toUpperCase();
-            const today = new Date();
-            const dateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-            const payload = {
-                isRunning: true,
-                startTime: state.timer.startTime,
-                date: dateStr,
-                mode: 'running',
-                durationSeconds: baseSeconds,
-            };
-            if (uid) {
-                localStorage.setItem(`timerState_${uid}`, JSON.stringify(payload));
-            } else {
-                localStorage.setItem('timerState', JSON.stringify(payload));
-            }
-        } catch {}
-        updateTimerButton();
-
-        // Update attendance state for today
-        const today = new Date();
-        const day = today.getDate();
-        const uid = state.user.id;
-        state.attendanceData[uid] = state.attendanceData[uid] || {};
-        state.attendanceData[uid][day] = {
-            ...(state.attendanceData[uid][day] || {}),
-            day,
-            status: 'P',
-            checkIn: checkin_time,
-            isLate: false,
-            isManual: false,
-            isPending: false,
+        const payload = {
+            isRunning: true,
+            startTime: clickTime,
+            date: dateStr,
+            mode: 'running',
+            durationSeconds: previousSeconds,
         };
-        // Only refresh attendance display if user is already on the attendance page
-        if (window.location.hash === '#/attendance-my') {
-            const { renderMyAttendancePage } = await import('../pages/attendance.js');
-            renderMyAttendancePage();
+        localStorage.setItem(uid ? `timerState_${uid}` : 'timerState', JSON.stringify(payload));
+    } catch {}
+    
+    // 🌐 Background: Capture location and call API (non-blocking)
+    (async () => {
+        try {
+            // Get location in background (don't block UI)
+            const location = await getGeolocation();
+            
+            // Call backend check-in
+            const { record_id, checkin_time, total_seconds_today } = await checkIn(state.user.id, location);
+            
+            // Sync with backend data if needed
+            const backendSeconds = Number(total_seconds_today || 0);
+            if (backendSeconds > previousSeconds) {
+                state.timer.lastDuration = backendSeconds;
+                // Update localStorage with corrected duration
+                try {
+                    const payload = {
+                        isRunning: true,
+                        startTime: clickTime,
+                        date: dateStr,
+                        mode: 'running',
+                        durationSeconds: backendSeconds,
+                    };
+                    localStorage.setItem(uid ? `timerState_${uid}` : 'timerState', JSON.stringify(payload));
+                } catch {}
+            }
+            
+            console.log('✅ Check-in confirmed by backend:', checkin_time);
+            
+            // Update attendance state for today
+            const day = today.getDate();
+            state.attendanceData[uid] = state.attendanceData[uid] || {};
+            state.attendanceData[uid][day] = {
+                ...(state.attendanceData[uid][day] || {}),
+                day,
+                status: 'P',
+                checkIn: checkin_time,
+                isLate: false,
+                isManual: false,
+                isPending: false,
+            };
+            
+            // Refresh attendance page if user is on it
+            if (window.location.hash === '#/attendance-my') {
+                renderMyAttendancePage();
+            }
+        } catch (e) {
+            console.error('Check-in API failed:', e);
+            // Rollback optimistic update on failure
+            if (state.timer.intervalId) clearInterval(state.timer.intervalId);
+            state.timer.isRunning = false;
+            state.timer.startTime = null;
+            state.timer.intervalId = null;
+            try {
+                localStorage.removeItem(uid ? `timerState_${uid}` : 'timerState');
+            } catch {}
+            updateTimerButton();
+            updateTimerDisplay();
+            alert(`Check-in failed: ${e.message || e}`);
         }
-    } catch (e) {
-        console.error('Check-in failed:', e);
-        alert(`Check-in failed: ${e.message || e}`);
-    }
+    })();
 };
 
 const stopTimer = async () => {
-    // Capture location before check-out
-    const location = await getGeolocation();
-    
-    // Capture the exact time when the user clicked CHECK OUT
+    // ⚡ OPTIMISTIC UI UPDATE - Stop timer INSTANTLY on click
     const clickTime = Date.now();
-    const baseBefore =
-        typeof state.timer.lastDuration === 'number'
-            ? state.timer.lastDuration
-            : 0;
+    const baseBefore = typeof state.timer.lastDuration === 'number' ? state.timer.lastDuration : 0;
     let localElapsed = 0;
     if (state.timer.startTime) {
-        localElapsed = Math.max(
-            0,
-            Math.floor((clickTime - Number(state.timer.startTime)) / 1000)
-        );
+        localElapsed = Math.max(0, Math.floor((clickTime - Number(state.timer.startTime)) / 1000));
     }
     const localTotal = baseBefore + localElapsed;
-
+    
+    // Immediately update UI state
+    if (state.timer.intervalId) clearInterval(state.timer.intervalId);
+    state.timer.isRunning = false;
+    state.timer.intervalId = null;
+    state.timer.startTime = null;
+    state.timer.lastDuration = localTotal;
+    updateTimerButton();
+    updateTimerDisplay();
+    
+    // Save optimistic state to localStorage
+    const uid = String(state.user.id || '').toUpperCase();
+    const today = new Date();
+    const dateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
     try {
-        const { checkout_time, duration, total_hours, total_seconds_today } = await checkOut(state.user.id, location);
-        let backendTotal = 0;
-
-        if (typeof total_seconds_today === 'number' && total_seconds_today > 0) {
-            backendTotal = Math.floor(total_seconds_today);
-        } else {
-            // Fallback: derive an approximate backend total from duration/total_hours if needed
-            let candidate = 0;
-            if (typeof duration === 'string') {
-                const m = duration.match(/(\d+)\s+hour\(s\)\s+(\d+)\s+minute\(s\)/i);
-                if (m) {
-                    const h = parseInt(m[1], 10) || 0;
-                    const mins = parseInt(m[2], 10) || 0;
-                    candidate = (h * 3600) + (mins * 60);
-                }
-            }
-            if (typeof total_hours === 'number' && total_hours > 0 && candidate === 0) {
-                candidate = Math.floor(total_hours * 3600);
-            }
-            backendTotal = candidate;
-        }
-
-        // Use the larger of local and backend totals so the timer never jumps backwards
-        const lastSeconds = Math.max(localTotal, backendTotal || 0);
-        if (state.timer.intervalId) clearInterval(state.timer.intervalId);
-        state.timer.isRunning = false;
-        state.timer.intervalId = null;
-        state.timer.startTime = null;
-        state.timer.lastDuration = lastSeconds;
-        try {
-            const uid = String(state.user.id || '').toUpperCase();
-            const today = new Date();
-            const dateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-            const payload = {
-                isRunning: false,
-                startTime: null,
-                date: dateStr,
-                mode: 'stopped',
-                durationSeconds: lastSeconds,
-            };
-            if (uid) {
-                localStorage.setItem(`timerState_${uid}`, JSON.stringify(payload));
-            } else {
-                localStorage.setItem('timerState', JSON.stringify(payload));
-            }
-        } catch {}
-        updateTimerDisplay();
-        updateTimerButton();
-
-        // Update attendance state for today
-        const today = new Date();
-        const day = today.getDate();
-        const uid = state.user.id;
-        state.attendanceData[uid] = state.attendanceData[uid] || {};
-        state.attendanceData[uid][day] = {
-            ...(state.attendanceData[uid][day] || {}),
-            day,
-            status: 'P',
-            checkOut: checkout_time,
-            totalHours: total_hours,
+        const payload = {
+            isRunning: false,
+            startTime: null,
+            date: dateStr,
+            mode: 'stopped',
+            durationSeconds: localTotal,
         };
-        // Only refresh attendance display if user is already on the attendance page
-        if (window.location.hash === '#/attendance-my') {
-            const { renderMyAttendancePage } = await import('../pages/attendance.js');
-            await renderMyAttendancePage();
+        localStorage.setItem(uid ? `timerState_${uid}` : 'timerState', JSON.stringify(payload));
+    } catch {}
+    
+    // 🌐 Background: Capture location and call API (non-blocking)
+    (async () => {
+        try {
+            // Get location in background (don't block UI)
+            const location = await getGeolocation();
+            
+            // Call backend check-out
+            const { checkout_time, duration, total_hours, total_seconds_today } = await checkOut(state.user.id, location);
+            
+            let backendTotal = 0;
+            if (typeof total_seconds_today === 'number' && total_seconds_today > 0) {
+                backendTotal = Math.floor(total_seconds_today);
+            } else {
+                // Fallback: derive from duration/total_hours
+                let candidate = 0;
+                if (typeof duration === 'string') {
+                    const m = duration.match(/(\d+)\s+hour\(s\)\s+(\d+)\s+minute\(s\)/i);
+                    if (m) {
+                        candidate = (parseInt(m[1], 10) || 0) * 3600 + (parseInt(m[2], 10) || 0) * 60;
+                    }
+                }
+                if (typeof total_hours === 'number' && total_hours > 0 && candidate === 0) {
+                    candidate = Math.floor(total_hours * 3600);
+                }
+                backendTotal = candidate;
+            }
+            
+            // Sync with backend if it has a larger total
+            const lastSeconds = Math.max(localTotal, backendTotal || 0);
+            if (lastSeconds > localTotal) {
+                state.timer.lastDuration = lastSeconds;
+                try {
+                    const payload = {
+                        isRunning: false,
+                        startTime: null,
+                        date: dateStr,
+                        mode: 'stopped',
+                        durationSeconds: lastSeconds,
+                    };
+                    localStorage.setItem(uid ? `timerState_${uid}` : 'timerState', JSON.stringify(payload));
+                } catch {}
+                updateTimerDisplay();
+            }
+            
+            console.log('✅ Check-out confirmed by backend:', checkout_time);
+            
+            // Update attendance state for today
+            const day = today.getDate();
+            state.attendanceData[uid] = state.attendanceData[uid] || {};
+            state.attendanceData[uid][day] = {
+                ...(state.attendanceData[uid][day] || {}),
+                day,
+                status: 'P',
+                checkOut: checkout_time,
+                totalHours: total_hours,
+            };
+            
+            // Refresh attendance page if user is on it
+            if (window.location.hash === '#/attendance-my') {
+                renderMyAttendancePage();
+            }
+        } catch (e) {
+            console.error('Check-out API failed:', e);
+            // Don't rollback - timer is already stopped, just log the error
+            // The backend session recovery will handle this on next check-in
+            console.warn('Check-out not saved to backend. Will sync on next check-in.');
         }
-    } catch (e) {
-        console.error('Check-out failed:', e);
-        alert(`Check-out failed: ${e.message || e}`);
-    }
+    })();
 };
 
 export const handleTimerClick = () => {
