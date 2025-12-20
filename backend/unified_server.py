@@ -11188,6 +11188,31 @@ Or type **'cancel'** to abort."""
 **Please enter the number of the task you want to start** (e.g., type `1` to start the first task).
 
 Or type **'cancel'** to abort."""
+                    elif action.get("type") == "chat_search_employee" and action_result.get("employee"):
+                        employee = action_result.get("employee", {})
+                        employee_name = employee.get("name") or employee.get("first_name") or "the employee"
+                        
+                        current_state = response_data.get("automationState", {}) or {}
+                        current_state["active_flow"] = "chat_send_message"  # Set active flow
+                        collected_data = current_state.get("collected_data", {})
+                        collected_data["target_employee_id"] = employee.get("employee_id")
+                        collected_data["target_name"] = employee_name
+                        current_state["collected_data"] = collected_data
+                        current_state["current_step"] = 1  # Next step: ask for message content
+                        response_data["automationState"] = current_state
+                        
+                        suggestions = action_result.get("all_matches", [])
+                        if suggestions:
+                            matches_preview = "\n".join(
+                                [f"• {match.get('name')} ({match.get('employee_id')})" for match in suggestions[:3]]
+                            )
+                            response_data["answer"] = f"""✅ Found **{employee_name}**.
+
+**Who to message:**\n{matches_preview}
+
+What would you like to say to {employee_name}?"""
+                        else:
+                            response_data["answer"] = f"✅ Found **{employee_name}**. What would you like to say to them?"
                     # Special handling for start_task_timer - return action info to frontend
                     elif action.get("type") == "start_task_timer":
                         response_data["answer"] = f"▶️ {action_result.get('message', 'Timer started!')}"
