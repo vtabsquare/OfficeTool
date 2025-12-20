@@ -3258,38 +3258,50 @@ Please review in HR Tool.
             }
     
     # ==================== CHAT AUTOMATION ACTIONS ====================
+    # These call chat functions directly to avoid HTTP timeout issues on single-worker servers
     
     # Search employee for chat
     if action["type"] == "chat_search_employee":
         try:
-            import requests as req
+            from chats import fuzzy_match_name, dataverse_get, EMPLOYEE_ENTITY_SET
+            
             name = action.get("name", "")
             sender_id = action.get("sender_id", "")
             
-            # Call the chatbot search endpoint
-            url = f"{BACKEND_API_INTERNAL_URL}/chat/chatbot/search-employee"
-            resp = req.post(url, json={"name": name, "user_id": sender_id}, timeout=30)
+            # Get all employees
+            employees = dataverse_get(EMPLOYEE_ENTITY_SET).get("value", [])
             
-            if resp.status_code == 200:
-                result = resp.json()
-                if result.get("found"):
-                    best_match = result.get("best_match", {})
-                    return {
-                        "success": True,
-                        "employee": best_match,
-                        "all_matches": result.get("all_matches", []),
-                        "message": f"Found: **{best_match.get('name')}** ({best_match.get('employee_id')})"
-                    }
-                else:
-                    return {
-                        "success": False,
-                        "error": result.get("message", "No employee found")
-                    }
-            else:
+            best_match, all_matches = fuzzy_match_name(name, employees)
+            
+            if not best_match:
                 return {
                     "success": False,
-                    "error": f"Search failed: {resp.text[:200]}"
+                    "error": f"No employee found matching '{name}'"
                 }
+            
+            # Format best match
+            emp_id = best_match.get("crc6f_employeeid", "")
+            first_name = best_match.get("crc6f_firstname", "") or ""
+            last_name = best_match.get("crc6f_lastname", "") or ""
+            full_name = f"{first_name} {last_name}".strip()
+            
+            return {
+                "success": True,
+                "employee": {
+                    "employee_id": emp_id,
+                    "name": full_name,
+                    "first_name": first_name,
+                    "last_name": last_name
+                },
+                "all_matches": [
+                    {
+                        "employee_id": m["employee"].get("crc6f_employeeid"),
+                        "name": m["name"],
+                        "score": m["score"]
+                    } for m in all_matches
+                ],
+                "message": f"Found: **{full_name}** ({emp_id})"
+            }
         except Exception as e:
             import traceback
             traceback.print_exc()
@@ -3301,36 +3313,48 @@ Please review in HR Tool.
     # Send message via chat
     if action["type"] == "chat_send_message":
         try:
-            import requests as req
+            from chats import (
+                get_or_create_conversation, send_message_to_user,
+                build_employee_name_map
+            )
+            
             sender_id = action.get("sender_id", "")
             target_employee_id = action.get("target_employee_id", "")
             message = action.get("message", "")
             
-            url = f"{BACKEND_API_INTERNAL_URL}/chat/chatbot/send-message"
-            resp = req.post(url, json={
-                "sender_id": sender_id,
-                "target_employee_id": target_employee_id,
-                "message": message
-            }, timeout=30)
+            if not sender_id or not target_employee_id or not message:
+                return {
+                    "success": False,
+                    "error": "Sender ID, target ID, and message are required"
+                }
             
-            if resp.status_code == 200:
-                result = resp.json()
-                if result.get("success"):
-                    return {
-                        "success": True,
-                        "message": f"✅ Message sent to **{result.get('recipient_name')}**!",
-                        "message_id": result.get("message_id"),
-                        "conversation_id": result.get("conversation_id")
-                    }
-                else:
-                    return {
-                        "success": False,
-                        "error": result.get("error", "Failed to send message")
-                    }
+            # Get or create conversation
+            conversation_id, is_new = get_or_create_conversation(sender_id, target_employee_id)
+            
+            if not conversation_id:
+                return {
+                    "success": False,
+                    "error": "Failed to create conversation"
+                }
+            
+            # Send the message
+            result = send_message_to_user(sender_id, conversation_id, message)
+            
+            if result.get("success"):
+                emp_map = build_employee_name_map()
+                recipient_name = emp_map.get(target_employee_id, target_employee_id)
+                
+                return {
+                    "success": True,
+                    "message": f"✅ Message sent to **{recipient_name}**!",
+                    "message_id": result.get("message_id"),
+                    "conversation_id": conversation_id,
+                    "recipient_name": recipient_name
+                }
             else:
                 return {
                     "success": False,
-                    "error": f"Send failed: {resp.text[:200]}"
+                    "error": result.get("error", "Failed to send message")
                 }
         except Exception as e:
             import traceback
@@ -3343,46 +3367,59 @@ Please review in HR Tool.
     # Get unread messages
     if action["type"] == "chat_get_unread":
         try:
-            import requests as req
+            from chats import get_unread_messages_for_user
+            
             user_id = action.get("user_id", "")
             
-            url = f"{BACKEND_API_INTERNAL_URL}/chat/chatbot/unread-messages"
-            resp = req.post(url, json={"user_id": user_id}, timeout=30)
-            
-            if resp.status_code == 200:
-                result = resp.json()
-                total = result.get("total_unread", 0)
-                by_sender = result.get("by_sender", [])
-                
-                if total == 0:
-                    return {
-                        "success": True,
-                        "message": "📭 You have no new messages!",
-                        "total_unread": 0
-                    }
-                
-                # Format message summary
-                lines = [f"📬 **You have {total} message(s):**\n"]
-                for sender in by_sender[:5]:  # Show top 5 senders
-                    count = sender.get("count", 0)
-                    name = sender.get("sender_name", "Unknown")
-                    latest_msg = sender.get("messages", [{}])[0].get("message_text", "")[:50]
-                    lines.append(f"• **{name}** ({count} message{'s' if count > 1 else ''}): \"{latest_msg}...\"")
-                
-                if len(by_sender) > 5:
-                    lines.append(f"\n_...and {len(by_sender) - 5} more sender(s)_")
-                
-                return {
-                    "success": True,
-                    "message": "\n".join(lines),
-                    "total_unread": total,
-                    "by_sender": by_sender
-                }
-            else:
+            if not user_id:
                 return {
                     "success": False,
-                    "error": f"Failed to fetch messages: {resp.text[:200]}"
+                    "error": "User ID is required"
                 }
+            
+            messages = get_unread_messages_for_user(user_id)
+            total = len(messages)
+            
+            if total == 0:
+                return {
+                    "success": True,
+                    "message": "📭 You have no new messages!",
+                    "total_unread": 0
+                }
+            
+            # Group by sender
+            by_sender = {}
+            for msg in messages:
+                sender = msg.get("sender_id")
+                if sender not in by_sender:
+                    by_sender[sender] = {
+                        "sender_id": sender,
+                        "sender_name": msg.get("sender_name", "Unknown"),
+                        "count": 0,
+                        "messages": []
+                    }
+                by_sender[sender]["count"] += 1
+                by_sender[sender]["messages"].append(msg)
+            
+            by_sender_list = list(by_sender.values())
+            
+            # Format message summary
+            lines = [f"📬 **You have {total} message(s):**\n"]
+            for sender in by_sender_list[:5]:
+                count = sender.get("count", 0)
+                name = sender.get("sender_name", "Unknown")
+                latest_msg = sender.get("messages", [{}])[0].get("message_text", "")[:50]
+                lines.append(f"• **{name}** ({count} message{'s' if count > 1 else ''}): \"{latest_msg}...\"")
+            
+            if len(by_sender_list) > 5:
+                lines.append(f"\n_...and {len(by_sender_list) - 5} more sender(s)_")
+            
+            return {
+                "success": True,
+                "message": "\n".join(lines),
+                "total_unread": total,
+                "by_sender": by_sender_list
+            }
         except Exception as e:
             import traceback
             traceback.print_exc()
@@ -3394,52 +3431,81 @@ Please review in HR Tool.
     # Read conversation with specific person
     if action["type"] == "chat_read_conversation":
         try:
-            import requests as req
+            from chats import (
+                fuzzy_match_name, get_or_create_conversation,
+                dataverse_get, EMPLOYEE_ENTITY_SET, MSG_ENTITY_SET,
+                build_employee_name_map
+            )
+            
             user_id = action.get("user_id", "")
             target_name = action.get("target_name", "")
             
-            url = f"{BACKEND_API_INTERNAL_URL}/chat/chatbot/read-conversation"
-            resp = req.post(url, json={
-                "user_id": user_id,
-                "target_name": target_name,
-                "limit": 10
-            }, timeout=30)
-            
-            if resp.status_code == 200:
-                result = resp.json()
-                if result.get("success"):
-                    messages = result.get("messages", [])
-                    target = result.get("target_name", target_name)
-                    
-                    if not messages:
-                        return {
-                            "success": True,
-                            "message": f"📭 No messages found with **{target}**."
-                        }
-                    
-                    # Format conversation
-                    lines = [f"📖 **Conversation with {target}:**\n"]
-                    for msg in messages[-10:]:  # Last 10 messages
-                        sender = "You" if msg.get("is_me") else msg.get("sender_name", "Them")
-                        text = msg.get("message_text", "")[:100]
-                        lines.append(f"**{sender}:** {text}")
-                    
-                    return {
-                        "success": True,
-                        "message": "\n".join(lines),
-                        "messages": messages,
-                        "target_name": target
-                    }
-                else:
-                    return {
-                        "success": False,
-                        "error": result.get("error", "Failed to read conversation")
-                    }
-            else:
+            if not user_id or not target_name:
                 return {
                     "success": False,
-                    "error": f"Failed to read conversation: {resp.text[:200]}"
+                    "error": "User ID and target name are required"
                 }
+            
+            # Find target employee
+            employees = dataverse_get(EMPLOYEE_ENTITY_SET).get("value", [])
+            best_match, _ = fuzzy_match_name(target_name, employees)
+            
+            if not best_match:
+                return {
+                    "success": False,
+                    "error": f"No employee found matching '{target_name}'"
+                }
+            
+            target_id = best_match.get("crc6f_employeeid")
+            target_full_name = f"{best_match.get('crc6f_firstname', '')} {best_match.get('crc6f_lastname', '')}".strip()
+            
+            # Get conversation
+            conversation_id, _ = get_or_create_conversation(user_id, target_id)
+            
+            if not conversation_id:
+                return {
+                    "success": True,
+                    "message": f"📭 No conversation found with **{target_full_name}**."
+                }
+            
+            # Get messages
+            mq = f"$filter=crc6f_conversation_id eq '{conversation_id}'&$orderby=createdon asc&$top=20"
+            messages_raw = dataverse_get(MSG_ENTITY_SET, mq).get("value", [])
+            
+            if not messages_raw:
+                return {
+                    "success": True,
+                    "message": f"📭 No messages found with **{target_full_name}**."
+                }
+            
+            emp_map = build_employee_name_map()
+            
+            # Format messages
+            messages = []
+            for msg in messages_raw:
+                sender_id = msg.get("crc6f_sender_id")
+                is_me = sender_id == user_id
+                messages.append({
+                    "sender_id": sender_id,
+                    "sender_name": emp_map.get(sender_id, sender_id),
+                    "message_text": msg.get("crc6f_message_text", ""),
+                    "is_me": is_me,
+                    "created_on": msg.get("createdon")
+                })
+            
+            # Format conversation
+            lines = [f"📖 **Conversation with {target_full_name}:**\n"]
+            for msg in messages[-10:]:
+                sender = "You" if msg.get("is_me") else msg.get("sender_name", "Them")
+                text = msg.get("message_text", "")[:100]
+                lines.append(f"**{sender}:** {text}")
+            
+            return {
+                "success": True,
+                "message": "\n".join(lines),
+                "messages": messages,
+                "target_name": target_full_name
+            }
         except Exception as e:
             import traceback
             traceback.print_exc()
@@ -3451,35 +3517,57 @@ Please review in HR Tool.
     # Reply to message
     if action["type"] == "chat_reply":
         try:
-            import requests as req
+            from chats import (
+                fuzzy_match_name, get_or_create_conversation, send_message_to_user,
+                dataverse_get, EMPLOYEE_ENTITY_SET, build_employee_name_map
+            )
+            
             user_id = action.get("user_id", "")
             target_name = action.get("target_name", "")
             message = action.get("message", "")
             
-            url = f"{BACKEND_API_INTERNAL_URL}/chat/chatbot/reply"
-            resp = req.post(url, json={
-                "user_id": user_id,
-                "target_name": target_name,
-                "message": message
-            }, timeout=30)
+            if not user_id or not target_name or not message:
+                return {
+                    "success": False,
+                    "error": "User ID, target name, and message are required"
+                }
             
-            if resp.status_code == 200:
-                result = resp.json()
-                if result.get("success"):
-                    return {
-                        "success": True,
-                        "message": f"✅ Reply sent to **{result.get('recipient_name')}**!",
-                        "message_id": result.get("message_id")
-                    }
-                else:
-                    return {
-                        "success": False,
-                        "error": result.get("error", "Failed to send reply")
-                    }
+            # Find target employee
+            employees = dataverse_get(EMPLOYEE_ENTITY_SET).get("value", [])
+            best_match, _ = fuzzy_match_name(target_name, employees)
+            
+            if not best_match:
+                return {
+                    "success": False,
+                    "error": f"No employee found matching '{target_name}'"
+                }
+            
+            target_id = best_match.get("crc6f_employeeid")
+            target_full_name = f"{best_match.get('crc6f_firstname', '')} {best_match.get('crc6f_lastname', '')}".strip()
+            
+            # Get or create conversation
+            conversation_id, _ = get_or_create_conversation(user_id, target_id)
+            
+            if not conversation_id:
+                return {
+                    "success": False,
+                    "error": "Failed to find or create conversation"
+                }
+            
+            # Send reply
+            result = send_message_to_user(user_id, conversation_id, message)
+            
+            if result.get("success"):
+                return {
+                    "success": True,
+                    "message": f"✅ Reply sent to **{target_full_name}**!",
+                    "message_id": result.get("message_id"),
+                    "recipient_name": target_full_name
+                }
             else:
                 return {
                     "success": False,
-                    "error": f"Reply failed: {resp.text[:200]}"
+                    "error": result.get("error", "Failed to send reply")
                 }
         except Exception as e:
             import traceback
@@ -3493,3 +3581,4 @@ Please review in HR Tool.
         "success": False,
         "error": f"Unknown action type: {action.get('type')}"
     }
+
