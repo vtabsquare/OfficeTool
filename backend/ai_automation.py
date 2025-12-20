@@ -17,8 +17,10 @@ BACKEND_API_INTERNAL_URL = os.getenv("BACKEND_API_INTERNAL_URL") or os.getenv("B
 if BACKEND_API_INTERNAL_URL:
     BACKEND_API_INTERNAL_URL = BACKEND_API_INTERNAL_URL.rstrip("/")
 else:
-    # Default to local loopback so the backend can call its own API without going over the public internet
-    BACKEND_API_INTERNAL_URL = "http://127.0.0.1:5000"
+    # On deployed environments, use the public URL for internal calls
+    # This ensures chat automation works on Render
+    BACKEND_API_INTERNAL_URL = BACKEND_API_URL
+
 
 # ================== AI DATAVERSE TABLE ACCESS ==================
 # All Dataverse tables the AI has access to for querying and automation
