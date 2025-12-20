@@ -3,6 +3,7 @@ from flask import Flask, render_template, request, jsonify, current_app, redirec
 from flask_cors import CORS
 from datetime import datetime, timedelta, timezone, date
 from calendar import monthrange
+from functools import wraps
 import random
 import string
 import traceback
@@ -28,6 +29,7 @@ from project_boards import bp as boards_bp
 from project_tasks import tasks_bp
 from project_column import columns_bp
 from chats import chat_bp
+import functools
 
 try:
     from zoneinfo import ZoneInfo
