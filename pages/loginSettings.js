@@ -4,11 +4,13 @@ import { state } from '../state.js';
 import { getPageContentHTML } from '../utils.js';
 import { renderModal, closeModal } from '../components/modal.js';
 import { listLoginAccounts, createLoginAccount, updateLoginAccount, deleteLoginAccount, fetchLoginEvents, updateLoginActivity } from '../features/loginSettingsApi.js';
+import { listAllEmployees } from '../features/employeeApi.js';
 
 let currentLoginSettingsView = 'accounts';
 let cachedLoginAccounts = [];
 let cachedLoginActivitySummary = [];
 let loginAccountNameIndex = {};
+let cachedEmployeeDirectory = [];
 
 const isAdminUser = () => {
     const empId = String(state.user?.id || '').trim().toUpperCase();
@@ -210,19 +212,33 @@ const handleUpdateLoginActivity = async () => {
     }
 };
 
-const buildLoginAccountNameIndex = (accounts = []) => {
+const buildLoginAccountNameIndex = (accounts = [], employees = []) => {
     loginAccountNameIndex = {};
+    const addToIndex = (id, displayName) => {
+        const key = String(id || '').trim().toUpperCase();
+        if (!key || loginAccountNameIndex[key]) return;
+        const value = String(displayName || '').trim();
+        loginAccountNameIndex[key] = value || key;
+    };
+
     (accounts || []).forEach((acc) => {
-        const id = String(acc.employeeId || acc.employee_id || '').trim().toUpperCase();
-        if (!id) return;
+        const id = acc.employeeId || acc.employee_id || acc.employeeID || acc.employeeid;
         const displayName =
             acc.employeeName ||
             acc.employee_name ||
             acc.employeeFullName ||
             `${acc.firstName || ''} ${acc.lastName || ''}`.trim() ||
-            acc.username ||
-            id;
-        loginAccountNameIndex[id] = displayName;
+            acc.username;
+        addToIndex(id, displayName);
+    });
+
+    (employees || []).forEach((emp) => {
+        const id = emp.employee_id || emp.employeeId || emp.id;
+        const displayName =
+            emp.full_name ||
+            emp.name ||
+            `${emp.first_name || ''} ${emp.last_name || ''}`.trim();
+        addToIndex(id, displayName);
     });
 };
 
@@ -658,14 +674,16 @@ export const renderLoginSettingsPage = async () => {
 
     try {
         // Fetch login accounts and login events in parallel
-        const [accounts, loginEventsData] = await Promise.all([
+        const [accounts, loginEventsData, employeeDirectory] = await Promise.all([
             listLoginAccounts(),
-            fetchLoginEvents().catch(() => ({ daily_summary: [] }))
+            fetchLoginEvents().catch(() => ({ daily_summary: [] })),
+            listAllEmployees().catch(() => [])
         ]);
         
         cachedLoginAccounts = accounts;
         cachedLoginActivitySummary = loginEventsData.daily_summary || [];
-        buildLoginAccountNameIndex(cachedLoginAccounts);
+        cachedEmployeeDirectory = employeeDirectory;
+        buildLoginAccountNameIndex(cachedLoginAccounts, cachedEmployeeDirectory);
 
         const layoutHTML = buildLoginSettingsLayout(cachedLoginAccounts, cachedLoginActivitySummary);
         document.getElementById('app-content').innerHTML = getPageContentHTML('Login Settings', layoutHTML, controls);

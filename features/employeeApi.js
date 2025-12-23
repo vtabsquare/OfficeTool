@@ -5,6 +5,12 @@ import { timedFetch } from './timedFetch.js';
 
 const BASE_URL = API_BASE_URL.replace(/\/$/, '');
 const CACHE_TTL_MS = 2 * 60 * 1000; // 2 minutes
+const EMP_DIRECTORY_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+let allEmployeesCache = {
+  data: null,
+  fetchedAt: 0,
+};
 
 export async function listEmployees(page = 1, pageSize = 5) {
   const cacheKey = `${page}|${pageSize}`;
@@ -48,6 +54,27 @@ export async function createEmployee(payload) {
   }
   try { if (state?.cache?.employees) state.cache.employees = {}; } catch { }
   return data.employee;
+}
+
+export async function listAllEmployees(forceRefresh = false) {
+  const now = Date.now();
+  if (
+    !forceRefresh &&
+    allEmployeesCache.data &&
+    now - allEmployeesCache.fetchedAt < EMP_DIRECTORY_CACHE_TTL_MS
+  ) {
+    return allEmployeesCache.data;
+  }
+
+  const res = await timedFetch(`${BASE_URL}/api/employees/all`, {}, 'listAllEmployees');
+  const data = await res.json();
+  if (!res.ok || !data.success) {
+    throw new Error(data.error || 'Failed to fetch employee directory');
+  }
+
+  const employees = data.employees || [];
+  allEmployeesCache = { data: employees, fetchedAt: now };
+  return employees;
 }
 
 export async function updateEmployee(employeeId, payload) {
