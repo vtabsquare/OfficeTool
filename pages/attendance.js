@@ -565,8 +565,9 @@ const exportTeamAttendanceToCSV = (monthName, year) => {
 
     // Add header row
     const headers = ['Employee Name', 'Employee ID'];
+    const monthNumber = String(date.getMonth() + 1).padStart(2, '0');
     for (let day = 1; day <= daysInMonth; day++) {
-        headers.push(`${day}`);
+        headers.push(`${day}/${monthNumber}`);
     }
     headers.push('Total Present', 'Total Leaves', 'Total Absent', 'Total Late Entry');
     csvRows.push(headers.join(','));
