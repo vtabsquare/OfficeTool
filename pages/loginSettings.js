@@ -5,6 +5,10 @@ import { getPageContentHTML } from '../utils.js';
 import { renderModal, closeModal } from '../components/modal.js';
 import { listLoginAccounts, createLoginAccount, updateLoginAccount, deleteLoginAccount, fetchLoginEvents, updateLoginActivity } from '../features/loginSettingsApi.js';
 
+let currentLoginSettingsView = 'accounts';
+let cachedLoginAccounts = [];
+let cachedLoginActivitySummary = [];
+
 const isAdminUser = () => {
     const empId = String(state.user?.id || '').trim().toUpperCase();
     const email = String(state.user?.email || '').trim().toLowerCase();
@@ -308,6 +312,76 @@ const buildTableHTML = (accounts = []) => {
     `;
 };
 
+const getLoginSettingsContentHTML = (view, accounts = [], dailySummary = []) => {
+    if (view === 'activity') {
+        return buildLoginActivityHTML(dailySummary);
+    }
+    return buildTableHTML(accounts);
+};
+
+const buildLoginSettingsLayout = (accounts = [], dailySummary = []) => {
+    const sidebarOption = (view, label, icon) => {
+        const isActive = currentLoginSettingsView === view;
+        return `
+            <div class="inbox-category login-settings-view ${isActive ? 'active' : ''}" data-view="${view}">
+                <i class="fa-solid ${icon}" style="margin-right:8px;"></i>
+                <span>${label}</span>
+                <span style="margin-left:auto; font-size:12px; color:#cbd5f5;">
+                    ${view === 'accounts' ? accounts.length : dailySummary.length}
+                </span>
+            </div>
+        `;
+    };
+
+    return `
+        <div class="inbox-container login-settings-layout">
+            <div class="inbox-sidebar login-settings-sidebar">
+                ${sidebarOption('accounts', 'Login Accounts', 'fa-user-shield')}
+                ${sidebarOption('activity', 'Login Activity', 'fa-clock-rotate-left')}
+            </div>
+            <div class="inbox-content login-settings-content">
+                <div class="login-settings-content-body"></div>
+            </div>
+        </div>
+    `;
+};
+
+const refreshLoginSettingsContent = () => {
+    const container = document.querySelector('.login-settings-content-body');
+    if (!container) return;
+    container.innerHTML = getLoginSettingsContentHTML(
+        currentLoginSettingsView,
+        cachedLoginAccounts,
+        cachedLoginActivitySummary
+    );
+
+    if (currentLoginSettingsView === 'accounts') {
+        attachRowHandlers(cachedLoginAccounts);
+    } else {
+        attachLoginActivityHandlers(cachedLoginActivitySummary);
+    }
+
+    const addBtn = document.getElementById('add-login-account-btn');
+    if (addBtn) {
+        addBtn.style.display = currentLoginSettingsView === 'accounts' ? 'inline-flex' : 'none';
+    }
+};
+
+const attachLoginSettingsViewHandlers = () => {
+    const viewButtons = document.querySelectorAll('.login-settings-view');
+    viewButtons.forEach((btn) => {
+        btn.addEventListener('click', () => {
+            const targetView = btn.getAttribute('data-view');
+            if (!targetView || targetView === currentLoginSettingsView) return;
+            currentLoginSettingsView = targetView;
+            document
+                .querySelectorAll('.login-settings-view')
+                .forEach((el) => el.classList.toggle('active', el.getAttribute('data-view') === currentLoginSettingsView));
+            refreshLoginSettingsContent();
+        });
+    });
+};
+
 const openAddLoginModal = () => {
     const formHTML = `
         <div class="modal-form modern-form team-modal">
@@ -555,20 +629,22 @@ export const renderLoginSettingsPage = async () => {
             fetchLoginEvents().catch(() => ({ daily_summary: [] }))
         ]);
         
-        const tableHTML = buildTableHTML(accounts);
-        const activityHTML = buildLoginActivityHTML(loginEventsData.daily_summary || []);
-        
-        document.getElementById('app-content').innerHTML = getPageContentHTML('Login Settings', tableHTML + activityHTML, controls);
+        cachedLoginAccounts = accounts;
+        cachedLoginActivitySummary = loginEventsData.daily_summary || [];
+
+        const layoutHTML = buildLoginSettingsLayout(cachedLoginAccounts, cachedLoginActivitySummary);
+        document.getElementById('app-content').innerHTML = getPageContentHTML('Login Settings', layoutHTML, controls);
 
         const addBtn = document.getElementById('add-login-account-btn');
         if (addBtn) {
             addBtn.onclick = () => {
                 openAddLoginModal();
             };
+            addBtn.style.display = currentLoginSettingsView === 'accounts' ? 'inline-flex' : 'none';
         }
 
-        attachRowHandlers(accounts);
-        attachLoginActivityHandlers(loginEventsData.daily_summary || []);
+        attachLoginSettingsViewHandlers();
+        refreshLoginSettingsContent();
     } catch (err) {
         console.error('❌ Error loading login settings:', err);
         const errorContent = `
