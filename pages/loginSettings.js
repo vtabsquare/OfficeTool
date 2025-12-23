@@ -8,6 +8,7 @@ import { listLoginAccounts, createLoginAccount, updateLoginAccount, deleteLoginA
 let currentLoginSettingsView = 'accounts';
 let cachedLoginAccounts = [];
 let cachedLoginActivitySummary = [];
+let loginAccountNameIndex = {};
 
 const isAdminUser = () => {
     const empId = String(state.user?.id || '').trim().toUpperCase();
@@ -209,6 +210,28 @@ const handleUpdateLoginActivity = async () => {
     }
 };
 
+const buildLoginAccountNameIndex = (accounts = []) => {
+    loginAccountNameIndex = {};
+    (accounts || []).forEach((acc) => {
+        const id = String(acc.employeeId || acc.employee_id || '').trim().toUpperCase();
+        if (!id) return;
+        const displayName =
+            acc.employeeName ||
+            acc.employee_name ||
+            acc.employeeFullName ||
+            `${acc.firstName || ''} ${acc.lastName || ''}`.trim() ||
+            acc.username ||
+            id;
+        loginAccountNameIndex[id] = displayName;
+    });
+};
+
+const resolveEmployeeName = (employeeId) => {
+    const key = String(employeeId || '').trim().toUpperCase();
+    if (!key) return '';
+    return loginAccountNameIndex[key] || key;
+};
+
 const buildLoginActivityHTML = (dailySummary = []) => {
     if (!dailySummary.length) {
         return `
@@ -220,9 +243,20 @@ const buildLoginActivityHTML = (dailySummary = []) => {
         `;
     }
 
-    const rows = dailySummary.map((item) => `
+    const rows = dailySummary.map((item) => {
+        const employeeName = resolveEmployeeName(item.employee_id);
+        return `
         <tr>
-            <td><strong>${item.employee_id || ''}</strong></td>
+            <td>
+                <div style="display:flex; flex-direction:column; line-height:1.35;">
+                    <span style="font-weight:600; color:#0f172a; font-size:15px;">
+                        ${employeeName || item.employee_id || ''}
+                    </span>
+                    <span style="font-size:12px; color:#6b7280; letter-spacing:0.3px;">
+                        ${item.employee_id || ''}
+                    </span>
+                </div>
+            </td>
             <td>${item.date || ''}</td>
             <td>${formatTime(item.check_in_time)}</td>
             <td>${formatLocation(item.check_in_location)}</td>
@@ -234,7 +268,7 @@ const buildLoginActivityHTML = (dailySummary = []) => {
                 </button>
             </td>
         </tr>
-    `).join('');
+    `}).join('');
 
     return `
         <div class="card" style="margin-top: 24px;">
@@ -631,6 +665,7 @@ export const renderLoginSettingsPage = async () => {
         
         cachedLoginAccounts = accounts;
         cachedLoginActivitySummary = loginEventsData.daily_summary || [];
+        buildLoginAccountNameIndex(cachedLoginAccounts);
 
         const layoutHTML = buildLoginSettingsLayout(cachedLoginAccounts, cachedLoginActivitySummary);
         document.getElementById('app-content').innerHTML = getPageContentHTML('Login Settings', layoutHTML, controls);
