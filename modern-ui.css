@@ -364,10 +364,14 @@ input[type="checkbox"] {
 /* Login Settings tables (accounts + activity) */
 .login-settings-table {
   width: 100%;
+  max-height: 65vh;
+  overflow-y: auto;
+  overflow-x: auto;
 }
 
 .login-settings-table .table {
   width: 100%;
+  min-width: 720px;
 }
 
 .login-settings-table .table th,

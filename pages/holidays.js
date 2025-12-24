@@ -7,6 +7,7 @@ import {
 import { getPageContentHTML } from '../utils.js';
 import { renderModal, closeModal } from '../components/modal.js';
 import { showToast } from '../components/toast.js';
+import { getUserAccessContext } from '../utils/accessControl.js';
 
 let editId = null;
 
@@ -185,10 +186,13 @@ const loadHolidays = async () => {
 };
 
 export async function renderHolidaysPage() {
+  const { isAdmin, isManager, role } = getUserAccessContext();
+  const canAddHoliday = isAdmin || isManager || role === 'L3';
+
   const controls = `
     <div class="employee-controls">
       <div class="employee-control-actions">
-        <button id="add-holiday-btn" class="btn btn-primary"><i class="fa-solid fa-plus"></i> ADD HOLIDAY</button>
+        ${canAddHoliday ? '<button id="add-holiday-btn" class="btn btn-primary"><i class="fa-solid fa-plus"></i> ADD HOLIDAY</button>' : ''}
       </div>
     </div>
   `;

@@ -237,6 +237,14 @@ const buildPresenceBadge = (item) => {
     return `<span class="status-badge compact ${statusClass}">${label}</span>`;
 };
 
+const getActivityCounts = (dailySummary = []) => {
+    const checkedIn = (dailySummary || []).filter(
+        (item) => !!item.check_in_time && !item.check_out_time
+    ).length;
+    const offline = Math.max((dailySummary?.length || 0) - checkedIn, 0);
+    return { checkedIn, offline };
+};
+
 const buildLoginActivityHTML = (dailySummary = []) => {
     if (!dailySummary.length) {
         return `
@@ -357,13 +365,21 @@ const getLoginSettingsContentHTML = (view, accounts = [], dailySummary = []) => 
 const buildLoginSettingsLayout = (accounts = [], dailySummary = []) => {
     const sidebarOption = (view, label, icon) => {
         const isActive = currentLoginSettingsView === view;
+        const countMarkup =
+            view === 'activity'
+                ? (() => {
+                      const { checkedIn, offline } = getActivityCounts(dailySummary);
+                      return `
+                        <span class="status-badge compact present" style="margin-left:auto;">${checkedIn}</span>
+                        <span class="status-badge compact absent" style="margin-left:6px;">${offline}</span>
+                    `;
+                  })()
+                : `<span style="margin-left:auto; font-size:12px; color:#cbd5f5;">${accounts.length}</span>`;
         return `
             <div class="inbox-category login-settings-view ${isActive ? 'active' : ''}" data-view="${view}">
                 <i class="fa-solid ${icon}" style="margin-right:8px;"></i>
                 <span>${label}</span>
-                <span style="margin-left:auto; font-size:12px; color:#cbd5f5;">
-                    ${view === 'accounts' ? accounts.length : dailySummary.length}
-                </span>
+                ${countMarkup}
             </div>
         `;
     };
