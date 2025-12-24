@@ -379,6 +379,44 @@ input[type="checkbox"] {
   padding: 12px 14px;
 }
 
+/* Login Settings layout tightening */
+.login-settings-layout {
+  width: 100%;
+  gap: 1rem;
+  align-items: stretch;
+}
+
+.login-settings-content {
+  padding: 0;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  width: 100%;
+}
+
+.login-settings-content .card {
+  width: 100%;
+  margin-top: 0;
+}
+
+.login-settings-sidebar .inbox-category.login-settings-view {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: nowrap;
+}
+
+.login-settings-sidebar .login-settings-view .status-badge.compact {
+  padding: 0.18rem 0.48rem;
+  font-size: 0.65rem;
+  gap: 0.28rem;
+}
+
+.login-settings-sidebar .login-settings-view .status-badge.compact::before {
+  width: 6px;
+  height: 6px;
+}
+
 /* --- Page Headers --- */
 .page-header {
   background: var(--surface-color);
