@@ -24,6 +24,9 @@ const formatDate = (iso) => {
   }
 };
 
+const buildOnboardingLink = (employeeId) =>
+  employeeId ? `#/onboarding?employee=${encodeURIComponent(employeeId)}` : '#/onboarding';
+
 const fieldIds = [
   { id: 'internId', label: 'Intern ID', required: true },
   { id: 'employeeId', label: 'Employee ID', required: true },
@@ -277,6 +280,15 @@ export const renderInternsPage = async (filter = internSearch, page = internPage
         </div>
         <button class="icon-btn intern-view-btn" data-intern-id="${intern.intern_id}" title="View Details"><i class="fa-solid fa-eye"></i></button>
       </div>
+      ${
+        intern.employee_id
+          ? `<div class="employee-card-footer">
+              <a class="link-muted onboarding-progress-link" href="${buildOnboardingLink(intern.employee_id)}">
+                <i class="fa-solid fa-route"></i> Onboarding progress
+              </a>
+            </div>`
+          : ''
+      }
     </div>
   `).join('') || '<div class="placeholder-text">No interns found.</div>';
 
@@ -286,7 +298,16 @@ export const renderInternsPage = async (filter = internSearch, page = internPage
       <td>${intern.employee_id || '—'}</td>
       <td>${formatDate(intern.created_on)}</td>
       <td>
-        <button class="icon-btn intern-view-btn" data-intern-id="${intern.intern_id}"><i class="fa-solid fa-eye"></i></button>
+        <div class="intern-table-actions">
+          <button class="icon-btn intern-view-btn" data-intern-id="${intern.intern_id}" title="View Details"><i class="fa-solid fa-eye"></i></button>
+          ${
+            intern.employee_id
+              ? `<a class="link-muted onboarding-progress-link" href="${buildOnboardingLink(intern.employee_id)}" title="View onboarding progress">
+                  <i class="fa-solid fa-route"></i>
+                </a>`
+              : ''
+          }
+        </div>
       </td>
     </tr>
   `).join('') || '<tr><td colspan="4" class="placeholder-text">No interns found.</td></tr>';
