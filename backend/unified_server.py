@@ -1300,7 +1300,6 @@ def _fetch_intern_record_by_id(token: str, intern_id: str, include_system: bool 
     if not raw_id:
         return None
     safe_id = raw_id.replace("'", "''")
-    field = INTERN_FIELDS['intern_id']
     base_query = f"?$select={select_clause}&$top=50"
 
     headers = {
@@ -1320,16 +1319,24 @@ def _fetch_intern_record_by_id(token: str, intern_id: str, include_system: bool 
     if not values:
         return None
 
-    # First try exact match
+    # First try exact intern_id match
+    intern_id_field = INTERN_FIELDS['intern_id']
     for record in values:
-        if record.get(field) == safe_id:
+        if record.get(intern_id_field) == safe_id:
             return record
 
-    # Then try case-insensitive match
+    # Then try case-insensitive intern_id match
     safe_id_lower = safe_id.lower()
     for record in values:
-        record_id = record.get(field, "")
+        record_id = record.get(intern_id_field, "")
         if record_id and record_id.lower() == safe_id_lower:
+            return record
+
+    # Finally try employee_id match
+    emp_id_field = INTERN_FIELDS['employee_id']
+    for record in values:
+        emp_id = record.get(emp_id_field, "")
+        if emp_id and (emp_id == safe_id or emp_id.lower() == safe_id_lower):
             return record
 
     return None
