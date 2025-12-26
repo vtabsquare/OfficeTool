@@ -1301,7 +1301,7 @@ def _fetch_intern_record_by_id(token: str, intern_id: str, include_system: bool 
         return None
     safe_id = raw_id.replace("'", "''")
     field = INTERN_FIELDS['intern_id']
-    base_query = f"?$select={select_clause}&$top=1"
+    base_query = f"?$select={select_clause}&$top=50"
 
     headers = {
         "Authorization": f"Bearer {token}",
@@ -1310,22 +1310,29 @@ def _fetch_intern_record_by_id(token: str, intern_id: str, include_system: bool 
         "OData-Version": "4.0",
     }
 
-    def _execute(filter_clause: str):
-        url = f"{RESOURCE}/api/data/v9.2/{INTERN_ENTITY}{base_query}&$filter={filter_clause}"
-        resp = requests.get(url, headers=headers, timeout=30)
-        if resp.status_code != 200:
-            raise Exception(f"Dataverse returned {resp.status_code}: {resp.text}")
-        values = resp.json().get("value", [])
-        return values[0] if values else None
+    # Get all records and filter in Python since Dataverse doesn't support case-insensitive search
+    url = f"{RESOURCE}/api/data/v9.2/{INTERN_ENTITY}{base_query}"
+    resp = requests.get(url, headers=headers, timeout=30)
+    if resp.status_code != 200:
+        raise Exception(f"Dataverse returned {resp.status_code}: {resp.text}")
 
-    # Primary exact match
-    record = _execute(f"{field} eq '{safe_id}'")
-    if record:
-        return record
+    values = resp.json().get("value", [])
+    if not values:
+        return None
 
-    # Fallback: case-insensitive match if Dataverse supports tolower
-    record_ci = _execute(f"tolower({field}) eq '{safe_id.lower()}'")
-    return record_ci
+    # First try exact match
+    for record in values:
+        if record.get(field) == safe_id:
+            return record
+
+    # Then try case-insensitive match
+    safe_id_lower = safe_id.lower()
+    for record in values:
+        record_id = record.get(field, "")
+        if record_id and record_id.lower() == safe_id_lower:
+            return record
+
+    return None
 
 
 def _fetch_employee_by_employee_id(token: str, employee_id: str, select_fields=None):
