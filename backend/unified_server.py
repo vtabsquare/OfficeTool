@@ -1349,11 +1349,16 @@ def _fetch_intern_record_by_id(token: str, intern_id: str, include_system: bool 
             print(f"[INTERN] Found employee_id match")
             return record
 
+    synthetic = _build_synthetic_intern_from_employee(token, raw_id, include_system=include_system)
+    if synthetic:
+        print(f"[INTERN] Synthesizing intern record from employee master for '{safe_id}'")
+        return synthetic
     print(f"[INTERN] No match found for '{safe_id}'")
     return None
 
 
 def _fetch_employee_by_employee_id(token: str, employee_id: str, select_fields=None):
+
     entity_set = get_employee_entity_set(token)
     field_map = get_field_map(entity_set)
     id_field = field_map.get('id')
@@ -1397,9 +1402,10 @@ def _fetch_employee_by_employee_id(token: str, employee_id: str, select_fields=N
     return values[0] if values else None
 
 
-def _save_google_credentials(creds: Credentials):
-    try:
-        if not creds:
+def _normalize_identifier(value: str) -> str:
+    if not value:
+        return ''
+    return ''.join(ch for ch in str(value).upper() if ch.isalnum())
             return
         token_json = creds.to_json()
         save_google_token(token_json)
