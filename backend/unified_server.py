@@ -1311,18 +1311,27 @@ def _fetch_intern_record_by_id(token: str, intern_id: str, include_system: bool 
 
     # Get all records and filter in Python since Dataverse doesn't support case-insensitive search
     url = f"{RESOURCE}/api/data/v9.2/{INTERN_ENTITY}{base_query}"
+    print(f"[INTERN] Fetching intern records from: {url}")
     resp = requests.get(url, headers=headers, timeout=30)
     if resp.status_code != 200:
         raise Exception(f"Dataverse returned {resp.status_code}: {resp.text}")
 
     values = resp.json().get("value", [])
+    print(f"[INTERN] Found {len(values)} intern records in Dataverse")
     if not values:
         return None
 
-    # First try exact intern_id match
+    # Log all intern IDs for debugging
     intern_id_field = INTERN_FIELDS['intern_id']
+    emp_id_field = INTERN_FIELDS['employee_id']
+    print(f"[INTERN] Looking for: '{safe_id}' (intern_id_field={intern_id_field}, emp_id_field={emp_id_field})")
+    for i, rec in enumerate(values[:10]):
+        print(f"[INTERN]   Record {i}: intern_id='{rec.get(intern_id_field)}', employee_id='{rec.get(emp_id_field)}'")
+
+    # First try exact intern_id match
     for record in values:
         if record.get(intern_id_field) == safe_id:
+            print(f"[INTERN] Found exact intern_id match")
             return record
 
     # Then try case-insensitive intern_id match
@@ -1330,15 +1339,17 @@ def _fetch_intern_record_by_id(token: str, intern_id: str, include_system: bool 
     for record in values:
         record_id = record.get(intern_id_field, "")
         if record_id and record_id.lower() == safe_id_lower:
+            print(f"[INTERN] Found case-insensitive intern_id match")
             return record
 
     # Finally try employee_id match
-    emp_id_field = INTERN_FIELDS['employee_id']
     for record in values:
         emp_id = record.get(emp_id_field, "")
         if emp_id and (emp_id == safe_id or emp_id.lower() == safe_id_lower):
+            print(f"[INTERN] Found employee_id match")
             return record
 
+    print(f"[INTERN] No match found for '{safe_id}'")
     return None
 
 
