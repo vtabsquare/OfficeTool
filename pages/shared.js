@@ -1734,7 +1734,6 @@ export const renderTTClientsPage = async () => {
                 <td>${safe(r.crc6f_phone)}</td>
                 <td>${safe(r.crc6f_country)}</td>
                 <td class="actions-cell" style="text-align:center;">
-                    <button class="icon-btn client-view" title="View" data-id="${r.crc6f_hr_clientsid}"><i class="fa-solid fa-eye"></i></button>
                     <button class="icon-btn client-edit" title="Edit" data-id="${r.crc6f_hr_clientsid}"><i class="fa-solid fa-pen-to-square"></i></button>
                     <button class="icon-btn client-delete" title="Delete" data-id="${r.crc6f_hr_clientsid}" data-clientid="${r.crc6f_clientid}"><i class="fa-solid fa-trash"></i></button>
                 </td>
@@ -1845,7 +1844,6 @@ const attachClientsEvents = () => {
 
     document.querySelectorAll('.client-edit').forEach(btn => btn.addEventListener('click', () => showClientModal(btn.dataset.id)));
     document.querySelectorAll('.client-delete').forEach(btn => btn.addEventListener('click', () => handleDeleteClient(btn.dataset.id, btn.dataset.clientid)));
-    document.querySelectorAll('.client-view').forEach(btn => btn.addEventListener('click', () => showClientDetails(btn.dataset.id)));
 };
 
 const clientFormHTML = (data = {}) => `

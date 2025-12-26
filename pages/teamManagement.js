@@ -941,21 +941,21 @@ export const renderTeamManagementPage = async (page = 1) => {
         .filter-toggle label { margin-bottom: 0; }
         .tm-view-toggle {
           display: inline-flex;
-          align-items: center;
+          flex-direction: column;
+          align-items: stretch;
           gap: 6px;
-          padding: 4px;
-          border-radius: 999px;
+          padding: 8px;
+          border-radius: 18px;
           background: linear-gradient(135deg, rgba(99,102,241,0.12), rgba(14,165,233,0.08));
           border: 1px solid rgba(99,102,241,0.35);
           box-shadow: inset 0 0 0 1px rgba(255,255,255,0.45), 0 8px 22px rgba(15,23,42,0.12);
-          flex-wrap: nowrap;
         }
         .view-toggle-btn {
           border: none;
           background: transparent;
           color: var(--text-secondary);
-          border-radius: 999px;
-          padding: 6px 16px;
+          border-radius: 12px;
+          padding: 8px 16px;
           font-size: 0.72rem;
           font-weight: 600;
           letter-spacing: 0.02em;
@@ -964,8 +964,9 @@ export const renderTeamManagementPage = async (page = 1) => {
           gap: 6px;
           cursor: pointer;
           transition: all 0.18s ease;
-          min-width: 86px;
-          height: 34px;
+          min-width: 140px;
+          height: 38px;
+          justify-content: center;
         }
         .view-toggle-btn:hover {
           color: var(--text-primary);
