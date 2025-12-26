@@ -27,31 +27,12 @@ from mail_app import send_email
 from project_contributors import bp as contributors_bp
 from project_boards import bp as boards_bp
 from project_tasks import tasks_bp
+from project_column import columns_bp
 
 try:
     from zoneinfo import ZoneInfo
 except Exception:
     ZoneInfo = None
-
-
-def _coerce_client_local_datetime(client_time_str, timezone_name):
-    """Convert client-supplied ISO timestamp into the user's local timezone if possible."""
-    if not client_time_str or not isinstance(client_time_str, str):
-        return None
-    try:
-        normalized = client_time_str
-        if normalized.endswith("Z"):
-            normalized = normalized[:-1] + "+00:00"
-        client_dt = datetime.fromisoformat(normalized)
-        if timezone_name and ZoneInfo:
-            try:
-                tz = ZoneInfo(timezone_name)
-                return client_dt.astimezone(tz)
-            except Exception:
-                return client_dt
-        return client_dt
-    except Exception:
-        return None
 
 from time_tracking import bp_time as time_bp
 from google_token_store import save_google_token, load_google_token
