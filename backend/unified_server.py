@@ -1280,7 +1280,6 @@ def _format_intern_phase(record: dict, phase_key: str) -> dict:
 def _format_intern_record(record: dict) -> dict:
     if not record:
         return {}
-
     phases = {
         key: _format_intern_phase(record, key)
         for key in INTERN_PHASES.keys()
@@ -1295,117 +1294,11 @@ def _format_intern_record(record: dict) -> dict:
     }
 
 
-def _normalize_identifier(value: str) -> str:
-    """Normalize an identifier for case-insensitive comparison."""
-    if not value:
-        return ''
-    return ''.join(ch for ch in str(value).upper() if ch.isalnum())
-
-
-def _build_synthetic_intern_from_employee(token: str, identifier: str, include_system: bool = True):
-    """Build a synthetic intern record from employee master if employee is flagged as Intern."""
-    try:
-        print(f"[INTERN] Attempting to build synthetic intern for identifier: '{identifier}'")
-        entity_set = get_employee_entity_set(token)
-        field_map = get_field_map(entity_set)
-        id_field = field_map.get("id") or "crc6f_employeeid"
-        flag_field = field_map.get("employee_flag") or "crc6f_employeeflag"
-        print(f"[INTERN] Using entity_set={entity_set}, id_field={id_field}, flag_field={flag_field}")
-
-        select_fields = {
-            id_field,
-            flag_field,
-            "createdon",
-            "modifiedon",
-        }
-        for key in ["email", "contact", "address", "department", "designation", "doj", "fullname", "firstname", "lastname"]:
-            logical = field_map.get(key)
-            if logical:
-                select_fields.add(logical)
-
-        select_clause = "$select=" + ",".join(sorted(select_fields))
-        filter_clause = f"$filter={flag_field} eq 'Intern'"
-        url = f"{RESOURCE}/api/data/v9.2/{entity_set}?{select_clause}&{filter_clause}&$top=5000"
-        print(f"[INTERN] Fetching flagged interns from: {url}")
-
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "Accept": "application/json",
-            "OData-MaxVersion": "4.0",
-            "OData-Version": "4.0"
-        }
-
-        resp = requests.get(url, headers=headers, timeout=30)
-        if resp.status_code != 200:
-            print(f"[INTERN] Failed to fetch flagged interns from employee master: {resp.status_code} {resp.text}")
-            return None
-
-        flagged_employees = resp.json().get("value", [])
-        print(f"[INTERN] Found {len(flagged_employees)} employees flagged as Intern")
-        
-        identifier_norm = _normalize_identifier(identifier)
-        identifier_digits = ''.join(ch for ch in identifier_norm if ch.isdigit())
-        print(f"[INTERN] Looking for identifier_norm='{identifier_norm}', digits='{identifier_digits}'")
-
-        for rec in flagged_employees:
-            emp_id_raw = rec.get(id_field) or ''
-            emp_id_norm = _normalize_identifier(emp_id_raw)
-            emp_digits = ''.join(ch for ch in emp_id_norm if ch.isdigit())
-
-            if not emp_id_norm:
-                continue
-
-            if emp_id_norm == identifier_norm or (emp_digits and emp_digits == identifier_digits):
-                synthetic = {}
-                for logical in INTERN_FIELDS.values():
-                    if logical:
-                        synthetic[logical] = None
-                intern_field = INTERN_FIELDS['intern_id']
-                emp_field = INTERN_FIELDS['employee_id']
-                synthetic[intern_field] = rec.get(id_field) or identifier
-                synthetic[emp_field] = rec.get(id_field)
-                synthetic['createdon'] = rec.get('createdon') or datetime.utcnow().isoformat()
-                if include_system:
-                    synthetic['modifiedon'] = rec.get('modifiedon') or synthetic['createdon']
-
-                # flag for downstream logic
-                synthetic['_synthetic'] = True
-                synthetic['_employee_record'] = rec
-                synthetic['_employee_entity_set'] = entity_set
-                return synthetic
-
-        return None
-    except Exception as err:
-        print(f"[INTERN] Failed to synthesize intern from employee: {err}")
-        return None
-
-
-def _create_intern_record(token: str, payload: dict):
-    """Create a new intern record in Dataverse and return the response JSON (if any)."""
-    url = f"{RESOURCE}/api/data/v9.2/{INTERN_ENTITY}"
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-        "Prefer": "return=representation",
-    }
-    resp = requests.post(url, headers=headers, json=payload, timeout=30)
-    if resp.status_code not in (200, 201, 204):
-        raise Exception(f"Failed to create intern record: {resp.status_code} {resp.text}")
-    try:
-        return resp.json()
-    except Exception:
-        return None
-
-
 def _fetch_intern_record_by_id(token: str, intern_id: str, include_system: bool = True):
-
     select_clause = ','.join(_build_intern_select_fields(include_system=include_system))
-    raw_id = (intern_id or '').strip()
-    if not raw_id:
-        return None
-    safe_id = raw_id.replace("'", "''")
-    base_query = f"?$select={select_clause}&$top=50"
+    safe_id = (intern_id or '').replace("'", "''")
+    filter_query = f"?$select={select_clause}&$top=1&$filter={INTERN_FIELDS['intern_id']} eq '{safe_id}'"
+    url = f"{RESOURCE}/api/data/v9.2/{INTERN_ENTITY}{filter_query}"
 
     headers = {
         "Authorization": f"Bearer {token}",
@@ -1414,54 +1307,15 @@ def _fetch_intern_record_by_id(token: str, intern_id: str, include_system: bool 
         "OData-Version": "4.0",
     }
 
-    # Get all records and filter in Python since Dataverse doesn't support case-insensitive search
-    url = f"{RESOURCE}/api/data/v9.2/{INTERN_ENTITY}{base_query}"
-    print(f"[INTERN] Fetching intern records from: {url}")
     resp = requests.get(url, headers=headers, timeout=30)
     if resp.status_code != 200:
         raise Exception(f"Dataverse returned {resp.status_code}: {resp.text}")
 
     values = resp.json().get("value", [])
-    print(f"[INTERN] Found {len(values)} intern records in Dataverse")
-
-    # Log all intern IDs for debugging
-    intern_id_field = INTERN_FIELDS['intern_id']
-    emp_id_field = INTERN_FIELDS['employee_id']
-    print(f"[INTERN] Looking for: '{safe_id}' (intern_id_field={intern_id_field}, emp_id_field={emp_id_field})")
-    for i, rec in enumerate(values[:10]):
-        print(f"[INTERN]   Record {i}: intern_id='{rec.get(intern_id_field)}', employee_id='{rec.get(emp_id_field)}'")
-
-    # First try exact intern_id match
-    for record in values:
-        if record.get(intern_id_field) == safe_id:
-            print(f"[INTERN] Found exact intern_id match")
-            return record
-
-    # Then try case-insensitive intern_id match
-    safe_id_lower = safe_id.lower()
-    for record in values:
-        record_id = record.get(intern_id_field, "")
-        if record_id and record_id.lower() == safe_id_lower:
-            print(f"[INTERN] Found case-insensitive intern_id match")
-            return record
-
-    # Finally try employee_id match
-    for record in values:
-        emp_id = record.get(emp_id_field, "")
-        if emp_id and (emp_id == safe_id or emp_id.lower() == safe_id_lower):
-            print(f"[INTERN] Found employee_id match")
-            return record
-
-    synthetic = _build_synthetic_intern_from_employee(token, raw_id, include_system=include_system)
-    if synthetic:
-        print(f"[INTERN] Synthesizing intern record from employee master for '{safe_id}'")
-        return synthetic
-    print(f"[INTERN] No match found for '{safe_id}'")
-    return None
+    return values[0] if values else None
 
 
 def _fetch_employee_by_employee_id(token: str, employee_id: str, select_fields=None):
-
     entity_set = get_employee_entity_set(token)
     field_map = get_field_map(entity_set)
     id_field = field_map.get('id')
@@ -1505,6 +1359,618 @@ def _fetch_employee_by_employee_id(token: str, employee_id: str, select_fields=N
     return values[0] if values else None
 
 
+def _save_google_credentials(creds: Credentials):
+    try:
+        if not creds:
+            return
+        token_json = creds.to_json()
+        save_google_token(token_json)
+    except Exception as e:
+        print(f"[WARN] Failed to persist Google OAuth credentials: {e}")
+
+
+def _load_google_credentials():
+    try:
+        token_json = load_google_token()
+        if not token_json:
+            return None
+        data = json.loads(token_json)
+        creds = Credentials.from_authorized_user_info(data, GOOGLE_SCOPES)
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+            _save_google_credentials(creds)
+        return creds
+    except Exception as e:
+        print(f"[WARN] Failed to load Google OAuth credentials: {e}")
+        return None
+
+
+def get_google_calendar_service():
+    creds = _load_google_credentials()
+    if not creds:
+        raise RuntimeError("Google OAuth credentials not found. Please authorize via /google/authorize.")
+    if not creds.valid and creds.expired and creds.refresh_token:
+        try:
+            creds.refresh(Request())
+            _save_google_credentials(creds)
+        except Exception as e:
+            print(f"[ERROR] Failed to refresh Google OAuth credentials: {e}")
+            raise
+    return build("calendar", "v3", credentials=creds)
+
+
+def _get_project_member_employee_ids(token: str, project_id: str):
+    safe_pid = str(project_id or "").replace("'", "''")
+    if not safe_pid:
+        return []
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/json",
+        "OData-MaxVersion": "4.0",
+        "OData-Version": "4.0",
+    }
+    url = f"{RESOURCE}/api/data/v9.2/crc6f_hr_projectcontributorses?$select=crc6f_employeeid&$filter=crc6f_projectid eq '{safe_pid}'"
+    try:
+        resp = requests.get(url, headers=headers, timeout=30)
+        if resp.status_code != 200:
+            print(f"[WARN] Failed to fetch project members for {project_id}: {resp.status_code} {resp.text}")
+            return []
+        values = resp.json().get("value", [])
+        emp_ids = []
+        for row in values:
+            emp = row.get("crc6f_employeeid")
+            if emp:
+                emp_ids.append(emp)
+        return emp_ids
+    except Exception as e:
+        print(f"[WARN] Exception while fetching project members for {project_id}: {e}")
+        return []
+
+
+def notify_socket_server(admin_id: str, meet_url: str, participants: list, title: str = "Meeting"):
+    try:
+        payload = {
+            "admin_id": admin_id,
+            "title": title or "Meeting",
+            "meet_url": meet_url,
+            "participants": participants or [],
+        }
+        print("[MEET][SOCKET] notify_socket_server payload:", payload)
+        resp = requests.post(f"{SOCKET_SERVER_URL}/emit", json=payload, timeout=5)
+        print("[MEET][SOCKET] socket server response:", resp.status_code, resp.text[:500])
+        if resp.status_code >= 400:
+            print(f"[MEET][SOCKET] Non-2xx response from socket server: {resp.status_code} {resp.text}")
+            return None
+        try:
+            data = resp.json() or {}
+            return data.get("call_id")
+        except Exception:
+            return None
+    except Exception as e:
+        print(f"[MEET][SOCKET] Failed to notify socket server: {e}")
+        return None
+
+
+def _ensure_storage_dir():
+    try:
+        os.makedirs(STORAGE_DIR, exist_ok=True)
+    except Exception as e:
+        print(f"[WARN] Failed to ensure storage directory: {e}")
+
+
+def _load_team_hierarchy_local():
+    _ensure_storage_dir()
+    if not os.path.exists(TEAM_HIERARCHY_STORAGE):
+        return []
+    try:
+        with open(TEAM_HIERARCHY_STORAGE, 'r', encoding='utf-8') as fh:
+            data = json.load(fh)
+            if isinstance(data, list):
+                return data
+    except Exception as e:
+        print(f"[WARN] Failed to load team hierarchy cache: {e}")
+    return []
+
+
+def _save_team_hierarchy_local(records: list):
+    _ensure_storage_dir()
+    try:
+        with open(TEAM_HIERARCHY_STORAGE, 'w', encoding='utf-8') as fh:
+            json.dump(records or [], fh, indent=2)
+    except Exception as e:
+        print(f"[WARN] Failed to persist team hierarchy cache: {e}")
+
+
+def _upsert_team_hierarchy_local(record: dict):
+    if not record or not record.get('id'):
+        return
+    current = _load_team_hierarchy_local()
+    normalized_id = _normalize_guid(record.get('id')) or record.get('id')
+    record['id'] = normalized_id
+    updated = False
+    for idx, existing in enumerate(current):
+        existing_id = _normalize_guid(existing.get('id')) or existing.get('id')
+        if existing_id == normalized_id:
+            current[idx] = record
+            updated = True
+            break
+    if not updated:
+        current.append(record)
+    _save_team_hierarchy_local(current)
+
+
+def _delete_team_hierarchy_local(record_id: str) -> bool:
+    if not record_id:
+        return False
+    normalized = _normalize_guid(record_id) or record_id
+    current = _load_team_hierarchy_local()
+    remaining = [r for r in current if (_normalize_guid(r.get('id')) or r.get('id')) != normalized]
+    if len(remaining) != len(current):
+        _save_team_hierarchy_local(remaining)
+        return True
+    return False
+
+
+def _find_local_hierarchy_record(record_id: str):
+    if not record_id:
+        return None
+    normalized = _normalize_guid(record_id) or record_id
+    for rec in _load_team_hierarchy_local():
+        rec_id = _normalize_guid(rec.get('id')) or rec.get('id')
+        if rec_id == normalized:
+            return rec
+    return None
+
+
+def _compose_hierarchy_display(token: str, employee_id: str, manager_id: str, record_id: str):
+    normalized_id = _normalize_guid(record_id) or record_id or str(uuid.uuid4())
+    result = {
+        "id": normalized_id,
+        "employeeId": employee_id,
+        "employeeName": employee_id,
+        "employeeDepartment": "",
+        "managerId": manager_id,
+        "managerName": manager_id,
+        "managerDepartment": "",
+        "createdBy": None
+    }
+
+    lookup = {}
+    if token:
+        try:
+            lookup = _build_employee_lookup(token, {employee_id, manager_id})
+        except Exception as e:
+            print(f"[WARN] Could not resolve employee names for hierarchy record: {e}")
+    if lookup:
+        employee_info = lookup.get(employee_id, {})
+        manager_info = lookup.get(manager_id, {})
+        result["employeeName"] = employee_info.get('name') or employee_id
+        result["employeeDepartment"] = employee_info.get('department') or ''
+        result["managerName"] = manager_info.get('name') or manager_id
+        result["managerDepartment"] = manager_info.get('department') or ''
+    else:
+        existing = _find_local_hierarchy_record(normalized_id)
+        if existing:
+            result["employeeName"] = existing.get('employeeName') or employee_id
+            result["employeeDepartment"] = existing.get('employeeDepartment') or ''
+            result["managerName"] = existing.get('managerName') or manager_id
+            result["managerDepartment"] = existing.get('managerDepartment') or ''
+
+    return result
+
+
+def get_leave_allocation_by_experience(experience_years):
+    """Determine leave allocation based on employee experience
+    Returns: (cl, sl, total, allocation_type)
+    
+    Type 1: 3+ years -> 6 CL + 6 SL = 12 total
+    Type 2: 2+ years -> 4 CL + 4 SL = 8 total
+    Type 3: 1+ years -> 3 CL + 3 SL = 6 total
+    Default: < 1 year -> 3 CL + 3 SL = 6 total
+    """
+    exp = float(experience_years or 0)
+    
+    if exp >= 3:
+        return (6.0, 6.0, 12.0, "Type 1")
+    elif exp >= 2:
+        return (4.0, 4.0, 8.0, "Type 2")
+    elif exp >= 1:
+        return (3.0, 3.0, 6.0, "Type 3")
+    else:
+        # Default for new employees (< 1 year)
+        return (3.0, 3.0, 6.0, "Type 3")
+    
+    print(f"   [FETCH] Leave allocation: Type {allocation_type} - CL: {cl}, SL: {sl}, Total: {total}")
+
+
+# ================== LEAVE BALANCE HELPERS ==================
+def _fetch_leave_balance(token: str, employee_id: str) -> dict:
+    """Fetch leave balance row for an employee from Dataverse leave management table.
+
+    Expected columns:
+      - crc6f_empid
+      - crc6f_cl, crc6f_sl, crc6f_compoff
+      - crc6f_total, crc6f_actualtotal
+    """
+    global LEAVE_BALANCE_ENTITY_RESOLVED
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/json",
+        "OData-MaxVersion": "4.0",
+        "OData-Version": "4.0",
+    }
+    safe_emp = employee_id.replace("'", "''")
+    # Try resolved set first, else probe candidates
+    candidate_sets = [LEAVE_BALANCE_ENTITY]
+    if LEAVE_BALANCE_ENTITY_RESOLVED:
+        candidate_sets = [LEAVE_BALANCE_ENTITY_RESOLVED]
+    else:
+        candidate_sets = LEAVE_BALANCE_ENTITY_CANDIDATES
+
+    last_error = None
+    for entity_set in candidate_sets:
+        try:
+            # Try primary FK field name
+            url1 = f"{BASE_URL}/{entity_set}?$filter=crc6f_empid eq '{safe_emp}'&$top=1"
+            resp = requests.get(url1, headers=headers)
+            if resp.status_code == 200:
+                values = resp.json().get("value", [])
+                if values:
+                    LEAVE_BALANCE_ENTITY_RESOLVED = entity_set
+                    print(f"[OK] Leave balance entity resolved: {entity_set} using crc6f_empid for {employee_id}")
+                    return values[0]
+            # Try alternative FK field name if first returned empty
+            url2 = f"{BASE_URL}/{entity_set}?$filter=crc6f_employeeid eq '{safe_emp}'&$top=1"
+            resp2 = requests.get(url2, headers=headers)
+            if resp2.status_code == 200:
+                values2 = resp2.json().get("value", [])
+                if values2:
+                    LEAVE_BALANCE_ENTITY_RESOLVED = entity_set
+                    print(f"[OK] Leave balance entity resolved: {entity_set} using crc6f_employeeid for {employee_id}")
+                    return values2[0]
+            # Record last error body for diagnostics
+            last_error = f"{resp.status_code} {resp.text} | alt {resp2.status_code} {resp2.text}"
+        except Exception as e:
+            last_error = str(e)
+
+    # If none returned data, return None to indicate not found
+    if last_error:
+        print(f"[WARN] Leave balance fetch error (last): {last_error}")
+    return None
+
+
+def _get_available_days(balance_row: dict, leave_type: str) -> float:
+    """Return available days for the requested leave type from a balance row.
+    Tries multiple possible column names to be resilient to schema variations.
+    """
+    if not balance_row:
+        return 0
+    lt = (leave_type or "").strip().lower()
+    def probe(keys):
+        for k in keys:
+            if k in balance_row:
+                try:
+                    return float(balance_row.get(k, 0) or 0)
+                except Exception:
+                    return 0
+        return 0
+    if lt in ["casual leave", "cl"]:
+        return probe(["crc6f_cl", "crc6f_casualleave", "crc6f_casual"])
+    if lt in ["sick leave", "sl"]:
+        return probe(["crc6f_sl", "crc6f_sickleave", "crc6f_sick", "crc6f_sickleaves"])
+    if lt in ["compensatory off", "comp off", "compoff", "co"]:
+        return probe(["crc6f_compoff", "crc6f_comp_off", "crc6f_compensatoryoff", "crc6f_compensatory_off"])
+    # Fallback total bucket(s)
+    return probe(["crc6f_total", "crc6f_overall", "crc6f_totalleave"])
+
+
+def _decrement_leave_balance(token: str, balance_row: dict, leave_type: str, days: float):
+    """Decrement the leave balance for the specified leave type by given days."""
+    if not balance_row:
+        return
+    # Determine column to decrement
+    lt = (leave_type or "").strip().lower()
+    # Resolve the target field robustly by checking which columns exist on the row
+    def resolve_field(row: dict, lt_str: str) -> str:
+        lt_low = (lt_str or '').lower()
+        candidates = []
+        if lt_low in ["casual leave", "cl"]:
+            candidates = ["crc6f_cl", "crc6f_casualleave", "crc6f_casual"]
+        elif lt_low in ["sick leave", "sl"]:
+            candidates = ["crc6f_sl", "crc6f_sickleave", "crc6f_sick", "crc6f_sickleaves"]
+        elif lt_low in ["compensatory off", "comp off", "compoff", "co", "crc6f_compoff"]:
+            candidates = ["crc6f_compoff", "crc6f_comp_off", "crc6f_compensatoryoff", "crc6f_compensatory_off"]
+        else:
+            candidates = ["crc6f_total", "crc6f_overall", "crc6f_totalleave"]
+        for c in candidates:
+            if c in row:
+                return c
+        # Default to first candidate for PATCH to create the field if schema supports it
+        return candidates[0]
+
+    field = resolve_field(balance_row, leave_type)
+
+    current_val = float(balance_row.get(field, 0) or 0)
+    new_val = max(0, current_val - float(days))
+    try:
+        print(f"[TOOL] Decrementing balance: field={field}, current={current_val}, days={days}, new={new_val}")
+    except Exception:
+        pass
+
+    # Extract primary id key, prioritize known schema
+    record_id = balance_row.get('crc6f_hr_leavemangementid') or None
+    if not record_id:
+        # Check common GUID/ID-like fields
+        for k, v in balance_row.items():
+            if isinstance(k, str) and k.lower().endswith('id') and isinstance(v, str) and len(v) >= 30:
+                record_id = v
+                break
+    if not record_id:
+        # Fallbacks: try typical primary names
+        possible_keys = [
+            'crc6f_hr_leavemangementid',
+            'crc6f_leave_mangementid',
+            f"{(LEAVE_BALANCE_ENTITY_RESOLVED or LEAVE_BALANCE_ENTITY)[:-1]}id",
+            f"{(LEAVE_BALANCE_ENTITY_RESOLVED or LEAVE_BALANCE_ENTITY)}id",
+        ]
+        for k in possible_keys:
+            if k in balance_row and balance_row[k]:
+                record_id = balance_row[k]
+                break
+
+    if not record_id:
+        # Retry by re-querying Dataverse using the employee id foreign key
+        try:
+            headers = {
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/json",
+                "OData-MaxVersion": "4.0",
+                "OData-Version": "4.0",
+            }
+            emp_val = balance_row.get('crc6f_empid') or balance_row.get('crc6f_employeeid')
+            if not emp_val:
+                raise Exception("Missing employee id in balance row")
+            entity_set_probe = LEAVE_BALANCE_ENTITY_RESOLVED or LEAVE_BALANCE_ENTITY
+            # Try both common fk field names
+            for fk in ['crc6f_empid', 'crc6f_employeeid']:
+                safe_emp = str(emp_val).replace("'", "''")
+                url = f"{BASE_URL}/{entity_set_probe}?$filter={fk} eq '{safe_emp}'&$top=1"
+                resp = requests.get(url, headers=headers)
+                if resp.status_code == 200:
+                    vals = resp.json().get('value', [])
+                    if vals:
+                        # Find primary id field dynamically
+                        for k, v in vals[0].items():
+                            if isinstance(k, str) and k.lower().endswith('id') and isinstance(v, str) and len(v) >= 30:
+                                record_id = v
+                                break
+                if record_id:
+                    break
+        except Exception as re_err:
+            try:
+                print(f"[WARN] Failed to resolve record id via requery: {re_err}")
+            except Exception:
+                pass
+    if not record_id:
+        raise Exception("Unable to resolve leave balance record ID for update")
+
+    # Recalculate actual total = cl + sl + compoff (do not modify total quota)
+    cur_cl = float(balance_row.get('crc6f_cl', balance_row.get('crc6f_casualleave', balance_row.get('crc6f_casual', 0))) or 0)
+    cur_sl = float(balance_row.get('crc6f_sl', balance_row.get('crc6f_sickleave', balance_row.get('crc6f_sick', balance_row.get('crc6f_sickleaves', 0)))) or 0)
+    cur_co = float(balance_row.get('crc6f_compoff', balance_row.get('crc6f_comp_off', balance_row.get('crc6f_compensatoryoff', balance_row.get('crc6f_compensatory_off', 0)))) or 0)
+    if field in ('crc6f_cl', 'crc6f_casualleave', 'crc6f_casual'):
+        cur_cl = new_val
+    elif field in ('crc6f_sl', 'crc6f_sickleave', 'crc6f_sick', 'crc6f_sickleaves'):
+        cur_sl = new_val
+    elif field in ('crc6f_compoff', 'crc6f_comp_off', 'crc6f_compensatoryoff', 'crc6f_compensatory_off'):
+        cur_co = new_val
+    # Update total as sum of buckets (your table uses crc6f_total)
+    new_total = max(0.0, cur_cl + cur_sl + cur_co)
+
+    # Your Dataverse columns show values as strings; send strings to be safe
+    payload = { field: str(new_val), 'crc6f_total': str(new_total) }
+
+    # Prefer the confirmed entity set if available
+    entity_set = 'crc6f_hr_leavemangements'
+    try:
+        if LEAVE_BALANCE_ENTITY_RESOLVED:
+            entity_set = LEAVE_BALANCE_ENTITY_RESOLVED
+        elif LEAVE_BALANCE_ENTITY:
+            entity_set = LEAVE_BALANCE_ENTITY
+    except Exception:
+        pass
+    try:
+        print(f"[SEND] Updating Dataverse balance row: entity_set={entity_set}, record_id={record_id}")
+        print(f"   Payload: {payload}")
+    except Exception:
+        pass
+    update_record(entity_set, record_id, payload)
+    try:
+        print("[OK] Leave balance updated successfully")
+    except Exception:
+        pass
+
+    # Verify update stuck; if not, attempt direct PATCH fallback
+    try:
+        headers_chk = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json",
+            "OData-MaxVersion": "4.0",
+            "OData-Version": "4.0",
+        }
+        # Read back row via filter using employee id to avoid primary key quoting issues
+        safe_emp = str(emp_val).replace("'", "''")
+        url_chk = f"{BASE_URL}/{entity_set}?$filter=crc6f_employeeid eq '{safe_emp}' or crc6f_empid eq '{safe_emp}'&$top=1"
+        resp_chk = requests.get(url_chk, headers=headers_chk)
+        if resp_chk.status_code == 200 and resp_chk.json().get('value'):
+            row_back = resp_chk.json()['value'][0]
+            current_after = float(row_back.get(field, 0) or 0)
+            if abs(current_after - new_val) > 1e-6:
+                # Attempt direct PATCH with If-Match fallback using record_id
+                try:
+                    headers_patch = {
+                        "Authorization": f"Bearer {token}",
+                        "Content-Type": "application/json",
+                        "If-Match": "*",
+                        "OData-MaxVersion": "4.0",
+                        "OData-Version": "4.0",
+                        "Accept": "application/json",
+                    }
+                    url_upd = f"{BASE_URL}/{entity_set}({record_id})"
+                    resp_upd = requests.patch(url_upd, headers=headers_patch, json=payload)
+                    print(f"🔁 Direct PATCH fallback status: {resp_upd.status_code}")
+                except Exception as patch_err:
+                    print(f"[WARN] Direct PATCH fallback failed: {patch_err}")
+        else:
+            print(f"[WARN] Verification GET failed: {resp_chk.status_code} {resp_chk.text}")
+    except Exception as ver_err:
+        print(f"[WARN] Post-update verification error: {ver_err}")
+
+def _ensure_leave_balance_row(token: str, employee_id: str, defaults: dict = None) -> dict:
+    """Ensure a leave balance row exists for employee; create with defaults if missing.
+    Returns the balance row (existing or created).
+    """
+    row = _fetch_leave_balance(token, employee_id)
+    if row:
+        return row
+    # Prepare defaults
+    defaults = defaults or {"crc6f_cl": 3, "crc6f_sl": 3, "crc6f_compoff": 0}
+    payload = {
+        # Try both common FK field names; Dataverse will ignore unknown fields
+        "crc6f_empid": employee_id,
+        "crc6f_employeeid": employee_id,
+        "crc6f_cl": float(defaults.get("crc6f_cl", 0) or 0),
+        "crc6f_sl": float(defaults.get("crc6f_sl", 0) or 0),
+        "crc6f_compoff": float(defaults.get("crc6f_compoff", 0) or 0),
+    }
+    payload["crc6f_actualtotal"] = payload["crc6f_cl"] + payload["crc6f_sl"] + payload["crc6f_compoff"]
+    # Attempt create on candidate entity sets until success
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "OData-MaxVersion": "4.0",
+        "OData-Version": "4.0",
+    }
+    for entity_set in (LEAVE_BALANCE_ENTITY_RESOLVED and [LEAVE_BALANCE_ENTITY_RESOLVED] or LEAVE_BALANCE_ENTITY_CANDIDATES):
+        try:
+            url = f"{BASE_URL}/{entity_set}"
+            resp = requests.post(url, headers=headers, json=payload)
+            if resp.status_code in (200, 201, 204):
+                print(f"[OK] Created default leave balance row in {entity_set} for {employee_id}")
+                # Read back the row to return consistent structure
+                created = _fetch_leave_balance(token, employee_id)
+                if created:
+                    return created
+        except Exception as e:
+            print(f"[WARN] Failed creating default balance in {entity_set}: {e}")
+    # If create failed, return an in-memory row so callers can proceed (will reflect zeros)
+    return {
+        "crc6f_empid": employee_id,
+        "crc6f_employeeid": employee_id,
+        "crc6f_cl": payload["crc6f_cl"],
+        "crc6f_sl": payload["crc6f_sl"],
+        "crc6f_compoff": payload["crc6f_compoff"],
+        "crc6f_actualtotal": payload["crc6f_actualtotal"],
+    }
+
+# ================== ASSET MANAGEMENT FUNCTIONS ==================
+def get_all_assets():
+    token = get_access_token()
+    url = f"{API_BASE}/{ENTITY_NAME}"
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    res = requests.get(url, headers=headers)
+    if res.status_code == 200:
+        return res.json().get("value", [])
+    raise Exception(f"Error fetching assets: {res.status_code} - {res.text}")
+
+def get_asset_by_empid(emp_id):
+    token = get_access_token()
+    url = f"{API_BASE}/{ENTITY_NAME}?$filter=crc6f_employeeid eq '{emp_id}'"
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    res = requests.get(url, headers=headers)
+    if res.status_code == 200:
+        data = res.json().get("value", [])
+        return data[0] if data else None
+    raise Exception(f"Error fetching asset by emp id: {res.status_code} - {res.text}")
+
+def get_asset_by_assetid(asset_id):
+    token = get_access_token()
+    url = f"{API_BASE}/{ENTITY_NAME}?$filter=crc6f_assetid eq '{asset_id}'"
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    res = requests.get(url, headers=headers)
+    if res.status_code == 200:
+        data = res.json().get("value", [])
+        return data[0] if data else None
+    raise Exception(f"Error fetching asset by asset id: {res.status_code} - {res.text}")
+
+def create_asset(data):
+    # Basic validation server-side
+    assigned_to = data.get("crc6f_assignedto", "").strip()
+    emp_id = data.get("crc6f_employeeid", "").strip()
+    asset_id = data.get("crc6f_assetid", "").strip()
+
+    if not assigned_to or not emp_id:
+        return {"error": "Assigned To (crc6f_assignedto) and Employee ID (crc6f_employeeid) are required."}, 400
+
+    if not asset_id:
+        return {"error": "Asset ID (crc6f_assetid) is required."}, 400
+
+    # check duplicate asset id
+    existing = get_asset_by_assetid(asset_id)
+    if existing:
+        return {"error": f"Asset with id {asset_id} already exists."}, 409
+
+    token = get_access_token()
+    url = f"{API_BASE}/{ENTITY_NAME}"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+        "Prefer": "return=representation"
+    }
+    res = requests.post(url, headers=headers, json=data)
+    if res.status_code in (200, 201):
+        return res.json()
+    raise Exception(f"Error creating asset: {res.status_code} - {res.text}")
+
+def update_asset_by_assetid(asset_id, data):
+    asset = get_asset_by_assetid(asset_id)
+    if not asset:
+        raise Exception("Asset not found for update.")
+    record_id = asset.get("crc6f_hr_assetdetailsid")
+    if not record_id:
+        raise Exception("Record id missing from Dataverse response; cannot update.")
+    token = get_access_token()
+    url = f"{API_BASE}/{ENTITY_NAME}({record_id})"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+        "If-Match": "*"
+    }
+    res = requests.patch(url, headers=headers, json=data)
+    if res.status_code in (204, 1223):
+        return {"message": "Asset updated successfully"}
+    raise Exception(f"Error updating asset: {res.status_code} - {res.text}")
+
+def delete_asset_by_assetid(asset_id):
+    asset = get_asset_by_assetid(asset_id)
+    if not asset:
+        raise Exception("Asset not found for deletion.")
+    record_id = asset.get("crc6f_hr_assetdetailsid")
+    if not record_id:
+        raise Exception("Record id missing from Dataverse response; cannot delete.")
+    token = get_access_token()
+    url = f"{API_BASE}/{ENTITY_NAME}({record_id})"
+    headers = {"Authorization": f"Bearer {token}", "If-Match": "*"}
+    res = requests.delete(url, headers=headers)
+    if res.status_code == 204:
+        return {"message": "Asset deleted successfully"}
+    raise Exception(f"Error deleting asset: {res.status_code} - {res.text}")
+
+# ================== AUTH/LOGIN HELPERS ==================
+def _hash_password(password: str) -> str:
+    return hashlib.sha256(password.encode()).hexdigest()
+
 def _fetch_login_by_username(username: str, token: str, headers: dict):
     # Escape single quotes for OData filter
     login_table = get_login_table(token)
@@ -1515,7 +1981,6 @@ def _fetch_login_by_username(username: str, token: str, headers: dict):
     resp.raise_for_status()
     records = resp.json().get("value", [])
     return records[0] if records else None
-
 
 def _update_login_record(record_id: str, payload: dict, headers: dict, token: str):
     login_table = get_login_table(token)
@@ -1698,7 +2163,4077 @@ def checkin():
         print(f"\n[ERROR] CHECK-IN ERROR: {str(e)}\n")
         return jsonify({"success": False, "error": str(e)}), 500
 
-# ... rest of the code remains the same ...
+#  for reset password
+def generate_reset_token(email):
+    payload = {
+        "email": email,
+        "exp": datetime.now(timezone.utc) + timedelta(minutes=30)  # 30 min validity
+    }
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+def verify_reset_token(token):
+    try:
+        decoded = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        return decoded["email"]
+    except jwt.ExpiredSignatureError:
+        return None
+    except Exception:
+        return None
+
+
+def _normalize_access_level(value):
+    level = (value or "").strip().upper()
+    if level in ("L1", "L2", "L3"):
+        return level
+    return "L1"
+
+
+@app.route("/api/login", methods=["POST"])
+def login():
+    try:
+        data = request.get_json(force=True)
+        username = data.get("username")
+        password = data.get("password")
+
+        if not username or not password:
+            return jsonify({"status": "error", "message": "Username and password required"}), 400
+
+        # Fetch Dataverse
+        token = get_access_token()
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            "OData-MaxVersion": "4.0",
+            "OData-Version": "4.0",
+            "Accept": "application/json"
+        }
+
+        # -------------------------
+        # FETCH USER RECORD
+        # -------------------------
+        try:
+            record = _fetch_login_by_username(username, token, headers)
+        except Exception as e:
+            return jsonify({"status": "error", "message": f"Fetch error: {e}"}), 500
+
+        # USER NOT FOUND
+        if not record:
+            return jsonify({"status": "failed", "message": "Invalid Username or Password"}), 401
+
+        record_id = record.get("crc6f_hr_login_detailsid")
+        status = record.get("crc6f_user_status", "Active")
+        attempts = int(record.get("crc6f_loginattempts") or 0)
+        stored_hash = record.get("crc6f_password") or ""
+        access_level = _normalize_access_level(record.get("crc6f_accesslevel"))
+
+        # -------------------------
+        # CHECK ACCOUNT LOCKED
+        # -------------------------
+        if status.lower() == "locked":
+            return jsonify({"status": "locked", "message": "Account locked"}), 403
+
+        # -------------------------
+        # PREPARE HASH VALUES
+        # -------------------------
+        default_password = os.getenv("DEFAULT_USER_PASSWORD", "Temp@123")
+        hashed_default = _hash_password(default_password)
+        hashed_input = _hash_password(password)
+
+        # ======================================================
+        # RULE 1: FIRST LOGIN (Username + Temp@123 MUST MATCH DATAVERSE)
+        # ======================================================
+        if password == default_password:
+            if stored_hash == hashed_default:
+                return jsonify({
+                    "status": "first_login",
+                    "username": username,
+                    "message": "Default password detected. Create new password."
+                }), 200
+            else:
+                return jsonify({
+                    "status": "failed",
+                    "message": "Invalid Username or Password"
+                }), 401
+
+        # ======================================================
+        # RULE 2: NORMAL LOGIN
+        # ======================================================
+        if hashed_input == stored_hash:
+
+            # Reset attempts
+            payload = {
+                "crc6f_last_login": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "crc6f_loginattempts": "0",
+                "crc6f_user_status": "Active"
+            }
+
+            _update_login_record(record_id, payload, headers, token)
+
+            # -------------------------
+            # ACCESS LOGIC RESTORED
+            # Fetch employee data from master
+            # -------------------------
+            employee_id_value = None
+            employee_designation = None
+            is_admin_flag = access_level == "L3"
+            is_manager_flag = access_level in ("L2", "L3")
+
+            try:
+                entity_set = get_employee_entity_set(token)
+                field_map = get_field_map(entity_set)
+
+                email_field = field_map.get("email")
+                id_field = field_map.get("id")
+                desig_field = field_map.get("designation")
+
+                if email_field and id_field:
+                    safe_email = username.replace("'", "''")
+                    select_cols = [id_field, email_field]
+                    if desig_field:
+                        select_cols.append(desig_field)
+
+                    url_emp = (
+                        f"{BASE_URL}/{entity_set}"
+                        f"?$top=1&$select={','.join(select_cols)}"
+                        f"&$filter={email_field} eq '{safe_email}'"
+                    )
+
+                    resp = requests.get(url_emp, headers=headers)
+                    if resp.status_code == 200:
+                        vals = resp.json().get("value", [])
+                        if vals:
+                            emp = vals[0]
+                            employee_id_value = emp.get(id_field)
+                            employee_designation = emp.get(desig_field)
+
+                            designation_lower = (employee_designation or "").lower()
+                            if "admin" in designation_lower:
+                                is_admin_flag = True
+                            if "manager" in designation_lower:
+                                is_manager_flag = True
+
+            except Exception as e:
+                print("ACCESS LOGIC ERROR:", e)
+
+            # SUCCESS LOGIN RESPONSE
+            return jsonify({
+                "status": "success",
+                "message": f"Welcome, {record.get('crc6f_employeename')}",
+                "user": {
+                    "email": record.get("crc6f_username"),
+                    "name": record.get("crc6f_employeename"),
+                    "employee_id": employee_id_value,
+                    "designation": employee_designation,
+                    "access_level": access_level,
+                    "role": access_level,
+                    "is_admin": is_admin_flag,
+                    "is_manager": is_manager_flag
+                }
+            }), 200
+
+        # ======================================================
+        # RULE 3: WRONG PASSWORD
+        # ======================================================
+        attempts += 1
+        update_payload = {"crc6f_loginattempts": str(attempts)}
+
+        admin_email = os.getenv("ADMIN_EMAIL")
+
+        if attempts >= 3:
+            update_payload["crc6f_user_status"] = "Locked"
+
+            if admin_email:
+                try:
+                    send_email(
+                        subject="🔒 Account Locked",
+                        recipients=[admin_email],
+                        body=f"User '{username}' locked after 3 failed attempts.",
+                        html=f"<p>User <b>{username}</b> locked after <b>3 attempts</b>.</p>"
+                    )
+                except Exception as e:
+                    print("Admin email failed:", e)
+
+        _update_login_record(record_id, update_payload, headers, token)
+
+        if attempts >= 3:
+            return jsonify({
+                "status": "locked",
+                "message": "Account locked after 3 attempts"
+            }), 403
+
+        return jsonify({
+            "status": "failed",
+            "message": "Invalid Username or Password"
+        }), 401
+
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/api/forgot-password", methods=["POST"])
+def forgot_password():
+    """Password reset request handler with debug logging."""
+    import sys
+    print("[FORGOT-PWD] Handler started", flush=True)
+    
+    data = request.get_json(silent=True) or {}
+    user_email = data.get("email")
+
+    if not user_email:
+        print("[FORGOT-PWD] No email provided", flush=True)
+        return jsonify({"status": "error", "message": "Email required"}), 400
+
+    print(f"[FORGOT-PWD] Processing request for: {user_email}", flush=True)
+
+    try:
+        # Step 1: Get access token (with timeout logging)
+        print("[FORGOT-PWD] Step 1: Getting access token...", flush=True)
+        access_token = get_access_token()
+        if not access_token:
+            print("[FORGOT-PWD] Failed to get access token", flush=True)
+            return jsonify({"status": "error", "message": "Failed to obtain access token"}), 500
+        print("[FORGOT-PWD] Access token obtained", flush=True)
+
+        # Step 2: Lookup user in Dataverse
+        print("[FORGOT-PWD] Step 2: Looking up user in Dataverse...", flush=True)
+        url = f"{BASE_URL}/crc6f_hr_login_detailses?$filter=crc6f_username eq '{user_email}'"
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json",
+            "OData-MaxVersion": "4.0",
+            "OData-Version": "4.0",
+            "Accept": "application/json"
+        }
+
+        res = requests.get(url, headers=headers, timeout=10)
+        res.raise_for_status()
+        result = res.json()
+        print(f"[FORGOT-PWD] Dataverse lookup complete, found {len(result.get('value', []))} records", flush=True)
+
+        if not result.get("value"):
+            print(f"[FORGOT-PWD] Email not found: {user_email}", flush=True)
+            return jsonify({"status": "error", "message": "Email not found"}), 404
+
+        record = result["value"][0]
+        record_id = record.get("crc6f_hr_login_detailsid")
+        print(f"[FORGOT-PWD] Found user record: {record_id}", flush=True)
+
+        # Step 3: Generate reset token
+        print("[FORGOT-PWD] Step 3: Generating reset token...", flush=True)
+        token = generate_reset_token(user_email)
+        if not token:
+            print("[FORGOT-PWD] Failed to generate token", flush=True)
+            return jsonify({"status": "error", "message": "Failed to generate reset token"}), 500
+        print("[FORGOT-PWD] Token generated", flush=True)
+
+        # Step 4: Build reset link
+        reset_link = f"{FRONTEND_BASE_URL}/create_new_password.html?token={token}"
+        print(f"[FORGOT-PWD] Reset link: {reset_link}", flush=True)
+
+        # Step 5: Send email (plain text only to avoid Brevo link tracking)
+        print("[FORGOT-PWD] Step 5: Sending email...", flush=True)
+        subject = "Reset Your Password - VTab Office Tool"
+        text_body = f"""Hello,
+
+You requested a password reset for your VTab Office Tool account.
+
+Copy and paste this link into your browser to reset your password:
+
+{reset_link}
+
+This link expires in 28 minutes.
+
+If you did not request this, please ignore this message.
+
+- VTab Office Tool Team"""
+
+        sent = False
+        try:
+            # Send plain text only (no HTML) to prevent Brevo from tracking/wrapping links
+            sent = send_email(subject=subject, recipients=[user_email], body=text_body, html=None)
+            print(f"[FORGOT-PWD] send_email returned: {sent}", flush=True)
+        except Exception as mail_err:
+            print(f"[FORGOT-PWD] Email send exception: {mail_err}", flush=True)
+            traceback.print_exc()
+
+        if not sent:
+            print("[FORGOT-PWD] Email not sent", flush=True)
+            return jsonify({"status": "error", "message": "Failed to send reset email"}), 500
+
+        print("[FORGOT-PWD] Success - email sent", flush=True)
+        return jsonify({"status": "success", "message": "Reset email sent"}), 200
+
+    except requests.Timeout:
+        print("[FORGOT-PWD] Request timeout (Dataverse)", flush=True)
+        return jsonify({"status": "error", "message": "Request timeout"}), 504
+    except requests.HTTPError as e:
+        print(f"[FORGOT-PWD] HTTP error: {e}", flush=True)
+        traceback.print_exc()
+        return jsonify({"status": "error", "message": "Upstream API error", "detail": str(e)}), 502
+    except Exception as e:
+        print(f"[FORGOT-PWD] Unexpected error: {e}", flush=True)
+        traceback.print_exc()
+        return jsonify({"status": "error", "message": "Internal server error"}), 500
+
+
+@app.route("/api/reset-password", methods=["POST"])
+def reset_password():
+    data = request.get_json(silent=True) or {}
+
+    token = data.get("token")         # forgot password flow
+    username = data.get("username")   # first-login flow
+    new_password = data.get("new_password")
+
+    # --------------------------------------------
+    # Validate required fields
+    # --------------------------------------------
+    if not new_password:
+        return jsonify({
+            "status": "error",
+            "message": "Missing new_password"
+        }), 400
+
+    # ========================================================
+    # CASE 1 —— FORGOT PASSWORD (Token based)
+    # ========================================================
+    if token:
+        email = verify_reset_token(token)
+
+        if not email:
+            return jsonify({
+                "status": "error",
+                "message": "Invalid or expired link."
+            }), 401
+
+        lookup_email = email
+
+    # ========================================================
+    # CASE 2 —— FIRST LOGIN (Username based)
+    # ========================================================
+    elif username:
+        lookup_email = username
+
+    else:
+        return jsonify({
+            "status": "error",
+            "message": "Invalid request. Missing token or username."
+        }), 400
+
+    try:
+        # --------------------------------------------
+        # Get Dataverse Access Token
+        # --------------------------------------------
+        access_token = get_access_token()
+        if not access_token:
+            return jsonify({
+                "status": "error",
+                "message": "Failed to obtain access token"
+            }), 500
+
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "OData-Version": "4.0",
+            "OData-MaxVersion": "4.0"
+        }
+
+        # --------------------------------------------
+        # Lookup Login Row using crc6f_username
+        # --------------------------------------------
+        lookup_url = (
+            f"{BASE_URL}/crc6f_hr_login_detailses"
+            f"?$filter=crc6f_username eq '{lookup_email}'"
+        )
+
+        res = requests.get(lookup_url, headers=headers, timeout=15)
+        res.raise_for_status()
+        result = res.json()
+
+        if not result.get("value"):
+            return jsonify({
+                "status": "error",
+                "message": "User not found"
+            }), 404
+
+        record = result["value"][0]
+        record_id = record.get("crc6f_hr_login_detailsid")
+
+        if not record_id:
+            return jsonify({
+                "status": "error",
+                "message": "User record id missing"
+            }), 500
+
+        record_id = record_id.replace("{", "").replace("}", "")
+
+        # --------------------------------------------
+        # Hash the NEW password
+        # --------------------------------------------
+        hashed_password = _hash_password(new_password)
+
+        patch_url = f"{BASE_URL}/crc6f_hr_login_detailses({record_id})"
+
+        patch_body = {
+            "crc6f_password": hashed_password,
+            "crc6f_loginattempts": "0"   # reset attempts
+        }
+
+        patch_headers = dict(headers)
+        patch_headers["If-Match"] = "*"
+
+        patch_res = requests.patch(
+            patch_url,
+            headers=patch_headers,
+            json=patch_body,
+            timeout=15
+        )
+
+        # Debug Log
+        print("\n----- PATCH Debug -----")
+        print("PATCH URL:", patch_url)
+        print("PATCH Body:", patch_body)
+        print("PATCH Status:", patch_res.status_code)
+        print("PATCH Response:", patch_res.text)
+        print("-----------------------\n")
+
+        if patch_res.status_code not in (200, 204):
+            return jsonify({
+                "status": "error",
+                "message": "Password update failed",
+                "detail": patch_res.text
+            }), 400
+
+        return jsonify({
+            "status": "success",
+            "message": "Password updated"
+        }), 200
+
+    except requests.HTTPError as e:
+        traceback.print_exc()
+        return jsonify({
+            "status": "error",
+            "message": "Dataverse API error",
+            "detail": str(e)
+        }), 502
+
+    except Exception as ex:
+        traceback.print_exc()
+        return jsonify({
+            "status": "error",
+            "message": "Internal server error",
+            "detail": str(ex)
+        }), 500
+
+@app.route("/api/reset-attempts", methods=["POST"])
+def reset_attempts():
+    data = request.get_json()
+    username = data.get("username")
+
+    token = get_access_token()
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json"
+    }
+
+    record = _fetch_login_by_username(username, token, headers)
+    if not record:
+        return jsonify({"status": "error", "message": "User not found"}), 404
+
+    record_id = record.get("crc6f_hr_login_detailsid")
+
+    _update_login_record(record_id, {
+        "crc6f_attempts": 0,
+        "crc6f_locked": False
+    }, headers, token)
+
+    return jsonify({"status": "success", "message": "Attempts reset"})
+
+@app.route("/api/login-accounts", methods=["GET"])
+def list_login_accounts():
+    try:
+        token = get_access_token()
+        login_table = get_login_table(token)
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json",
+            "OData-MaxVersion": "4.0",
+            "OData-Version": "4.0",
+        }
+        select = (
+            "$select=crc6f_hr_login_detailsid,crc6f_username,crc6f_employeename,"
+            "crc6f_accesslevel,crc6f_last_login,crc6f_loginattempts,crc6f_user_status,crc6f_userid"
+        )
+        url = f"{BASE_URL}/{login_table}?{select}&$top=5000"
+        resp = requests.get(url, headers=headers)
+        if resp.status_code != 200:
+            return jsonify({
+                "success": False,
+                "error": "Failed to fetch login accounts",
+                "details": resp.text,
+            }), 500
+        records = resp.json().get("value", [])
+        items = []
+        for r in records:
+            record_id = r.get("crc6f_hr_login_detailsid") or r.get("id")
+            if not record_id:
+                continue
+            items.append({
+                "id": record_id,
+                "username": r.get("crc6f_username") or "",
+                "employeeName": r.get("crc6f_employeename") or "",
+                "accessLevel": r.get("crc6f_accesslevel") or "",
+                "lastLogin": r.get("crc6f_last_login"),
+                "loginAttempts": int(r.get("crc6f_loginattempts") or 0),
+                "userStatus": r.get("crc6f_user_status") or "",
+                "userId": r.get("crc6f_userid") or "",
+            })
+        return jsonify({"success": True, "items": items, "count": len(items)})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route("/api/login-accounts/by-username", methods=["GET"])
+def get_login_account_by_username():
+    username = request.args.get("username", "").strip()
+    if not username:
+        return jsonify({"success": False, "error": "username query param is required"}), 400
+    try:
+        token = get_access_token()
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json",
+            "OData-MaxVersion": "4.0",
+            "OData-Version": "4.0",
+        }
+        record = _fetch_login_by_username(username, token, headers)
+        if not record:
+            return jsonify({"success": False, "error": "Login account not found"}), 404
+        item = {
+            "id": record.get("crc6f_hr_login_detailsid") or record.get("id"),
+            "username": record.get("crc6f_username") or "",
+            "employeeName": record.get("crc6f_employeename") or "",
+            "accessLevel": _normalize_access_level(record.get("crc6f_accesslevel")),
+            "lastLogin": record.get("crc6f_last_login"),
+            "loginAttempts": int(record.get("crc6f_loginattempts") or 0),
+            "userStatus": record.get("crc6f_user_status") or "",
+        }
+        return jsonify({"success": True, "item": item})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route("/api/login-accounts", methods=["POST"])
+def create_login_account():
+    try:
+        data = request.get_json(force=True) or {}
+        username = (data.get("username") or "").strip()
+
+        if not username:
+            return jsonify({"success": False, "error": "Username is required"}), 400
+        token = get_access_token()
+        login_table = get_login_table(token)
+        employee_name = (data.get("employee_name") or "").strip()
+        access_level = (data.get("access_level") or "").strip() or "L1"
+        user_status = (data.get("user_status") or "").strip() or "Active"
+        login_attempts_raw = data.get("login_attempts")
+        last_login = data.get("last_login")
+        try:
+            login_attempts_int = int(login_attempts_raw)
+        except Exception:
+            login_attempts_int = 0
+        default_password = os.getenv("DEFAULT_USER_PASSWORD", "Temp@123")
+        hashed_password = _hash_password(default_password)
+        payload = {
+            "crc6f_username": username,
+            "crc6f_password": hashed_password,
+            "crc6f_employeename": employee_name,
+            "crc6f_accesslevel": access_level,
+            "crc6f_user_status": user_status,
+            "crc6f_loginattempts": str(login_attempts_int),
+        }
+        if last_login:
+            payload["crc6f_last_login"] = last_login
+        user_id_value = data.get("user_id")
+        if user_id_value:
+            payload["crc6f_userid"] = str(user_id_value)
+        created = create_record(login_table, payload)
+        record_id = created.get("crc6f_hr_login_detailsid") or created.get("id")
+        item = {
+            "id": record_id,
+            "username": created.get("crc6f_username") or username,
+            "employeeName": created.get("crc6f_employeename") or employee_name,
+            "accessLevel": created.get("crc6f_accesslevel") or access_level,
+            "lastLogin": created.get("crc6f_last_login") or last_login,
+            "loginAttempts": int(created.get("crc6f_loginattempts") or login_attempts_int),
+            "userStatus": created.get("crc6f_user_status") or user_status,
+            "userId": created.get("crc6f_userid") or user_id_value or "",
+        }
+        return jsonify({"success": True, "item": item}), 201
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/login-accounts/<login_id>", methods=["PUT"])
+def update_login_account(login_id):
+    try:
+        data = request.get_json(force=True) or {}
+        token = get_access_token()
+        login_table = get_login_table(token)
+        record_id = (login_id or "").strip("{}")
+        payload = {}
+        if "username" in data:
+            payload["crc6f_username"] = (data.get("username") or "").strip()
+        if "employee_name" in data:
+            payload["crc6f_employeename"] = (data.get("employee_name") or "").strip()
+        if "access_level" in data:
+            payload["crc6f_accesslevel"] = (data.get("access_level") or "").strip()
+        if "user_status" in data:
+            payload["crc6f_user_status"] = (data.get("user_status") or "").strip()
+        if "last_login" in data:
+            last_login = data.get("last_login")
+            if last_login:
+                payload["crc6f_last_login"] = last_login
+            else:
+                payload["crc6f_last_login"] = None
+        if "login_attempts" in data:
+            try:
+                attempts_int = int(data.get("login_attempts"))
+            except Exception:
+                attempts_int = 0
+            payload["crc6f_loginattempts"] = str(attempts_int)
+        if "user_id" in data:
+            payload["crc6f_userid"] = str(data.get("user_id") or "")
+        if not payload:
+            return jsonify({"success": False, "error": "No fields to update"}), 400
+        update_record(login_table, record_id, payload)
+        return jsonify({"success": True})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/login-accounts/<login_id>", methods=["DELETE"])
+def delete_login_account(login_id):
+    try:
+        token = get_access_token()
+        login_table = get_login_table(token)
+        record_id = (login_id or "").strip("{}")
+        delete_record(login_table, record_id)
+        return jsonify({"success": True})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+# # ================== LOGIN ROUTE ==================
+# @app.route("/api/login", methods=["POST"])
+# def login():
+#     try:
+#         data = request.get_json(force=True)
+#         username = data.get("username")
+#         password = data.get("password")
+#         if not username or not password:
+#             return jsonify({"status": "error", "message": "Username and password required"}), 400
+
+#         token = get_access_token()
+#         headers = {
+#             "Authorization": f"Bearer {token}",
+#             "Content-Type": "application/json",
+#             "OData-MaxVersion": "4.0",
+#             "OData-Version": "4.0",
+#             "Accept": "application/json"
+#         }
+
+#         try:
+#             record = _fetch_login_by_username(username, token, headers)
+#         except Exception as e:
+#             return jsonify({"status": "error", "message": f"Failed to fetch record: {e}"}), 500
+
+#         if not record:
+#             # Auto-provision on first login attempt if employee exists and password is default
+#             try:
+#                 default_password = os.getenv("DEFAULT_USER_PASSWORD", "Temp@123")
+#                 if password == default_password:
+#                     # Try resolve employee by email (robust across alternate columns)
+#                     entity_set = get_employee_entity_set(token)
+#                     field_map = get_field_map(entity_set)
+#                     email_field = field_map.get('email')
+#                     id_field = field_map.get('id')
+#                     desig_field = field_map.get('designation')
+#                     email_alts = ['crc6f_officialemail', 'crc6f_emailaddress', 'emailaddress', 'officialemail', 'crc6f_mail', 'crc6f_quotahours']
+#                     # Attempt direct match first (if primary field present)
+#                     safe_email = (username or '').replace("'", "''")
+#                     select_parts = [p for p in [id_field, email_field, desig_field] if p]
+#                     # add alternates to $select so we can scan
+#                     for alt in email_alts:
+#                         if alt and alt not in select_parts:
+#                             select_parts.append(alt)
+#                     url_emp = f"{BASE_URL}/{entity_set}?$top=5&$select={','.join(select_parts)}&$filter={email_field} eq '{safe_email}'" if email_field else None
+#                     emp_row = None
+#                     if url_emp:
+#                         r1 = requests.get(url_emp, headers=headers)
+#                         if r1.status_code == 200:
+#                             vals = r1.json().get('value', [])
+#                             if vals:
+#                                 emp_row = vals[0]
+#                     # Fallback: fetch a page and scan all possible email fields case-insensitively
+#                     if not emp_row and id_field:
+#                         url_scan = f"{BASE_URL}/{entity_set}?$top=200&$select={','.join(select_parts)}"
+#                         r2 = requests.get(url_scan, headers=headers)
+#                         if r2.status_code == 200:
+#                             want = (username or '').strip().lower()
+#                             for rec in r2.json().get('value', []):
+#                                 candidates = []
+#                                 if email_field:
+#                                     candidates.append(rec.get(email_field))
+#                                 for alt in email_alts:
+#                                     candidates.append(rec.get(alt))
+#                                 # fall back: scan any email-like value
+#                                 found_match = False
+#                                 for v in candidates:
+#                                     if isinstance(v, str) and v.strip().lower() == want:
+#                                         found_match = True
+#                                         break
+#                                 if not found_match:
+#                                     for k, v in rec.items():
+#                                         if isinstance(v, str) and '@' in v and '.' in v and v.strip().lower() == want:
+#                                             found_match = True
+#                                             break
+#                                 if found_match:
+#                                     emp_row = rec
+#                                     break
+#                     if emp_row:
+#                         # Create login
+#                         hashed = _hash_password(default_password)
+#                         login_payload = {
+#                             "crc6f_username": username.strip().lower(),
+#                             "crc6f_password": hashed,
+#                             "crc6f_user_status": "Active",
+#                             "crc6f_loginattempts": "0",
+#                             "crc6f_employeename": username
+#                         }
+#                         try:
+#                             login_table = get_login_table(token)
+#                             create_record(login_table, login_payload)
+#                         except Exception:
+#                             pass
+#                         # Treat as success login now
+#                         employee_id_value = emp_row.get(id_field)
+#                         employee_designation = emp_row.get(desig_field) if desig_field else None
+#                         is_admin = False
+#                         try:
+#                             dv = str(employee_designation or '').lower()
+#                             if any(k in dv for k in ['admin', 'manager']):
+#                                 is_admin = True
+#                         except Exception:
+#                             is_admin = False
+#                         return jsonify({
+#                             "status": "success",
+#                             "message": f"Welcome, {username}",
+#                             "last_login": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+#                             "login_attempts": 0,
+#                             "user_status": "Active",
+#                             "user": {
+#                                 "email": username,
+#                                 "name": username,
+#                                 "employee_id": employee_id_value,
+#                                 "designation": employee_designation,
+#                                 "is_admin": is_admin
+#                             }
+#                         }), 200
+#             except Exception:
+#                 pass
+#             return jsonify({"status": "failed", "message": "Invalid Username or Password"}), 401
+
+#         record_id = record.get("crc6f_hr_login_detailsid") or record.get("id")
+#         status = (record.get("crc6f_user_status") or "Active")
+#         attempts = int(record.get("crc6f_loginattempts") or 0)
+#         stored_hash = record.get("crc6f_password") or ""
+
+#         if status and str(status).lower() == "locked":
+#             return jsonify({"status": "locked", "message": "Account is locked due to too many failed attempts."}), 403
+
+#         hashed_input = _hash_password(password)
+#         default_pw = os.getenv("DEFAULT_USER_PASSWORD", "Temp@123")
+#         old_default_pw = "Welcome@123"
+
+#         if hashed_input == stored_hash or (_hash_password(default_pw) == stored_hash and password == default_pw):
+#             # Success: reset attempts and set last login
+#             payload = {
+#                 "crc6f_last_login": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+#                 "crc6f_loginattempts": "0",
+#                 "crc6f_user_status": "Active"
+#             }
+#             try:
+#                 _update_login_record(record_id, payload, headers, token)
+#             except Exception as e:
+#                 return jsonify({"status": "error", "message": f"Failed to update last login: {e}"}), 500
+#             # Resolve canonical employee_id and designation from Employee master using username/email
+#             employee_id_value = None
+#             employee_designation = None
+#             try:
+#                 entity_set = get_employee_entity_set(token)
+#                 field_map = get_field_map(entity_set)
+#                 email_field = field_map.get('email')
+#                 id_field = field_map.get('id')
+#                 desig_field = field_map.get('designation')
+#                 if email_field and id_field:
+#                     # Escape single quotes in username for OData filter
+#                     safe_email = (username or '').replace("'", "''")
+#                     select_parts = [id_field, email_field]
+#                     if desig_field:
+#                         select_parts.append(desig_field)
+#                     url_emp = f"{BASE_URL}/{entity_set}?$top=1&$select={','.join(select_parts)}&$filter={email_field} eq '{safe_email}'"
+#                     resp_emp = requests.get(url_emp, headers={
+#                         "Authorization": f"Bearer {token}",
+#                         "Accept": "application/json",
+#                     })
+#                     if resp_emp.status_code == 200:
+#                         vals = resp_emp.json().get('value', [])
+#                         if vals:
+#                             row = vals[0]
+#                             employee_id_value = row.get(id_field)
+#                             employee_designation = row.get(desig_field) if desig_field else None
+#             except Exception as e:
+#                 print(f"[WARN] Failed to resolve employee_id from username: {e}")
+#             # Determine admin flag from designation keywords
+#             is_admin = False
+#             try:
+#                 desig_val = str(employee_designation or '').lower()
+#                 if any(k in desig_val for k in ['admin', 'manager']):
+#                     is_admin = True
+#             except Exception:
+#                 is_admin = False
+
+#             return jsonify({
+#                 "status": "success",
+#                 "message": f"Welcome, {record.get('crc6f_employeename')}",
+#                 "last_login": payload["crc6f_last_login"],
+#                 "login_attempts": 0,
+#                 "user_status": "Active",
+#                 # Minimal user payload for frontend session
+#                 "user": {
+#                     "email": record.get("crc6f_username"),
+#                     "name": record.get("crc6f_employeename"),
+#                     "employee_id": employee_id_value,
+#                     "designation": employee_designation,
+#                     "is_admin": is_admin
+#                 }
+#             }), 200
+#         elif _hash_password(old_default_pw) == stored_hash and password == default_pw:
+#             # Migrate old default to new default on the fly and login
+#             try:
+#                 _update_login_record(record_id, {"crc6f_password": _hash_password(default_pw), "crc6f_loginattempts": "0"}, headers, token)
+#             except Exception:
+#                 pass
+#             return jsonify({
+#                 "status": "success",
+#                 "message": f"Welcome, {record.get('crc6f_employeename')}",
+#                 "last_login": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+#                 "login_attempts": 0,
+#                 "user_status": "Active",
+#                 "user": {
+#                     "email": record.get("crc6f_username"),
+#                     "name": record.get("crc6f_employeename"),
+#                     "employee_id": employee_id_value,
+#                     "designation": employee_designation,
+#                     "is_admin": is_admin
+#                 }
+#             }), 200
+#         else:
+#             attempts += 1
+#             payload = {"crc6f_loginattempts": str(attempts)}
+#             if attempts >= 3:
+#                 payload["crc6f_user_status"] = "Locked"
+#             try:
+#                 _update_login_record(record_id, payload, headers, token)
+#             except Exception as e:
+#                 return jsonify({"status": "error", "message": f"Failed to update login attempts/status: {e}"}), 500
+#             if attempts >= 3:
+#                 return jsonify({
+#                     "status": "locked",
+#                     "message": "Maximum attempts reached. Your account is now locked.",
+#                     "login_attempts": attempts
+#                 }), 403
+#             else:
+#                 return jsonify({
+#                     "status": "failed",
+#                     "message": "Invalid Username or Password",
+#                     "login_attempts": attempts
+#                 }), 401
+#     except Exception as e:
+#         return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route('/api/checkout', methods=['POST'])
+def checkout():
+    """Check-out: closes the current session and aggregates duration for the day.
+
+    This endpoint updates the Dataverse attendance record for the employee and
+    current date by *adding* this session's duration to any existing duration in
+    `FIELD_DURATION`. It returns both the human readable duration and the
+    total seconds worked today so the frontend timer can resume accurately.
+    """
+    try:
+        data = request.json or {}
+        employee_id_raw = (data.get('employee_id') or '').strip()
+        if not employee_id_raw:
+            return jsonify({"success": False, "error": "Employee ID is required"}), 400
+
+        # Extract location data if provided
+        location_data = data.get('location')
+        client_time = data.get('client_time')
+        timezone_str = data.get('timezone')
+
+        # Normalize employee ID (must match what we used at check-in)
+        normalized_emp_id = employee_id_raw.upper()
+        if normalized_emp_id.isdigit():
+            normalized_emp_id = format_employee_id(int(normalized_emp_id))
+        key = normalized_emp_id
+
+        # Verify this employee has an active check-in
+        session = active_sessions.get(key)
+        if not session:
+            return jsonify({
+                "success": False,
+                "error": "No active check-in found. Please check in first.",
+            }), 400
+
+        # Use client time if available
+        local_now = _coerce_client_local_datetime(client_time, timezone_str) or datetime.now()
+        checkout_time_str = local_now.strftime("%H:%M:%S")
+
+        # Log the check-out event with location
+        event = log_login_event(normalized_emp_id, "check_out", request, location_data, client_time, timezone_str)
+        _sync_login_activity_from_event(event)
+
+        # If no in-memory session, try to recover from Dataverse
+        # This handles server restarts where active_sessions is cleared
+        if not session:
+            try:
+                formatted_date = now.date().isoformat()
+                token = get_access_token()
+                headers = {
+                    "Authorization": f"Bearer {token}",
+                    "Accept": "application/json",
+                    "OData-MaxVersion": "4.0",
+                    "OData-Version": "4.0",
+                }
+                filter_query = (
+                    f"?$filter={FIELD_EMPLOYEE_ID} eq '{normalized_emp_id}' "
+                    f"and {FIELD_DATE} eq '{formatted_date}'"
+                )
+                url = f"{RESOURCE}/api/data/v9.2/{ATTENDANCE_ENTITY}{filter_query}"
+                resp = requests.get(url, headers=headers, timeout=20)
+                if resp.status_code == 200:
+                    vals = resp.json().get("value", [])
+                    if vals:
+                        rec = vals[0]
+                        checkin_time = rec.get(FIELD_CHECKIN)
+                        checkout_time = rec.get(FIELD_CHECKOUT)
+                        # If there's a check-in but no checkout, recover the session
+                        if checkin_time and not checkout_time:
+                            record_id = (
+                                rec.get(FIELD_RECORD_ID)
+                                or rec.get("cr6f_table13id")
+                                or rec.get("id")
+                            )
+                            # Reconstruct checkin datetime from today's date + checkin time
+                            try:
+                                checkin_dt = datetime.strptime(checkin_time, "%H:%M:%S").replace(
+                                    year=now.year, month=now.month, day=now.day
+                                )
+                            except:
+                                checkin_dt = now  # Fallback
+                            session = {
+                                "record_id": record_id,
+                                "checkin_time": checkin_time,
+                                "checkin_datetime": checkin_dt.isoformat(),
+                                "attendance_id": rec.get(FIELD_ATTENDANCE_ID_CUSTOM),
+                                "recovered": True,
+                            }
+                            active_sessions[key] = session
+                            print(f"[INFO] Recovered session from Dataverse for {key}")
+            except Exception as recover_err:
+                print(f"[WARN] Failed to recover session from Dataverse: {recover_err}")
+        
+        if not session:
+            return jsonify({
+                "success": False,
+                "error": "No active check-in found. Please check in first.",
+            }), 400
+
+        # Calculate session duration in seconds
+        try:
+            if "checkin_datetime" in session:
+                checkin_dt = datetime.fromisoformat(session["checkin_datetime"])
+                session_seconds = int((local_now - checkin_dt).total_seconds())
+            elif "checkin_time" in session:
+                # Fallback for older sessions without datetime
+                checkin_time_str = session["checkin_time"]
+                checkin_dt = datetime.strptime(checkin_time_str, "%H:%M:%S").replace(
+                    year=local_now.year, month=local_now.month, day=local_now.day
+                )
+                session_seconds = int((local_now - checkin_dt).total_seconds())
+            else:
+                session_seconds = 0
+        except Exception as time_err:
+            print(f"[WARN] Error calculating session duration: {time_err}")
+            session_seconds = 0
+
+        if session_seconds < 0:
+            session_seconds = 0
+
+        # Fetch today's attendance record to aggregate previous sessions
+        attendance_record = None
+        record_id = session.get("record_id")
+        try:
+            token = get_access_token()
+            headers = {
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/json",
+                "OData-MaxVersion": "4.0",
+                "OData-Version": "4.0",
+            }
+            if record_id:
+                # First try direct lookup by record id
+                url = f"{RESOURCE}/api/data/v9.2/{ATTENDANCE_ENTITY}({record_id})"
+                resp = requests.get(url, headers=headers, timeout=20)
+                if resp.status_code == 200:
+                    attendance_record = resp.json()
+            if not attendance_record:
+                # Fallback: search by employee + date
+                formatted_date = now.date().isoformat()
+                filter_query = (
+                    f"?$filter={FIELD_EMPLOYEE_ID} eq '{normalized_emp_id}' "
+                    f"and {FIELD_DATE} eq '{formatted_date}'"
+                )
+                url = f"{RESOURCE}/api/data/v9.2/{ATTENDANCE_ENTITY}{filter_query}"
+                resp2 = requests.get(url, headers=headers, timeout=20)
+                if resp2.status_code == 200:
+                    vals = resp2.json().get("value", [])
+                    if vals:
+                        attendance_record = vals[0]
+                        record_id = (
+                            attendance_record.get(FIELD_RECORD_ID)
+                            or attendance_record.get("cr6f_table13id")
+                            or attendance_record.get("id")
+                        )
+        except Exception as fetch_err:
+            print(f"[WARN] Failed to fetch attendance record on checkout: {fetch_err}")
+
+        existing_hours = 0.0
+        if attendance_record:
+            try:
+                existing_hours = float(attendance_record.get(FIELD_DURATION) or "0")
+            except Exception:
+                existing_hours = 0.0
+
+        # Aggregate: previous hours + this session's hours
+        session_hours = session_seconds / 3600.0
+        total_hours_today = existing_hours + session_hours
+        total_seconds_today = int(round(total_hours_today * 3600))
+
+        # Classification based on total hours today
+        if total_hours_today >= 9.0:
+            status = "P"
+        elif total_hours_today >= 4.0:
+            status = "HL"
+        else:
+            status = "A"
+
+        # Human-readable duration from aggregated seconds
+        hours_int = total_seconds_today // 3600
+        minutes_int = (total_seconds_today % 3600) // 60
+        readable_duration = f"{hours_int} hour(s) {minutes_int} minute(s)"
+
+        update_data = {
+            FIELD_CHECKOUT: checkout_time_str,
+            FIELD_DURATION: str(round(total_hours_today, 2)),
+            FIELD_DURATION_INTEXT: readable_duration,
+        }
+
+        print(f"\n{'='*60}")
+        print("CHECK-OUT REQUEST")
+        print(f"{'='*60}")
+        print(f"Employee: {normalized_emp_id}")
+        print(f"Record ID: {record_id}")
+        print(f"Session seconds: {session_seconds}")
+        print(f"Total hours today (agg): {total_hours_today}")
+        print(f"Check-out: {checkout_time_str}")
+        print(f"Duration (display): {readable_duration}")
+        print("Updating Dataverse...")
+
+        if record_id:
+            update_record(ATTENDANCE_ENTITY, record_id, update_data)
+        else:
+            print("[WARN] No record_id found to update on checkout")
+
+        # Clear in-memory active session
+        try:
+            if key in active_sessions:
+                del active_sessions[key]
+        except Exception:
+            pass
+
+        print("[OK] CHECK-OUT SUCCESS!")
+        print(f"{'='*60}\n")
+
+        return jsonify(
+            {
+                "success": True,
+                "checkout_time": checkout_time_str,
+                "duration": readable_duration,
+                "total_hours": total_hours_today,
+                "total_seconds_today": total_seconds_today,
+                "status": status,
+            }
+        )
+    except Exception as e:
+        print(f"\n[ERROR] CHECK-OUT ERROR: {str(e)}\n")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route('/api/status/<employee_id>', methods=['GET'])
+def get_status(employee_id):
+    """Return current attendance timer state for the employee.
+
+    Includes:
+    - checked_in: whether there's an active in-memory session
+    - elapsed_seconds: seconds in the current active session (0 if none)
+    - total_seconds_today: aggregated seconds for today (Dataverse duration + active)
+    - status: provisional P / HL / A based on total hours so far
+    """
+    try:
+        emp_raw = (employee_id or '').strip()
+        if not emp_raw:
+            return jsonify({"checked_in": False}), 400
+
+        normalized_emp_id = emp_raw.upper()
+        if normalized_emp_id.isdigit():
+            normalized_emp_id = format_employee_id(int(normalized_emp_id))
+        key = normalized_emp_id
+
+        # Try to recover session from Dataverse if not in memory
+        # This handles server restarts
+        if key not in active_sessions:
+            try:
+                from datetime import date as _date
+                formatted_date = _date.today().isoformat()
+                now = datetime.now()
+                token = get_access_token()
+                headers = {
+                    "Authorization": f"Bearer {token}",
+                    "Accept": "application/json",
+                    "OData-MaxVersion": "4.0",
+                    "OData-Version": "4.0",
+                }
+                filter_query = (
+                    f"?$filter={FIELD_EMPLOYEE_ID} eq '{normalized_emp_id}' "
+                    f"and {FIELD_DATE} eq '{formatted_date}'"
+                )
+                url = f"{RESOURCE}/api/data/v9.2/{ATTENDANCE_ENTITY}{filter_query}"
+                resp = requests.get(url, headers=headers, timeout=20)
+                if resp.status_code == 200:
+                    vals = resp.json().get("value", [])
+                    if vals:
+                        rec = vals[0]
+                        checkin_time_rec = rec.get(FIELD_CHECKIN)
+                        checkout_time_rec = rec.get(FIELD_CHECKOUT)
+                        # If there's a check-in but no checkout, recover the session
+                        if checkin_time_rec and not checkout_time_rec:
+                            record_id = (
+                                rec.get(FIELD_RECORD_ID)
+                                or rec.get("cr6f_table13id")
+                                or rec.get("id")
+                            )
+                            try:
+                                checkin_dt = datetime.strptime(checkin_time_rec, "%H:%M:%S").replace(
+                                    year=now.year, month=now.month, day=now.day
+                                )
+                            except:
+                                checkin_dt = now
+                            active_sessions[key] = {
+                                "record_id": record_id,
+                                "checkin_time": checkin_time_rec,
+                                "checkin_datetime": checkin_dt.isoformat(),
+                                "attendance_id": rec.get(FIELD_ATTENDANCE_ID_CUSTOM),
+                                "recovered": True,
+                            }
+                            print(f"[INFO] Recovered session from Dataverse for status check: {key}")
+            except Exception as recover_err:
+                print(f"[WARN] Failed to recover session in status: {recover_err}")
+
+        active = key in active_sessions
+        elapsed = 0
+        checkin_time = None
+        attendance_id = None
+        if active:
+            try:
+                session = active_sessions[key]
+                checkin_time = session.get("checkin_time")
+                attendance_id = session.get("attendance_id")
+                checkin_dt = datetime.fromisoformat(session["checkin_datetime"])
+                elapsed = int((datetime.now() - checkin_dt).total_seconds())
+                if elapsed < 0:
+                    elapsed = 0
+            except Exception as e:
+                print(f"[WARN] Failed to compute elapsed for status: {e}")
+                elapsed = 0
+
+        # Base seconds from today's Dataverse record
+        total_seconds_today = 0
+        try:
+            from datetime import date as _date
+            formatted_date = _date.today().isoformat()
+            token = get_access_token()
+            headers = {
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/json",
+                "OData-MaxVersion": "4.0",
+                "OData-Version": "4.0",
+            }
+            filter_query = (
+                f"?$filter={FIELD_EMPLOYEE_ID} eq '{normalized_emp_id}' "
+                f"and {FIELD_DATE} eq '{formatted_date}'"
+            )
+            url = f"{RESOURCE}/api/data/v9.2/{ATTENDANCE_ENTITY}{filter_query}"
+            resp = requests.get(url, headers=headers, timeout=20)
+            if resp.status_code == 200:
+                vals = resp.json().get("value", [])
+                if vals:
+                    rec = vals[0]
+                    try:
+                        hours = float(rec.get(FIELD_DURATION) or "0")
+                    except Exception:
+                        hours = 0.0
+                    total_seconds_today = int(round(hours * 3600))
+        except Exception as fetch_err:
+            print(f"[WARN] Failed to fetch today's attendance in status: {fetch_err}")
+
+        if active:
+            total_seconds_today += max(0, elapsed)
+
+        # Classification from total seconds today
+        total_hours_today = total_seconds_today / 3600.0
+        if total_hours_today >= 9.0:
+            status = "P"
+        elif total_hours_today >= 4.0:
+            status = "HL"
+        else:
+            status = "A"
+
+        return jsonify({
+            "checked_in": active,
+            "checkin_time": checkin_time,
+            "attendance_id": attendance_id,
+            "elapsed_seconds": elapsed,
+            "total_seconds_today": total_seconds_today,
+            "status": status,
+        })
+    except Exception as e:
+        print(f"[ERROR] status error: {e}")
+        return jsonify({"checked_in": False, "error": str(e)}), 500
+
+
+@app.route('/api/attendance/<employee_id>/<int:year>/<int:month>', methods=['GET'])
+def get_monthly_attendance(employee_id, year, month):
+    """Get attendance records for a specific month with status classification"""
+    try:
+        print(f"\n{'='*70}")
+        print(f"[SEARCH] FETCHING ATTENDANCE FOR EMPLOYEE: {employee_id}, {year}-{month:02d}")
+        print(f"{'='*70}")
+        
+        token = get_access_token()
+        
+        _, last_day = monthrange(year, month)
+        start_date = f"{year}-{str(month).zfill(2)}-01"
+        end_date = f"{year}-{str(month).zfill(2)}-{str(last_day).zfill(2)}"
+        
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json",
+            "OData-MaxVersion": "4.0",
+            "OData-Version": "4.0"
+        }
+        
+        # Normalize employee ID format
+        normalized_emp_id = employee_id.upper().strip()
+        if normalized_emp_id.isdigit():
+            normalized_emp_id = format_employee_id(int(normalized_emp_id))
+        
+        print(f"   [USER] Normalized Employee ID: {normalized_emp_id}")
+        print(f"   [DATE] Date Range: {start_date} to {end_date}")
+        
+        filter_query = (f"?$filter={FIELD_EMPLOYEE_ID} eq '{normalized_emp_id}' "
+                       f"and {FIELD_DATE} ge '{start_date}' "
+                       f"and {FIELD_DATE} le '{end_date}'")
+        
+        url = f"{RESOURCE}/api/data/v9.2/{ATTENDANCE_ENTITY}{filter_query}"
+        
+        print(f"   [URL] Sending request to Dataverse: {url}")
+        response = requests.get(url, headers=headers)
+        
+        if response.status_code != 200:
+            print(f"[ERROR] Dataverse fetch failed: {response.status_code} {response.text}")
+            return jsonify({"success": False, "error": "Failed to fetch records"}), 500
+        
+        records = response.json().get("value", [])
+        print(f"   [DATA] Found {len(records)} attendance records")
+        
+        # If no records found, try case-insensitive search
+        if len(records) == 0:
+            print(f"[SEARCH] No attendance found for {normalized_emp_id}, trying case-insensitive search...")
+            try:
+                # Try different case variations
+                variations = [
+                    normalized_emp_id.lower(),
+                    normalized_emp_id.title(),
+                    employee_id  # original case
+                ]
+                
+                for variation in variations:
+                    if variation != normalized_emp_id:
+                        filter_query = (f"?$filter={FIELD_EMPLOYEE_ID} eq '{variation}' "
+                                       f"and {FIELD_DATE} ge '{start_date}' "
+                                       f"and {FIELD_DATE} le '{end_date}'")
+                        url = f"{RESOURCE}/api/data/v9.2/{ATTENDANCE_ENTITY}{filter_query}"
+                        response = requests.get(url, headers=headers)
+                        
+                        if response.status_code == 200:
+                            records = response.json().get("value", [])
+                            if records:
+                                print(f"[OK] Found {len(records)} records with variation: {variation}")
+                                break
+            except Exception as e:
+                print(f"[WARN] Case-insensitive search failed: {str(e)}")
+        
+        formatted_records = []
+        
+        for r in records:
+            date_str = r.get(FIELD_DATE)
+            checkin = r.get(FIELD_CHECKIN)
+            checkout = r.get(FIELD_CHECKOUT)
+            duration_str = r.get(FIELD_DURATION) or "0"
+            
+            try:
+                duration_hours = float(duration_str)
+            except ValueError:
+                duration_hours = 0
+            
+            # 🟡 Attendance classification based on hours
+            if duration_hours >= 9:
+                status = "P"  # Present
+            elif 4 <= duration_hours < 9:
+                status = "HL"  # Half Day (>=4h and <9h)
+            else:
+                status = "A"  # Absent (< 4 hours)
+            
+            # Extract day number for frontend mapping
+            day_num = None
+            if date_str:
+                try:
+                    day_num = int(date_str.split("-")[-1])
+                except (ValueError, IndexError):
+                    pass
+            
+            formatted_records.append({
+                "date": date_str,
+                "day": day_num,
+                "attendance_id": r.get(FIELD_ATTENDANCE_ID_CUSTOM),
+                "checkIn": checkin,
+                "checkOut": checkout,
+                "duration": duration_hours,
+                "duration_text": r.get(FIELD_DURATION_INTEXT),
+                "status": status
+            })
+        
+        # 🔵 Overlay employee-specific leaves into the same month range (CL/SL/CO)
+        try:
+            leaves_url = (
+                f"{RESOURCE}/api/data/v9.2/{LEAVE_ENTITY}"
+                f"?$filter=crc6f_employeeid eq '{normalized_emp_id}'"
+            )
+            leaves_resp = requests.get(leaves_url, headers=headers)
+            if leaves_resp.status_code == 200:
+                leaves = leaves_resp.json().get("value", [])
+                # Build day -> record map for quick overlay
+                by_day = {}
+                for fr in formatted_records:
+                    if fr.get("day"):
+                        by_day[fr["day"]] = fr
+                # Month boundaries
+                month_start_dt = datetime.strptime(start_date, "%Y-%m-%d")
+                month_end_dt = datetime.strptime(end_date, "%Y-%m-%d")
+                for lv in leaves:
+                    lt_raw = (lv.get("crc6f_leavetype") or "").strip()
+                    if not lt_raw:
+                        continue
+                    status_raw = (lv.get("crc6f_status") or "").strip().lower()
+                    if status_raw not in ("approved", "pending"):
+                        # Only overlay approved/pending leaves; others shouldn't affect attendance
+                        continue
+                    # Determine short code
+                    ltl = lt_raw.lower()
+                    if "casual" in ltl or ltl == "cl":
+                        lt_code = "CL"
+                    elif "sick" in ltl or ltl == "sl":
+                        lt_code = "SL"
+                    elif "comp" in ltl or ltl in ("co", "compoff", "comp off", "compensatory off"):
+                        lt_code = "CO"
+                    else:
+                        # Unknown type: do not overlay to avoid incorrect marks
+                        continue
+                    paid_unpaid = lv.get("crc6f_paidunpaid")
+                    sd = lv.get("crc6f_startdate")
+                    ed = lv.get("crc6f_enddate") or sd
+                    try:
+                        sd_dt = datetime.strptime(sd, "%Y-%m-%d") if sd else None
+                        ed_dt = datetime.strptime(ed, "%Y-%m-%d") if ed else None
+                    except Exception:
+                        sd_dt, ed_dt = None, None
+                    if not sd_dt:
+                        continue
+                    if not ed_dt:
+                        ed_dt = sd_dt
+                    # Clamp to current month window
+                    rng_start = max(sd_dt, month_start_dt)
+                    rng_end = min(ed_dt, month_end_dt)
+                    if rng_start > rng_end:
+                        continue
+                    cur = rng_start
+                    while cur <= rng_end:
+                        day_idx = cur.day
+                        # Create or update day's record
+                        rec = by_day.get(day_idx)
+                        if not rec:
+                            rec = {
+                                "date": cur.date().isoformat(),
+                                "day": day_idx,
+                                "attendance_id": None,
+                                "checkIn": None,
+                                "checkOut": None,
+                                "duration": 0.0,
+                                "duration_text": None,
+                                "status": "" if status_raw == "pending" else "A",
+                            }
+                            formatted_records.append(rec)
+                            by_day[day_idx] = rec
+                        if status_raw == "approved":
+                            # Overlay leave fields; approved leaves affect status/metrics
+                            rec["leaveType"] = lt_raw
+                            rec["paid_unpaid"] = paid_unpaid
+                            rec["leaveStart"] = sd
+                            rec["leaveEnd"] = ed
+                            rec["leaveStatus"] = lv.get("crc6f_status")
+                            rec["status"] = lt_code
+                        else:
+                            # Pending leaves only attach metadata for UI overlay
+                            pending_entry = {
+                                "leaveType": lt_raw,
+                                "status": lv.get("crc6f_status") or "Pending",
+                                "paid_unpaid": paid_unpaid,
+                                "start": sd,
+                                "end": ed,
+                                "leave_id": lv.get("crc6f_leaveid"),
+                            }
+                            existing = rec.get("pendingLeaves") or []
+                            existing.append(pending_entry)
+                            rec["pendingLeaves"] = existing
+                        # advance by one day
+                        cur = cur + timedelta(days=1)
+        except Exception as leave_err:
+            print(f"[WARN] Leave overlay failed: {leave_err}")
+        
+        print(f"[OK] Successfully formatted {len(formatted_records)} attendance records")
+        print(f"{'='*70}\n")
+        
+        return jsonify({
+            "success": True,
+            "records": formatted_records,
+            "count": len(formatted_records)
+        })
+            
+    except Exception as e:
+        print(f"[ERROR] Error fetching monthly attendance: {str(e)}")
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+
+@app.route('/api/attendance/manual-edit', methods=['POST'])
+def manual_edit_attendance():
+    try:
+        body = request.get_json(force=True) or {}
+        employee_id = (body.get("employee_id") or "").strip()
+        year = int(body.get("year") or 0)
+        month = int(body.get("month") or 0)
+        day = int(body.get("day") or 0)
+        code = (body.get("code") or "").strip().upper()
+
+        if not employee_id or not year or not month or not day or code not in ("P", "HL", "H", "A"):
+            return jsonify({"success": False, "error": "employee_id, year, month, day and valid code required"}), 400
+
+        date_str = f"{year}-{str(month).zfill(2)}-{str(day).zfill(2)}"
+
+        if code == "P":
+            duration_hours = 9.0
+            checkin_val = "09:00:00"
+            checkout_val = "18:00:00"
+        elif code in ("HL", "H"):
+            duration_hours = 5.0
+            checkin_val = "09:00:00"
+            checkout_val = "14:00:00"
+        else:
+            duration_hours = 0.0
+            checkin_val = None
+            checkout_val = None
+
+        normalized_emp_id = employee_id.upper().strip()
+        if normalized_emp_id.isdigit():
+            normalized_emp_id = format_employee_id(int(normalized_emp_id))
+
+        token = get_access_token()
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json",
+            "OData-MaxVersion": "4.0",
+            "OData-Version": "4.0",
+            "Content-Type": "application/json",
+        }
+
+        safe_emp = normalized_emp_id.replace("'", "''")
+        safe_date = date_str
+        filter_q = (
+            f"?$top=1&$filter={FIELD_EMPLOYEE_ID} eq '{safe_emp}' and {FIELD_DATE} eq '{safe_date}' "
+            f"and startswith({FIELD_ATTENDANCE_ID_CUSTOM},'ATD-')"
+        )
+        url = f"{RESOURCE}/api/data/v9.2/{ATTENDANCE_ENTITY}{filter_q}"
+        resp = requests.get(url, headers=headers)
+        record_id = None
+        if resp.status_code == 200:
+            values = resp.json().get("value", [])
+            if values:
+                row = values[0]
+                record_id = row.get(FIELD_RECORD_ID) or row.get("crc6f_table13id") or row.get("id")
+
+        payload = {
+            FIELD_DURATION: str(int(duration_hours)),
+            FIELD_DURATION_INTEXT: f"{int(duration_hours)} hour(s) 0 minute(s)",
+        }
+        if checkin_val is not None:
+            payload[FIELD_CHECKIN] = checkin_val
+        if checkout_val is not None:
+            payload[FIELD_CHECKOUT] = checkout_val
+
+        if record_id:
+            update_record(ATTENDANCE_ENTITY, record_id, payload)
+        else:
+            new_att_id = generate_random_attendance_id()
+            create_payload = {
+                FIELD_EMPLOYEE_ID: normalized_emp_id,
+                FIELD_DATE: date_str,
+                FIELD_ATTENDANCE_ID_CUSTOM: new_att_id,
+                FIELD_DURATION: str(int(duration_hours)),
+                FIELD_DURATION_INTEXT: f"{int(duration_hours)} hour(s) 0 minute(s)",
+            }
+            if checkin_val is not None:
+                create_payload[FIELD_CHECKIN] = checkin_val
+            if checkout_val is not None:
+                create_payload[FIELD_CHECKOUT] = checkout_val
+            created = create_record(ATTENDANCE_ENTITY, create_payload)
+            record_id = created.get(FIELD_RECORD_ID) or created.get("crc6f_table13id") or created.get("id")
+
+        final_status = "P" if duration_hours >= 9 else ("H" if duration_hours > 4 else "A")
+
+        return jsonify({
+            "success": True,
+            "employee_id": normalized_emp_id,
+            "date": date_str,
+            "status": final_status,
+            "duration": duration_hours,
+            "record_id": record_id,
+        })
+    except Exception as e:
+        print(f"[ERROR] manual_edit_attendance failed: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route('/api/attendance/<employee_id>/all', methods=['GET'])
+def get_all_attendance(employee_id):
+    """Get all historical attendance records for an employee"""
+    try:
+        print(f"\n{'='*70}")
+        print(f"[DATA] FETCH ALL ATTENDANCE - Employee: {employee_id}")
+        print(f"{'='*70}")
+        
+        token = get_access_token()
+        
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json",
+            "OData-MaxVersion": "4.0",
+            "OData-Version": "4.0"
+        }
+        
+        # Fetch all attendance records for this employee
+        filter_query = f"?$filter={FIELD_EMPLOYEE_ID} eq '{employee_id}'"
+        url = f"{RESOURCE}/api/data/v9.2/{ATTENDANCE_ENTITY}{filter_query}"
+        
+        print(f"[URL] Fetching from: {url}")
+        
+        response = requests.get(url, headers=headers)
+        
+        if response.status_code == 200:
+            records = response.json().get("value", [])
+            print(f"[OK] Found {len(records)} total attendance records")
+            
+            # Format records for frontend
+            formatted_records = []
+            for r in records:
+                date_str = r.get(FIELD_DATE)
+                checkin = r.get(FIELD_CHECKIN)
+                checkout = r.get(FIELD_CHECKOUT)
+                duration_str = r.get(FIELD_DURATION, "0")
+                
+                try:
+                    duration_hours = float(duration_str)
+                except ValueError:
+                    duration_hours = 0
+                
+                # Attendance classification
+                if duration_hours >= 9:
+                    status = "P"
+                elif 5 <= duration_hours < 9:
+                    status = "H"
+                else:
+                    status = "A"
+                
+                formatted_records.append({
+                    "date": date_str,
+                    "checkIn": checkin,
+                    "checkOut": checkout,
+                    "duration": duration_hours,
+                    "duration_text": r.get(FIELD_DURATION_INTEXT),
+                    "status": status
+                })
+            
+            print(f"[OK] Successfully formatted {len(formatted_records)} records")
+            
+            return jsonify({
+                "success": True,
+                "records": formatted_records,
+                "count": len(formatted_records)
+            })
+        else:
+            return jsonify({
+                "success": False,
+                "error": f"Failed to fetch records: {response.status_code}"
+            }), 500
+            
+    except Exception as e:
+        print(f"[ERROR] Error fetching all attendance: {str(e)}")
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+
+# ================== LEAVE TRACKER ROUTES ==================
+@app.route('/')
+def index():
+    """Home page - can redirect to leave tracker"""
+    print("📄 Serving index page")
+    return jsonify({
+        "message": "Unified Backend Server - API only",
+        "hint": "Use the frontend at http://localhost:3000 and API at /api/...",
+        "endpoints": ["/ping", "/api/info", "/api/leaves/<employee_id>", "/api/leave-balance/<employee_id>/<leave_type>"]
+    }), 200
+
+
+@app.route('/apply_leave_page')
+def apply_leave_page():
+    """Apply leave page"""
+    print("📄 Serving apply leave page")
+    return jsonify({
+        "message": "This backend does not serve HTML pages. Use the SPA frontend to apply leave.",
+        "frontend": "http://localhost:3000/#/leave-my",
+        "api_apply": "POST /apply_leave"
+    }), 200
+
+
+@app.route('/apply_leave', methods=['POST'])
+def apply_leave():
+    try:
+        print("\n" + "=" * 70)
+        print("[START] LEAVE APPLICATION REQUEST RECEIVED")
+        print("=" * 70)
+
+        if not request.is_json:
+            print("   [ERROR] Request is not JSON!")
+            return jsonify({"error": "Request must be JSON"}), 400
+
+        print("\n[RECV] Step 1: Receiving request data...")
+        data = request.get_json()
+        print(f"   [OK] Received JSON data:\n   {data}")
+
+        leave_type = data.get("leave_type")
+        start_date = data.get("start_date")
+        end_date = data.get("end_date")
+        applied_by_raw = data.get("applied_by")
+        paid_unpaid = data.get("paid_unpaid", "Paid")
+        status = data.get("status", "Pending")
+        reason = data.get("reason", "")
+
+        # Format employee ID
+        if applied_by_raw:
+            if applied_by_raw.isdigit():
+                applied_by = format_employee_id(int(applied_by_raw))
+            elif applied_by_raw.upper().startswith("EMP"):
+                applied_by = applied_by_raw.upper()
+            else:
+                applied_by = "EMP0001"
+        else:
+            applied_by = "EMP0001"
+
+        # Validate required fields
+        missing_fields = [f for f in ["leave_type", "start_date", "end_date", "applied_by"]
+                          if not data.get(f)]
+        if missing_fields:
+            return jsonify({"error": f"Missing required fields: {', '.join(missing_fields)}"}), 400
+
+        leave_id = generate_leave_id()
+        leave_days = calculate_leave_days(start_date, end_date)
+
+        token = get_access_token()
+        balance_row = None
+        try:
+            balance_row = _fetch_leave_balance(token, applied_by)
+        except Exception as bal_err:
+            print(f"[WARN] Could not fetch leave balance for {applied_by}: {bal_err}")
+
+        paid_flag = (paid_unpaid or "").lower() == "paid"
+        lt_norm = (leave_type or "").strip().lower()
+
+        if paid_flag and lt_norm in ("casual leave", "sick leave"):
+            if not balance_row:
+                balance_row = _ensure_leave_balance_row(token, applied_by)
+            available = _get_available_days(balance_row, leave_type)
+            print(f"🔎 Available days for {leave_type} = {available}, requested = {leave_days}")
+            paid_days = min(float(available or 0), float(leave_days or 0))
+            unpaid_days = max(0.0, float(leave_days or 0) - paid_days)
+
+            created_records = []
+            primary_leave_id = None
+
+            start_dt = datetime.strptime(start_date, "%Y-%m-%d")
+            end_dt = datetime.strptime(end_date, "%Y-%m-%d")
+
+            if paid_days > 0:
+                paid_leave_id = leave_id
+                paid_end_dt = start_dt + timedelta(days=int(paid_days) - 1)
+                record_data_paid = {
+                    "crc6f_leaveid": paid_leave_id,
+                    "crc6f_leavetype": leave_type,
+                    "crc6f_startdate": start_dt.date().isoformat(),
+                    "crc6f_enddate": paid_end_dt.date().isoformat(),
+                    "crc6f_paidunpaid": "Paid",
+                    "crc6f_status": status,
+                    "crc6f_totaldays": str(int(paid_days)),
+                    "crc6f_employeeid": applied_by,
+                    "crc6f_approvedby": "",
+                }
+                print(f"📦 Dataverse Record Data (Paid): {record_data_paid}")
+                created_paid = create_record(LEAVE_ENTITY, record_data_paid)
+                created_records.append(created_paid)
+                primary_leave_id = paid_leave_id
+                try:
+                    if paid_days > 0:
+                        _decrement_leave_balance(token, balance_row, leave_type, paid_days)
+                except Exception as dec_err:
+                    print(f"[WARN] Failed to decrement leave balance for {applied_by}: {dec_err}")
+
+            if unpaid_days > 0:
+                unpaid_leave_id = generate_leave_id()
+                unpaid_start_dt = start_dt + timedelta(days=int(paid_days))
+                record_data_unpaid = {
+                    "crc6f_leaveid": unpaid_leave_id,
+                    "crc6f_leavetype": leave_type,
+                    "crc6f_startdate": unpaid_start_dt.date().isoformat(),
+                    "crc6f_enddate": end_dt.date().isoformat(),
+                    "crc6f_paidunpaid": "Unpaid",
+                    "crc6f_status": status,
+                    "crc6f_totaldays": str(int(unpaid_days)),
+                    "crc6f_employeeid": applied_by,
+                    "crc6f_approvedby": "",
+                }
+                print(f"📦 Dataverse Record Data (Unpaid): {record_data_unpaid}")
+                created_unpaid = create_record(LEAVE_ENTITY, record_data_unpaid)
+                created_records.append(created_unpaid)
+                if primary_leave_id is None:
+                    primary_leave_id = unpaid_leave_id
+
+            latest_row = None
+            try:
+                latest_row = _fetch_leave_balance(token, applied_by) or balance_row
+            except Exception:
+                latest_row = balance_row
+            balances = {
+                "Casual Leave": float((latest_row or {}).get("crc6f_cl", 0) or 0),
+                "Sick Leave": float((latest_row or {}).get("crc6f_sl", 0) or 0),
+                "Comp Off": float((latest_row or {}).get("crc6f_compoff", 0) or 0),
+            }
+            balances["Total"] = balances["Casual Leave"] + balances["Sick Leave"] + balances["Comp Off"]
+
+            response_data = {
+                "message": f"Leave applied successfully for {applied_by}",
+                "leave_id": primary_leave_id,
+                "leave_days": leave_days,
+                "leave_details": created_records[0] if created_records else {},
+                "balances": balances,
+                "split": {
+                    "paid_days": paid_days,
+                    "unpaid_days": unpaid_days,
+                },
+            }
+
+            print("[OK] LEAVE APPLICATION SUCCESSFUL! (split paid/unpaid)\n")
+            admin_email = os.getenv("ADMIN_EMAIL")
+            employee_name = get_employee_name(applied_by)
+            print(employee_name)
+            send_email(
+                subject=f"[LOG] New Leave Request from {applied_by}",
+                recipients=[admin_email],
+                body=f"""
+        Employee {employee_name} {applied_by} has applied for {leave_type} leave
+        from {start_date} to {end_date} ({leave_days} days).
+
+        Paid: {paid_days} day(s)
+        Unpaid: {unpaid_days} day(s)
+
+        Reason: {reason or 'Not provided'}
+
+        Please review in HR Tool.
+        """)
+            return jsonify(response_data), 200
+
+        if paid_flag:
+            if not balance_row:
+                balance_row = _ensure_leave_balance_row(token, applied_by)
+            available = _get_available_days(balance_row, leave_type)
+            print(f"🔎 Available days for {leave_type} = {available}, requested = {leave_days}")
+            if float(available) < float(leave_days):
+                return jsonify({
+                    "error": f"Insufficient {leave_type} balance. Available: {available}, requested: {leave_days}",
+                    "available": available,
+                    "requested": leave_days,
+                    "leave_type": leave_type,
+                    "employee_id": applied_by
+                }), 400
+
+        record_data = {
+            "crc6f_leaveid": leave_id,
+            "crc6f_leavetype": leave_type,
+            "crc6f_startdate": start_date,
+            "crc6f_enddate": end_date,
+            "crc6f_paidunpaid": paid_unpaid,
+            "crc6f_status": status,
+            "crc6f_totaldays": str(leave_days),
+            "crc6f_employeeid": applied_by,
+            "crc6f_approvedby": "",
+        }
+
+        print(f"📦 Dataverse Record Data: {record_data}")
+        created_record = create_record(LEAVE_ENTITY, record_data)
+
+        try:
+            if paid_flag and leave_days > 0:
+                _decrement_leave_balance(token, balance_row, leave_type, leave_days)
+        except Exception as dec_err:
+            print(f"[WARN] Failed to decrement leave balance for {applied_by}: {dec_err}")
+        print(f"[OK] Record Created: {created_record}")
+
+        latest_row = None
+        try:
+            latest_row = _fetch_leave_balance(token, applied_by) or balance_row
+        except Exception:
+            latest_row = balance_row
+        balances = {
+            "Casual Leave": float((latest_row or {}).get("crc6f_cl", 0) or 0),
+            "Sick Leave": float((latest_row or {}).get("crc6f_sl", 0) or 0),
+            "Comp Off": float((latest_row or {}).get("crc6f_compoff", 0) or 0),
+        }
+        balances["Total"] = balances["Casual Leave"] + balances["Sick Leave"] + balances["Comp Off"]
+
+        response_data = {
+            "message": f"Leave applied successfully for {applied_by}",
+            "leave_id": leave_id,
+            "leave_days": leave_days,
+            "leave_details": created_record,
+            "balances": balances,
+        }
+
+        print("[OK] LEAVE APPLICATION SUCCESSFUL!\n")
+        admin_email = os.getenv("ADMIN_EMAIL")
+        employee_name = get_employee_name(applied_by)
+        print(employee_name)
+        send_email(
+            subject=f"[LOG] New Leave Request from {applied_by}",
+            recipients=[admin_email],
+            body=f"""
+        Employee {employee_name} {applied_by} has applied for {leave_type} leave
+        from {start_date} to {end_date} ({leave_days} days).
+
+        Reason: {reason or 'Not provided'}
+
+        Please review in HR Tool.
+        """)
+        return jsonify(response_data), 200
+
+    except Exception as e:
+        print("\n[ERROR] ERROR OCCURRED IN LEAVE APPLICATION")
+        traceback.print_exc()
+        return jsonify({
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
+
+
+@app.route('/api/apply-leave', methods=['POST'])
+def api_apply_leave():
+    """Alias endpoint that mirrors POST /apply_leave for SPA clients."""
+    return apply_leave()
+
+
+@app.route('/api/leaves/<employee_id>', methods=['GET'])
+def get_employee_leaves(employee_id):
+    """Get all leave records for a specific employee"""
+    try:
+        print(f"\n{'='*70}")
+        print(f"[SEARCH] FETCHING LEAVE HISTORY FOR EMPLOYEE: {employee_id}")
+        print(f"{'='*70}")
+        
+        token = get_access_token()
+        inbox_entity = get_inbox_entity_set(token)
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json",
+            "OData-MaxVersion": "4.0",
+            "OData-Version": "4.0"
+        }
+        
+        # Normalize employee ID format
+        normalized_emp_id = employee_id.upper().strip()
+        if normalized_emp_id.isdigit():
+            normalized_emp_id = format_employee_id(int(normalized_emp_id))
+        
+        print(f"   [USER] Normalized Employee ID: {normalized_emp_id}")
+        
+        # Try fetching by employee_id first
+        filter_query = f"?$filter=crc6f_employeeid eq '{normalized_emp_id}'"
+        url = f"{RESOURCE}/api/data/v9.2/{LEAVE_ENTITY}{filter_query}"
+        
+        print(f"   [URL] Sending request to Dataverse: {url}")
+        response = requests.get(url, headers=headers)
+        
+        if response.status_code != 200:
+            print(f"[ERROR] Failed to fetch leaves: {response.status_code} {response.text}")
+            return jsonify({"success": False, "error": "Failed to fetch leave records"}), 500
+        
+        records = response.json().get("value", [])
+        print(f"   [DATA] Found {len(records)} leave records")
+        
+        # If no records found, try case-insensitive search
+        if len(records) == 0:
+            print(f"[SEARCH] No leaves found for {normalized_emp_id}, trying case-insensitive search...")
+            try:
+                # Try different case variations
+                variations = [
+                    normalized_emp_id.lower(),
+                    normalized_emp_id.title(),
+                    employee_id  # original case
+                ]
+                
+                for variation in variations:
+                    if variation != normalized_emp_id:
+                        filter_query = f"?$filter=crc6f_employeeid eq '{variation}'"
+                        url = f"{RESOURCE}/api/data/v9.2/{LEAVE_ENTITY}{filter_query}"
+                        response = requests.get(url, headers=headers)
+                        
+                        if response.status_code == 200:
+                            records = response.json().get("value", [])
+                            if records:
+                                print(f"[OK] Found {len(records)} records with variation: {variation}")
+                                break
+            except Exception as e:
+                print(f"[WARN] Case-insensitive search failed: {str(e)}")
+        
+        # If still no records and employee_id looks like an email, try to resolve it
+        if len(records) == 0 and '@' in employee_id:
+            print(f"[SEARCH] No leaves found for {employee_id}, attempting email lookup...")
+            try:
+                # Fetch employee by email to get actual employee_id
+                entity_set = get_employee_entity_set(token)
+                field_map = get_field_map(entity_set)
+                email_field = field_map.get('email')
+                id_field = field_map.get('id')
+                
+                if email_field and id_field:
+                    safe_email = employee_id.replace("'", "''")
+                    emp_url = f"{RESOURCE}/api/data/v9.2/{entity_set}?$filter={email_field} eq '{safe_email}'&$select={id_field}"
+                    emp_response = requests.get(emp_url, headers=headers)
+                    
+                    if emp_response.status_code == 200:
+                        emp_records = emp_response.json().get("value", [])
+                        if emp_records:
+                            actual_emp_id = emp_records[0].get(id_field)
+                            if actual_emp_id:
+                                print(f"[OK] Resolved email {employee_id} to employee ID {actual_emp_id}")
+                                # Retry fetching leaves with actual employee_id
+                                filter_query = f"?$filter=crc6f_employeeid eq '{actual_emp_id}'"
+                                url = f"{RESOURCE}/api/data/v9.2/{LEAVE_ENTITY}{filter_query}"
+                                response = requests.get(url, headers=headers)
+                                if response.status_code == 200:
+                                    records = response.json().get("value", [])
+                                    print(f"[DATA] Found {len(records)} records after email resolution")
+            except Exception as e:
+                print(f"[WARN] Email lookup failed: {str(e)}")
+        
+        formatted_leaves = []
+        
+        for r in records:
+            formatted_leaves.append({
+                "leave_id": r.get("crc6f_leaveid"),
+                "leave_type": r.get("crc6f_leavetype"),
+                "start_date": r.get("crc6f_startdate"),
+                "end_date": r.get("crc6f_enddate"),
+                "total_days": r.get("crc6f_totaldays"),
+                "paid_unpaid": r.get("crc6f_paidunpaid"),
+                "status": r.get("crc6f_status"),
+                "approved_by": r.get("crc6f_approvedby"),
+                "rejection_reason": r.get("crc6f_rejectionreason"),
+                "employee_id": r.get("crc6f_employeeid")
+            })
+        
+        print(f"[OK] Successfully formatted {len(formatted_leaves)} leave records")
+        print(f"{'='*70}\n")
+        
+        return jsonify({
+            "success": True,
+            "leaves": formatted_leaves,
+            "count": len(formatted_leaves)
+        })
+        
+    except Exception as e:
+        print(f"[ERROR] Error fetching leaves: {str(e)}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+# ================== PROJECTS MANAGEMENT ROUTES ==================
+@app.route("/api/projects", methods=["GET"])
+def list_projects():
+    """List project headers from Dataverse"""
+    try:
+        token = get_access_token()
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json",
+            "OData-MaxVersion": "4.0",
+            "OData-Version": "4.0",
+            "If-None-Match": "null",
+        }
+        entity_set = get_projects_entity(token)
+        select = (
+            "$select="
+            "crc6f_projectid,crc6f_projectname,crc6f_client,crc6f_manager,"
+            "crc6f_projectstatus,crc6f_startdate,crc6f_enddate,"
+            "crc6f_estimationcost,crc6f_noofcontributors,crc6f_projectdescription,"
+            "crc6f_hr_projectheaderid,createdon"
+        )
+        url = f"{RESOURCE}/api/data/v9.2/{entity_set}?{select}&$top=5000"
+        resp = requests.get(url, headers=headers)
+        if resp.status_code != 200:
+            return jsonify({"success": False, "error": resp.text}), resp.status_code
+
+        values = resp.json().get("value", [])
+
+        # Optional filters
+        q = (request.args.get("search") or "").strip().lower()
+        status = (request.args.get("status") or "").strip().lower()
+        sort = (request.args.get("sort") or "recent").strip().lower()
+
+        def match(v):
+            if not q:
+                return True
+            return q in str(v or "").lower()
+
+        items = []
+        for r in values:
+            item = {
+                "crc6f_projectid": r.get("crc6f_projectid"),
+                "crc6f_projectname": r.get("crc6f_projectname"),
+                "crc6f_client": r.get("crc6f_client"),
+                "crc6f_manager": r.get("crc6f_manager"),
+                "crc6f_projectstatus": r.get("crc6f_projectstatus"),
+                "crc6f_startdate": r.get("crc6f_startdate"),
+                "crc6f_enddate": r.get("crc6f_enddate"),
+                "crc6f_estimationcost": r.get("crc6f_estimationcost"),
+                "crc6f_noofcontributors": r.get("crc6f_noofcontributors"),
+                "crc6f_projectdescription": r.get("crc6f_projectdescription"),
+                "crc6f_hr_projectheaderid": r.get("crc6f_hr_projectheaderid"),
+                "createdon": r.get("createdon"),
+            }
+            if q and not (match(item["crc6f_projectid"]) or match(item["crc6f_projectname"]) or match(item["crc6f_client"])):
+                continue
+            if status and str(item.get("crc6f_projectstatus") or "").strip().lower() != status:
+                continue
+            items.append(item)
+
+        if sort == "name":
+            items.sort(key=lambda x: (str(x.get("crc6f_projectname") or "").lower(), str(x.get("crc6f_projectid") or "")))
+        elif sort == "status":
+            items.sort(key=lambda x: (str(x.get("crc6f_projectstatus") or "").lower(), str(x.get("crc6f_projectname") or "").lower()))
+        else:
+            items.sort(key=lambda x: str(x.get("createdon") or ""), reverse=True)
+
+        return jsonify({"success": True, "projects": items})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/projects", methods=["POST"])
+def create_project():
+    try:
+        token = get_access_token()
+        entity_set = get_projects_entity(token)
+        data = request.get_json(force=True) or {}
+
+        # Require Project ID & Name minimally
+        pid = (data.get("crc6f_projectid") or "").strip()
+        if not pid:
+            pid = generate_project_id()
+        pname = (data.get("crc6f_projectname") or "").strip()
+        if not pid or not pname:
+            return jsonify({"success": False, "error": "Project ID and Project Name are required"}), 400
+
+        # Uniqueness check on crc6f_projectid
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json",
+            "OData-MaxVersion": "4.0",
+            "OData-Version": "4.0",
+        }
+        safe = pid.replace("'", "''")
+        url = f"{RESOURCE}/api/data/v9.2/{entity_set}?$select=crc6f_projectid&$filter=crc6f_projectid eq '{safe}'&$top=1"
+        chk = requests.get(url, headers=headers)
+        if chk.status_code == 200 and chk.json().get("value"):
+            return jsonify({"success": False, "error": "Project ID already exists"}), 409
+
+        payload = {
+            "crc6f_projectid": pid,
+            "crc6f_projectname": pname,
+            "crc6f_client": data.get("crc6f_client"),
+            "crc6f_manager": data.get("crc6f_manager"),
+            "crc6f_projectstatus": data.get("crc6f_projectstatus"),
+            "crc6f_startdate": data.get("crc6f_startdate"),
+            "crc6f_enddate": data.get("crc6f_enddate"),
+            "crc6f_estimationcost": data.get("crc6f_estimationcost"),
+            "crc6f_noofcontributors": data.get("crc6f_noofcontributors"),
+            "crc6f_projectdescription": data.get("crc6f_projectdescription"),
+        }
+        created = create_record(entity_set, payload)
+        return jsonify({"success": True, "project": created}), 201
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/projects/<record_id>", methods=["PATCH"])
+def update_project(record_id):
+    try:
+        token = get_access_token()
+        entity_set = get_projects_entity(token)
+        data = request.get_json(force=True) or {}
+        payload = {}
+        for k in [
+            "crc6f_projectid",
+            "crc6f_projectname",
+            "crc6f_client",
+            "crc6f_manager",
+            "crc6f_projectstatus",
+            "crc6f_startdate",
+            "crc6f_enddate",
+            "crc6f_estimationcost",
+            "crc6f_noofcontributors",
+            "crc6f_projectdescription",
+        ]:
+            if k in data:
+                payload[k] = data.get(k)
+        update_record(entity_set, record_id, payload)
+        return jsonify({"success": True})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/projects/<record_id>", methods=["DELETE"])
+def delete_project(record_id):
+    try:
+        token = get_access_token()
+        entity_set = get_projects_entity(token)
+        delete_record(entity_set, record_id)
+        return jsonify({"success": True})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route('/api/leave-balance/<employee_id>/<leave_type>', methods=['GET'])
+def get_leave_balance(employee_id, leave_type):
+    """Return available leave balance for an employee and leave type.
+    Supported leave_type values: 'Casual Leave', 'Sick Leave', 'Comp Off' (case-insensitive).
+    """
+    import requests
+    from dataverse_helper import get_access_token
+    try:
+        # Normalize employee id (support EMP### or numeric)
+        emp = (employee_id or '').strip().upper()
+        if emp.isdigit():
+            emp = f"EMP{int(emp):03d}"
+
+        token = get_access_token()
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json",
+            "OData-MaxVersion": "4.0",
+            "OData-Version": "4.0",
+        }
+
+        # Probe candidate entity sets and FK field names to be resilient
+        candidates = [
+            "crc6f_hr_leavemangements",
+            "crc6f_hr_leavemangement",
+            "crc6f_leave_mangement",
+            "crc6f_leave_mangements",
+        ]
+        fk_fields = ["crc6f_employeeid", "crc6f_empid"]
+
+        record = None
+        last_status = None
+        last_text = None
+        # Try multiple employee id variants to avoid case/format mismatches
+        id_variants = []
+        try:
+            orig = (employee_id or '').strip()
+            # Add EMP 3-digit and 4-digit patterns
+            emp3 = emp
+            emp4 = emp
+            try:
+                if orig.isdigit():
+                    emp3 = f"EMP{int(orig):03d}"
+                    emp4 = f"EMP{int(orig):04d}"
+                elif orig.upper().startswith("EMP"):
+                    num = ''.join([c for c in orig if c.isdigit()])
+                    if num:
+                        emp3 = f"EMP{int(num):03d}"
+                        emp4 = f"EMP{int(num):04d}"
+            except Exception:
+                pass
+            id_variants = [emp3, emp4, emp, emp.lower(), orig, orig.upper(), orig.lower()]
+            # Deduplicate preserving order
+            seen = set()
+            id_variants = [x for x in id_variants if not (x in seen or seen.add(x))]
+        except Exception:
+            id_variants = [emp]
+
+        for entity in candidates:
+            for fk in fk_fields:
+                # Try exact matches on variants
+                for val in id_variants:
+                    safe_val = str(val).replace("'", "''")
+                    url = f"{BASE_URL}/{entity}?$filter={fk} eq '{safe_val}'&$top=1"
+                    resp = requests.get(url, headers=headers)
+                    last_status, last_text = resp.status_code, resp.text
+                    if resp.status_code == 200:
+                        vals = resp.json().get("value", [])
+                        if vals:
+                            record = vals[0]
+                            try:
+                                print(f"[OK] Leave balance match: entity={entity}, fk={fk}, value='{val}'")
+                            except Exception:
+                                pass
+                            break
+                if record:
+                    break
+                # Try OData tolower() equality if supported
+                try:
+                    lower_val = (emp or '').lower().replace("'", "''")
+                    url_lower = f"{BASE_URL}/{entity}?$filter=tolower({fk}) eq '{lower_val}'&$top=1"
+                    resp2 = requests.get(url_lower, headers=headers)
+                    last_status, last_text = resp2.status_code, resp2.text
+                    if resp2.status_code == 200:
+                        vals2 = resp2.json().get("value", [])
+                        if vals2:
+                            record = vals2[0]
+                            try:
+                                print(f"[OK] Leave balance match (tolower): entity={entity}, fk={fk}")
+                            except Exception:
+                                pass
+                            break
+                except Exception:
+                    pass
+            if record:
+                break
+
+        # Resolve target field using the discovered record (schema-aware)
+        def resolve_field_for_get(row: dict, lt_str: str) -> str:
+            lt_low = (lt_str or '').strip().lower()
+            if lt_low in ("casual leave", "cl"):
+                for c in ("crc6f_cl", "crc6f_casualleave", "crc6f_casual"):
+                    if c in row: return c
+                return "crc6f_cl"
+            if lt_low in ("sick leave", "sl"):
+                for c in ("crc6f_sl", "crc6f_sickleave", "crc6f_sick", "crc6f_sickleaves"):
+                    if c in row: return c
+                return "crc6f_sl"
+            if lt_low in ("compensatory off", "comp off", "compoff", "co"):
+                for c in ("crc6f_compoff", "crc6f_comp_off", "crc6f_compensatoryoff", "crc6f_compensatory_off"):
+                    if c in row: return c
+                return "crc6f_compoff"
+            for c in ("crc6f_total", "crc6f_overall", "crc6f_totalleave"):
+                if c in row: return c
+            return "crc6f_total"
+        field = resolve_field_for_get(record or {}, leave_type)
+
+        if not record:
+            # Gracefully return zero if no row found for employee
+            return jsonify({
+                "success": True,
+                "employee_id": emp,
+                "leave_type": leave_type,
+                "available": 0
+            }), 200
+
+        available = float(record.get(field, 0) or 0)
+        return jsonify({
+            "success": True,
+            "employee_id": emp,
+            "leave_type": leave_type,
+            "available": available
+        }), 200
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route('/api/leave-balance', methods=['GET'])
+def get_leave_balance_query():
+    """Fallback endpoint supporting query params: ?employee_id=EMP001&leave_type=Casual%20Leave"""
+    try:
+        employee_id = request.args.get('employee_id', '')
+        leave_type = request.args.get('leave_type', '')
+        if not employee_id or not leave_type:
+            return jsonify({"success": False, "error": "employee_id and leave_type are required"}), 400
+        # Delegate to the path handler to keep behavior consistent
+        return get_leave_balance(employee_id, leave_type)
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route('/api/leave-balance/all/<employee_id>', methods=['GET'])
+def get_all_leave_balances(employee_id):
+    """Return all leave balances (CL, SL, Comp Off) for an employee with annual quota, consumed (from history), and available"""
+    try:
+        print(f"\n{'='*70}")
+        print(f"[SEARCH] FETCHING ALL LEAVE BALANCES FOR EMPLOYEE: {employee_id}")
+        print(f"{'='*70}")
+        
+        # Normalize employee id
+        emp = (employee_id or '').strip().upper()
+        if emp.isdigit():
+            emp = f"EMP{int(emp):03d}"
+        
+        token = get_access_token()
+        inbox_entity = get_inbox_entity_set(token)
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json",
+            "OData-MaxVersion": "4.0",
+            "OData-Version": "4.0"
+        }
+        
+        # ============================================================
+        # CALCULATE ANNUAL QUOTA BASED ON EMPLOYEE EXPERIENCE (DOJ)
+        # ============================================================
+        print(f"[DATA] Calculating annual leave quota based on employee experience for {emp}...")
+        
+        # Fetch employee DOJ from employee master table
+        entity_set = get_employee_entity_set(token)
+        field_map = get_field_map(entity_set)
+        
+        # Fetch employee record to get DOJ
+        safe_emp = emp.replace("'", "''")
+        emp_filter = f"?$filter={field_map['id']} eq '{safe_emp}'"
+        emp_url = f"{RESOURCE}/api/data/v9.2/{entity_set}{emp_filter}"
+        emp_response = requests.get(emp_url, headers=headers)
+        
+        # Default quotas for Type 3 (0-1 years experience)
+        cl_annual = 3
+        sl_annual = 3
+        co_annual = 0   # Comp off doesn't have fixed annual quota
+        
+        if emp_response.status_code == 200:
+            emp_records = emp_response.json().get("value", [])
+            if emp_records:
+                emp_record = emp_records[0]
+                doj_value = emp_record.get(field_map['doj'])
+                
+                print(f"   [DATE] Employee DOJ: {doj_value}")
+                
+                # Calculate experience from DOJ
+                if doj_value:
+                    try:
+                        from datetime import datetime
+                        # Parse DOJ - handle multiple formats
+                        doj_date = None
+                        if isinstance(doj_value, str):
+                            # Try MM/DD/YYYY format first
+                            if '/' in doj_value:
+                                parts = doj_value.split('/')
+                                if len(parts) == 3:
+                                    doj_date = datetime(int(parts[2]), int(parts[0]), int(parts[1]))
+                            # Try YYYY-MM-DD format
+                            elif '-' in doj_value:
+                                doj_date = datetime.fromisoformat(doj_value.split('T')[0])
+                        
+                        if doj_date:
+                            current_date = datetime.now()
+                            experience_years = (current_date - doj_date).days / 365.25
+                            experience_years = max(0, int(experience_years))
+                            
+                            print(f"   [DATA] Calculated Experience: {experience_years} years")
+                            
+                            # Determine allocation based on experience
+                            # Type 1: 3+ years -> CL=6, SL=6, Total=12
+                            # Type 2: 2+ years -> CL=4, SL=4, Total=8
+                            # Type 3: <2 years -> CL=3, SL=3, Total=6
+                            if experience_years >= 3:
+                                cl_annual = 6
+                                sl_annual = 6
+                                print(f"   [OK] Allocation Type 1 (3+ years): CL={cl_annual}, SL={sl_annual}")
+                            elif experience_years >= 2:
+                                cl_annual = 4
+                                sl_annual = 4
+                                print(f"   [OK] Allocation Type 2 (2+ years): CL={cl_annual}, SL={sl_annual}")
+                            else:
+                                cl_annual = 3
+                                sl_annual = 3
+                                print(f"   [OK] Allocation Type 3 (<2 years): CL={cl_annual}, SL={sl_annual}")
+                    except Exception as e:
+                        print(f"   [WARN] Error calculating experience: {e}")
+                        print(f"   Using default Type 3 allocation: CL={cl_annual}, SL={sl_annual}")
+                else:
+                    print(f"   [WARN] No DOJ found, using default Type 3 allocation: CL={cl_annual}, SL={sl_annual}")
+            else:
+                print(f"   [WARN] Employee record not found, using default Type 3 allocation: CL={cl_annual}, SL={sl_annual}")
+        else:
+            print(f"   [WARN] Failed to fetch employee record, using default Type 3 allocation: CL={cl_annual}, SL={sl_annual}")
+        
+        # ============================================================
+        # CALCULATE CONSUMED FROM ACTUAL LEAVE HISTORY (REAL-TIME)
+        # Only APPROVED paid leaves should reduce the balance
+        # ============================================================
+        print(f"[DATA] Fetching leave history for {emp} to calculate consumed leaves...")
+        
+        # Fetch leave records with Approved status (Pending shouldn't reduce balances)
+        safe_emp = emp.replace("'", "''")
+        filter_query = f"?$filter=crc6f_employeeid eq '{safe_emp}' and crc6f_status eq 'Approved'"
+        leave_url = f"{RESOURCE}/api/data/v9.2/{LEAVE_ENTITY}{filter_query}&$select=crc6f_leavetype,crc6f_totaldays,crc6f_paidunpaid,crc6f_status"
+        
+        leave_response = requests.get(leave_url, headers=headers)
+        
+        cl_consumed = 0.0
+        sl_consumed = 0.0
+        co_consumed = 0.0
+        
+        if leave_response.status_code == 200:
+            leave_records = leave_response.json().get("value", [])
+            print(f"[FETCH] Found {len(leave_records)} leave records (Approved/Pending/Cancelled)")
+            
+            for record in leave_records:
+                leave_type = (record.get("crc6f_leavetype") or "").strip()
+                total_days = float(record.get("crc6f_totaldays") or 0)
+                paid_unpaid = (record.get("crc6f_paidunpaid") or "").strip().lower()
+                status = (record.get("crc6f_status") or "").strip()
+                status_low = status.lower()
+                
+                lt_low = leave_type.lower()
+                
+                # Count PAID leaves only when status is Approved
+                if paid_unpaid == "paid" and total_days > 0 and status_low == "approved":
+                    # Casual Leave: support both full name and short code CL
+                    if "casual" in lt_low or lt_low in ("cl", "casual leave"):
+                        cl_consumed += total_days
+                        print(f"   [OK] Casual Leave: +{total_days} days ({status})")
+                    # Sick Leave: support both full name and short code SL
+                    elif "sick" in lt_low or lt_low in ("sl", "sick leave"):
+                        sl_consumed += total_days
+                        print(f"   [OK] Sick Leave: +{total_days} days ({status})")
+                    # Comp Off: support CO / Comp Off variants
+                    elif "comp" in lt_low or lt_low in ("co", "comp off", "compoff", "compensatory off"):
+                        co_consumed += total_days
+                        print(f"   [OK] Comp Off: +{total_days} days ({status})")
+        else:
+            print(f"[WARN] Could not fetch leave history: {leave_response.status_code}")
+        
+        print(f"\n[DATA] REAL-TIME CONSUMED CALCULATION (including Pending/Cancelled):")
+        print(f"   Casual Leave Consumed: {cl_consumed}")
+        print(f"   Sick Leave Consumed: {sl_consumed}")
+        print(f"   Comp Off Consumed: {co_consumed}")
+        
+        # ============================================================
+        # CALCULATE AVAILABLE = ANNUAL QUOTA - CONSUMED (BASELINE)
+        # ============================================================
+        cl_available = max(0, cl_annual - cl_consumed)
+        sl_available = max(0, sl_annual - sl_consumed)
+        co_available = max(0, co_annual - co_consumed)  # Comp off available (earned comp offs)
+
+        # ------------------------------------------------------------
+        # OVERRIDE WITH DATAVERSE LEAVE-BALANCE ROW (crc6f_cl/sl/compoff)
+        # So that the "Available" shown in UI matches the Dataverse table
+        # exactly for CL/SL/CO. We then recompute Consumed = Annual - Available.
+        # ------------------------------------------------------------
+        try:
+            balance_row = _fetch_leave_balance(token, emp)
+        except Exception as bal_err:
+            balance_row = None
+            print(f"[WARN] Failed to fetch leave-balance row for {emp} in all-balances: {bal_err}")
+
+        if balance_row:
+            try:
+                cl_db = _get_available_days(balance_row, "Casual Leave")
+                sl_db = _get_available_days(balance_row, "Sick Leave")
+                co_db = _get_available_days(balance_row, "Comp Off")
+                print(f"[DATA] Using Dataverse balance overrides: CL={cl_db}, SL={sl_db}, CO={co_db}")
+
+                # Use Dataverse values as canonical "Available" counts
+                cl_available = max(0.0, float(cl_db or 0))
+                sl_available = max(0.0, float(sl_db or 0))
+                co_available = max(0.0, float(co_db or 0))
+
+                # Recompute consumed from annual quota so cards stay consistent
+                cl_consumed = max(0.0, float(cl_annual) - cl_available)
+                sl_consumed = max(0.0, float(sl_annual) - sl_available)
+                # Keep co_consumed from history, but ensure non-negative
+                co_consumed = max(0.0, float(co_consumed))
+            except Exception as bal2_err:
+                print(f"[WARN] Failed to apply Dataverse overrides in all-balances: {bal2_err}")
+
+        print(f"\n[DATA] CALCULATED AVAILABLE BALANCES (after overrides if any):")
+        print(f"   Casual Leave Available: {cl_available} (Quota: {cl_annual}, Consumed: {cl_consumed})")
+        print(f"   Sick Leave Available: {sl_available} (Quota: {sl_annual}, Consumed: {sl_consumed})")
+        print(f"   Comp Off Available: {co_available}")
+
+        # Calculate totals
+        total_available = cl_available + sl_available + co_available
+        actual_total = cl_annual + sl_annual  # Total quota based on allocation type
+        
+        balances = [
+            {
+                "type": "Casual Leave",
+                "annual_quota": cl_annual,
+                "consumed": cl_consumed,
+                "available": cl_available
+            },
+            {
+                "type": "Sick Leave",
+                "annual_quota": sl_annual,
+                "consumed": sl_consumed,
+                "available": sl_available
+            },
+            {
+                "type": "Comp off",
+                "annual_quota": co_annual,
+                "consumed": co_consumed,
+                "available": co_available
+            },
+            {
+                "type": "Total",
+                "annual_quota": cl_annual + sl_annual + co_annual,
+                "consumed": cl_consumed + sl_consumed + co_consumed,
+                "available": total_available
+            },
+            {
+                "type": "Actual Total",
+                "annual_quota": actual_total,
+                "consumed": 0,
+                "available": actual_total
+            }
+        ]
+        
+        print(f"\n[OK] FINAL LEAVE BALANCES:")
+        for b in balances:
+            print(f"   {b['type']}: Annual={b['annual_quota']}, Consumed={b['consumed']}, Available={b['available']}")
+        print(f"{'='*70}\n")
+        
+        return jsonify({
+            "success": True,
+            "employee_id": emp,
+            "balances": balances,
+            "total_available": total_available,
+            "actual_total": actual_total
+        }), 200
+        
+    except Exception as e:
+        print(f"[ERROR] Error fetching all leave balances: {str(e)}")
+        traceback.print_exc()
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route('/api/test-dataverse', methods=['GET'])
+def test_dataverse_connection():
+    """Test endpoint to verify Dataverse connectivity"""
+    try:
+        token = get_access_token()
+        entity_set = get_employee_entity_set(token)
+        test_record = {
+            "crc6f_employeeid": "TEST001",
+            "crc6f_firstname": "Test",
+            "crc6f_lastname": "User",
+            "crc6f_email": "test@example.com",
+            "crc6f_leaveid": generate_leave_id(),
+            "crc6f_approvedby": "System"
+        }
+        result = create_record(LEAVE_ENTITY, test_record)
+        return jsonify({"success": True, "dataverse_result": result}), 200
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route('/api/debug/create-test-intern', methods=['POST'])
+def debug_create_test_intern():
+    """Create a test employee with Employee Flag = Intern and a matching intern record."""
+    try:
+        token = get_access_token()
+        emp_entity = get_employee_entity_set(token)
+        field_map = get_field_map(emp_entity)
+
+        employee_id = generate_employee_id()
+        first_name = "Test"
+        last_name = "Intern"
+        email = f"test.intern+{employee_id.lower()}@example.com"
+
+        emp_payload = {}
+        if field_map.get("id"):
+            emp_payload[field_map["id"]] = employee_id
+        if field_map.get("fullname"):
+            emp_payload[field_map["fullname"]] = f"{first_name} {last_name}".strip()
+        else:
+            if field_map.get("firstname"):
+                emp_payload[field_map["firstname"]] = first_name
+            if field_map.get("lastname"):
+                emp_payload[field_map["lastname"]] = last_name
+        if field_map.get("email"):
+            emp_payload[field_map["email"]] = email
+        if field_map.get("designation"):
+            emp_payload[field_map["designation"]] = "Intern"
+        if field_map.get("active"):
+            emp_payload[field_map["active"]] = "Active"
+        if field_map.get("employee_flag"):
+            emp_payload[field_map["employee_flag"]] = "Intern"
+
+        created_emp = create_record(emp_entity, emp_payload)
+
+        intern_id = f"INT-{employee_id}"
+        intern_payload = {
+            INTERN_FIELDS["intern_id"]: intern_id,
+            INTERN_FIELDS["employee_id"]: employee_id,
+        }
+        created_intern = create_record(INTERN_ENTITY, intern_payload)
+
+        formatted_intern = None
+        try:
+            record = _fetch_intern_record_by_id(token, intern_id, include_system=True)
+            if record:
+                formatted_intern = _format_intern_record(record)
+        except Exception:
+            formatted_intern = None
+
+        return jsonify({
+            "success": True,
+            "employee_entity": emp_entity,
+            "employee_id": employee_id,
+            "intern_id": intern_id,
+            "employee_payload": emp_payload,
+            "employee_created": created_emp,
+            "intern_payload": intern_payload,
+            "intern_created": created_intern,
+            "intern_formatted": formatted_intern,
+        }), 201
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route('/api/backfill-leave-balances', methods=['POST'])
+def backfill_leave_balances():
+    """Backfill leave balance records for employees that don't have them"""
+    try:
+        token = get_access_token()
+        entity_set = get_employee_entity_set(token)
+        field_map = get_field_map(entity_set)
+        
+        # Get all employees
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json",
+            "OData-MaxVersion": "4.0",
+            "OData-Version": "4.0"
+        }
+        
+        emp_url = f"{BASE_URL}/{entity_set}"
+        emp_resp = requests.get(emp_url, headers=headers)
+        emp_resp.raise_for_status()
+        employees = emp_resp.json().get("value", [])
+        
+        # Get existing leave balance records
+        leave_url = f"{BASE_URL}/{LEAVE_BALANCE_ENTITY}"
+        leave_resp = requests.get(leave_url, headers=headers)
+        leave_resp.raise_for_status()
+        existing_balances = leave_resp.json().get("value", [])
+        existing_emp_ids = {lb.get("crc6f_employeeid") for lb in existing_balances}
+        
+        created_count = 0
+        skipped_count = 0
+        errors = []
+        
+        for emp in employees:
+            emp_id = emp.get(field_map.get("id"))
+            if not emp_id:
+                continue
+                
+            if emp_id in existing_emp_ids:
+                print(f"   ⏭️ Skipping {emp_id} - already has leave balance")
+                skipped_count += 1
+                continue
+            
+            try:
+                # Get DOJ and calculate experience
+                doj_val = emp.get(field_map.get("doj"))
+                experience = 0
+                if doj_val:
+                    experience = calculate_experience(doj_val)
+                
+                # Get leave allocation
+                cl, sl, total, allocation_type = get_leave_allocation_by_experience(experience)
+                actual_total = cl + sl
+                
+                leave_payload = {
+                    "crc6f_employeeid": emp_id,
+                    "crc6f_cl": str(cl),
+                    "crc6f_sl": str(sl),
+                    "crc6f_compoff": "0",
+                    "crc6f_total": str(total),
+                    "crc6f_actualtotal": str(actual_total),
+                    "crc6f_leaveallocationtype": allocation_type
+                }
+                
+                create_record(LEAVE_BALANCE_ENTITY, leave_payload)
+                print(f"   [OK] Created leave balance for {emp_id} - {allocation_type} (Exp: {experience} years)")
+                created_count += 1
+            except Exception as e:
+                error_msg = f"{emp_id}: {str(e)}"
+                print(f"   [ERROR] Failed: {error_msg}")
+                errors.append(error_msg)
+        
+        return jsonify({
+            "success": True,
+            "created": created_count,
+            "skipped": skipped_count,
+            "errors": errors if errors else None,
+            "message": f"Created {created_count} leave balance records, skipped {skipped_count} existing"
+        }), 200
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route('/api/test-login-leave-tables', methods=['GET'])
+def test_login_leave_tables():
+    """Test endpoint to verify login and leave balance tables are accessible"""
+    try:
+        token = get_access_token()
+        results = {}
+        
+        # Test 1: Check login table
+        try:
+            login_table = get_login_table(token)
+            headers = {
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/json",
+                "OData-MaxVersion": "4.0",
+                "OData-Version": "4.0"
+            }
+            url = f"{BASE_URL}/{login_table}?$top=1"
+            resp = requests.get(url, headers=headers)
+            results["login_table"] = {
+                "table_name": login_table,
+                "status": resp.status_code,
+                "accessible": resp.status_code == 200,
+                "sample_count": len(resp.json().get("value", [])) if resp.status_code == 200 else 0
+            }
+        except Exception as e:
+            results["login_table"] = {"error": str(e)}
+        
+        # Test 2: Check leave balance table
+        try:
+            headers = {
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/json",
+                "OData-MaxVersion": "4.0",
+                "OData-Version": "4.0"
+            }
+            url = f"{BASE_URL}/{LEAVE_BALANCE_ENTITY}?$top=1"
+            resp = requests.get(url, headers=headers)
+            results["leave_balance_table"] = {
+                "table_name": LEAVE_BALANCE_ENTITY,
+                "status": resp.status_code,
+                "accessible": resp.status_code == 200,
+                "sample_count": len(resp.json().get("value", [])) if resp.status_code == 200 else 0
+            }
+        except Exception as e:
+            results["leave_balance_table"] = {"error": str(e)}
+        
+        # Test 3: Try creating a test login record
+        try:
+            login_table = get_login_table(token)
+            test_login = {
+                "crc6f_username": "test_user_delete_me@test.com",
+                "crc6f_password": _hash_password("Test@123"),
+                "crc6f_accesslevel": "L1",
+                "crc6f_userid": "USER-999",
+                "crc6f_employeename": "Test User",
+                "crc6f_user_status": "Active",
+                "crc6f_loginattempts": "0"
+            }
+            create_result = create_record(login_table, test_login)
+            results["test_login_creation"] = {"success": True, "result": create_result}
+        except Exception as e:
+            results["test_login_creation"] = {"success": False, "error": str(e)}
+        
+        # Test 4: Try creating a test leave balance record
+        try:
+            test_leave = {
+                "crc6f_employeeid": "TEST999",
+                "crc6f_cl": "6",
+                "crc6f_sl": "6",
+                "crc6f_compoff": "0",
+                "crc6f_total": "12",
+                "crc6f_actualtotal": "12",
+                "crc6f_leaveallocationtype": "Type 1"
+            }
+            create_result = create_record(LEAVE_BALANCE_ENTITY, test_leave)
+            results["test_leave_creation"] = {"success": True, "result": create_result}
+        except Exception as e:
+            results["test_leave_creation"] = {"success": False, "error": str(e)}
+        
+        return jsonify({"success": True, "tests": results}), 200
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route('/api/leaves/approve/<leave_id>', methods=['POST'])
+def approve_leave(leave_id):
+    """Approve a leave request (admin only)"""
+    try:
+        print(f"\n{'='*70}")
+        print(f"[OK] APPROVE LEAVE REQUEST: {leave_id}")
+        print(f"{'='*70}")
+        
+        data = request.get_json() or {}
+        approved_by = data.get('approved_by', 'EMP001')  # Admin employee ID
+        
+        # Normalize admin ID
+        if approved_by.isdigit():
+            approved_by = format_employee_id(int(approved_by))
+        elif approved_by.upper().startswith("EMP"):
+            approved_by = approved_by.upper()
+        
+        token = get_access_token()
+        inbox_entity = get_inbox_entity_set(token)
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json",
+            "OData-MaxVersion": "4.0",
+            "OData-Version": "4.0"
+        }
+        
+        # Find the leave record
+        safe_leave_id = leave_id.replace("'", "''")
+        filter_query = f"?$filter=crc6f_leaveid eq '{safe_leave_id}'"
+        url = f"{RESOURCE}/api/data/v9.2/{LEAVE_ENTITY}{filter_query}"
+        
+        print(f"   [SEARCH] Searching for leave: {url}")
+        response = requests.get(url, headers=headers)
+        
+        if response.status_code != 200:
+            print(f"   [ERROR] Failed to find leave record: {response.status_code}")
+            return jsonify({"success": False, "error": "Leave record not found"}), 404
+        
+        records = response.json().get("value", [])
+        if not records:
+            print(f"   [ERROR] No leave record found with ID: {leave_id}")
+            return jsonify({"success": False, "error": "Leave record not found"}), 404
+        
+        record = records[0]
+        record_id = record.get("crc6f_table14id")
+        
+        if not record_id:
+            print(f"   [ERROR] No primary key found in record")
+            return jsonify({"success": False, "error": "Invalid leave record"}), 500
+        
+        # Update the leave status to "Approved"
+        update_data = {
+            "crc6f_status": "Approved",
+            "crc6f_approvedby": approved_by
+        }
+        
+        print(f"   [LOG] Updating leave record {record_id} with status: Approved")
+        updated_record = update_record(LEAVE_ENTITY, record_id, update_data)
+        
+        print(f"[OK] Leave {leave_id} approved successfully by {approved_by}")
+        # get mail apporved leave
+        start_date = record.get("crc6f_startdate")
+        end_date = record.get("crc6f_enddate")
+
+        employee_id = record.get("crc6f_employeeid")
+        employee_email = get_employee_email(employee_id)
+        employee_name = get_employee_name(employee_id)
+        print(employee_email,employee_id)
+
+        if employee_email:
+            send_email(
+                subject=f"[OK] Leave Approved for {employee_id}",
+                recipients=[employee_email],
+                body=f"Hello{employee_name} {employee_id}, your leave from {start_date} to {end_date} has been approved by {approved_by}."
+            )
+        else:
+            print(f"[WARN] Could not send mail — no email found for {employee_id}")
+
+        print(f"{'='*70}\n")
+        
+        return jsonify({
+            "success": True,
+            "message": f"Leave {leave_id} approved successfully",
+            "leave_id": leave_id,
+            "approved_by": approved_by,
+            "updated_record": updated_record
+        }), 200
+        
+    except Exception as e:
+        print(f"[ERROR] Error approving leave: {str(e)}")
+        traceback.print_exc()
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route('/api/leaves/reject/<leave_id>', methods=['POST'])
+def reject_leave(leave_id):
+    """Reject a leave request (admin only) with optional reason"""
+    try:
+        print(f"\n{'='*70}")
+        print(f"[ERROR] REJECT LEAVE REQUEST: {leave_id}")
+        print(f"{'='*70}")
+        
+        data = request.get_json() or {}
+        rejected_by = data.get('rejected_by', 'EMP001')  # Admin employee ID
+        rejection_reason = data.get('reason', '')  # Optional rejection reason
+        
+        # Normalize admin ID
+        if rejected_by.isdigit():
+            rejected_by = format_employee_id(int(rejected_by))
+        elif rejected_by.upper().startswith("EMP"):
+            rejected_by = rejected_by.upper()
+        
+        token = get_access_token()
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json",
+            "OData-MaxVersion": "4.0",
+            "OData-Version": "4.0"
+        }
+        
+        # Find the leave record
+        safe_leave_id = leave_id.replace("'", "''")
+        filter_query = f"?$filter=crc6f_leaveid eq '{safe_leave_id}'"
+        url = f"{RESOURCE}/api/data/v9.2/{LEAVE_ENTITY}{filter_query}"
+        
+        print(f"   [SEARCH] Searching for leave: {url}")
+        response = requests.get(url, headers=headers)
+        
+        if response.status_code != 200:
+            print(f"   [ERROR] Failed to find leave record: {response.status_code}")
+            return jsonify({"success": False, "error": "Leave record not found"}), 404
+        
+        records = response.json().get("value", [])
+        if not records:
+            print(f"   [ERROR] No leave record found with ID: {leave_id}")
+            return jsonify({"success": False, "error": "Leave record not found"}), 404
+        
+        record = records[0]
+        record_id = record.get("crc6f_table14id")
+        employee_id = record.get("crc6f_employeeid")
+        leave_type = record.get("crc6f_leavetype")
+        total_days = float(record.get("crc6f_totaldays", 0))
+        paid_unpaid = record.get("crc6f_paidunpaid", "Unpaid")
+        
+        if not record_id:
+            print(f"   [ERROR] No primary key found in record")
+            return jsonify({"success": False, "error": "Invalid leave record"}), 500
+        
+        # Update the leave status to "Rejected"
+        # Note: Using crc6f_approvedby for both approval and rejection since there's no separate rejected_by field
+        update_data = {
+            "crc6f_status": "Rejected",
+            "crc6f_approvedby": rejected_by
+        }
+        
+        # Add rejection reason if provided
+        if rejection_reason:
+            update_data["crc6f_rejectionreason"] = rejection_reason
+            print(f"   💬 Rejection reason stored: {rejection_reason}")
+        
+        print(f"   [LOG] Updating leave record {record_id} with status: Rejected")
+        
+        updated_record = update_record(LEAVE_ENTITY, record_id, update_data)
+        
+        # If the leave was paid and had been deducted, restore the balance
+        if paid_unpaid.lower() == "paid" and total_days > 0 and employee_id:
+            try:
+                print(f"   [PROC] Restoring {total_days} days of {leave_type} to {employee_id}")
+                balance_row = _fetch_leave_balance(token, employee_id)
+                if balance_row:
+                    # Increment the leave balance since leave was rejected
+                    balance_record_id = balance_row.get("crc6f_hr_leavemangementid")
+                    if balance_record_id:
+                        # Determine which field to update
+                        leave_type_lower = leave_type.lower()
+                        balance_update = {}
+                        
+                        if "casual" in leave_type_lower:
+                            current_balance = float(balance_row.get("crc6f_cl", 0) or 0)
+                            balance_update["crc6f_cl"] = current_balance + total_days
+                        elif "sick" in leave_type_lower:
+                            current_balance = float(balance_row.get("crc6f_sl", 0) or 0)
+                            balance_update["crc6f_sl"] = current_balance + total_days
+                        elif "comp" in leave_type_lower:
+                            current_balance = float(balance_row.get("crc6f_compoff", 0) or 0)
+                            balance_update["crc6f_compoff"] = current_balance + total_days
+                        
+                        if balance_update:
+                            entity_set = LEAVE_BALANCE_ENTITY_RESOLVED or LEAVE_BALANCE_ENTITY
+                            update_record(entity_set, balance_record_id, balance_update)
+                            print(f"   [OK] Balance restored: {balance_update}")
+            except Exception as restore_err:
+                print(f"   [WARN] Failed to restore balance: {restore_err}")
+        
+        print(f"[OK] Leave {leave_id} rejected successfully by {rejected_by}")
+        # mail reject leave
+        start_date = record.get("crc6f_startdate")
+        end_date = record.get("crc6f_enddate")
+
+        employee_id = record.get("crc6f_employeeid")
+        employee_email = get_employee_email(employee_id)
+        employee_name = get_employee_name(employee_id)
+        print(employee_email,employee_id)
+
+        if employee_email:
+            send_email(
+                subject=f"[OK] Leave Approved for {employee_id}",
+                recipients=[employee_email],
+                body=f"Hello {employee_name} {employee_id}, your leave from {start_date} to {end_date} has been approved by {rejected_by}."
+            )
+        else:
+            print(f"[WARN] Could not send mail — no email found for {employee_id}")
+
+        print(f"{'='*70}\n")
+        
+        return jsonify({
+            "success": True,
+            "message": f"Leave {leave_id} rejected successfully",
+            "leave_id": leave_id,
+            "rejected_by": rejected_by,
+            "reason": rejection_reason,
+            "updated_record": updated_record
+        }), 200
+        
+    except Exception as e:
+        print(f"[ERROR] Error rejecting leave: {str(e)}")
+        traceback.print_exc()
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route('/api/leaves/pending', methods=['GET'])
+def get_pending_leaves():
+    """Get all pending leave requests (for admin review)"""
+    try:
+        print(f"\n{'='*70}")
+        print(f"[FETCH] FETCHING ALL PENDING LEAVE REQUESTS")
+        print(f"{'='*70}")
+        
+        token = get_access_token()
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json",
+            "OData-MaxVersion": "4.0",
+            "OData-Version": "4.0"
+        }
+        
+        # Fetch all pending leaves
+        filter_query = "?$filter=crc6f_status eq 'Pending'"
+        url = f"{RESOURCE}/api/data/v9.2/{LEAVE_ENTITY}{filter_query}"
+        
+        print(f"   [URL] Request URL: {url}")
+        response = requests.get(url, headers=headers)
+        
+        if response.status_code != 200:
+            print(f"   [ERROR] Failed to fetch pending leaves: {response.status_code}")
+            print("   [WARN] Falling back to empty pending-leave list to keep UI responsive")
+            return jsonify({
+                "success": True,
+                "leaves": [],
+                "count": 0,
+                "warning": "Pending leaves unavailable (Dataverse error)"
+            }), 200
+        
+        records = response.json().get("value", [])
+        print(f"   [DATA] Found {len(records)} pending leave requests")
+        
+        formatted_leaves = []
+        for r in records:
+            formatted_leaves.append({
+                "leave_id": r.get("crc6f_leaveid"),
+                "leave_type": r.get("crc6f_leavetype"),
+                "start_date": r.get("crc6f_startdate"),
+                "end_date": r.get("crc6f_enddate"),
+                "total_days": r.get("crc6f_totaldays"),
+                "status": r.get("crc6f_status"),
+                "paid_unpaid": r.get("crc6f_paidunpaid"),
+                "approved_by": r.get("crc6f_approvedby"),
+                "rejection_reason": r.get("crc6f_rejectionreason"),
+                "employee_id": r.get("crc6f_employeeid")
+            })
+        
+        print(f"[OK] Successfully fetched {len(formatted_leaves)} pending leaves")
+        print(f"{'='*70}\n")
+        
+        return jsonify({
+            "success": True,
+            "leaves": formatted_leaves,
+            "count": len(formatted_leaves)
+        }), 200
+        
+    except Exception as e:
+        print(f"[ERROR] Error fetching pending leaves: {str(e)}")
+        traceback.print_exc()
+        print("[WARN] Returning empty pending-leave list due to backend failure")
+        return jsonify({
+            "success": True,
+            "leaves": [],
+            "count": 0,
+            "warning": "Pending leaves unavailable (backend error)"
+        }), 200
+
+
+# ================== UTILITY ROUTES ==================
+@app.route('/ping', methods=['GET'])
+def ping():
+    """Health check endpoint"""
+    return jsonify({
+        "message": "Unified Backend Server is running [OK]",
+        "services": ["attendance", "leave_tracker", "asset_management", "employee_master"],
+        "timestamp": datetime.now().isoformat()
+    }), 200
+
+
+@app.route('/api/info', methods=['GET'])
+def api_info():
+    """API information endpoint"""
+    return jsonify({
+        "server": "Unified HR Management Backend",
+        "version": "2.0.0",
+        "endpoints": {
+            "attendance": {
+                "checkin": "POST /api/checkin",
+                "checkout": "POST /api/checkout",
+                "status": "GET /api/status/<employee_id>",
+                "monthly": "GET /api/attendance/<employee_id>/<year>/<month>"
+            },
+            "leave": {
+                "apply": "POST /apply_leave",
+                "history": "GET /api/leaves/<employee_id>",
+                "balance": "GET /api/leave-balance/<employee_id>/<leave_type>",
+                "test": "GET /test_connection"
+            },
+            "employees": {
+                "list": "GET /api/employees",
+                "create": "POST /api/employees",
+                "bulk_upload": "POST /api/employees/bulk"
+            },
+            "assets": {
+                "list": "GET /assets",
+                "create": "POST /assets",
+                "update": "PATCH /assets/update/<asset_id>",
+                "delete": "DELETE /assets/delete/<asset_id>"
+            },
+            "utility": {
+                "ping": "GET /ping",
+                "info": "GET /api/info"
+            }
+        }
+    }), 200
+
+
+@app.route('/api/leave-balance/raw/<employee_id>', methods=['GET'])
+def debug_leave_balance_raw(employee_id):
+    """Diagnostic: return the raw leave-balance row for an employee.
+    Useful to confirm column names and primary id when updates don't stick.
+    """
+    try:
+        token = get_access_token()
+        row = _fetch_leave_balance(token, employee_id)
+        return jsonify({
+            "success": True,
+            "employee_id": employee_id,
+            "entity_set": LEAVE_BALANCE_ENTITY_RESOLVED or LEAVE_BALANCE_ENTITY,
+            "row": row or {}
+        })
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+# ================== EMPLOYEE MASTER ROUTES ==================
+@app.route('/api/employees', methods=['GET'])
+def list_employees():
+    try:
+        print(f"\n{'='*60}")
+        print(f"[FETCH] LIST EMPLOYEES REQUEST")
+        print(f"{'='*60}")
+        token = get_access_token()
+        entity_set = get_employee_entity_set(token)
+        field_map = get_field_map(entity_set)
+        print(f"   [ORG] Entity Set: {entity_set}")
+        print(f"   🗺️ Field Map: {field_map}")
+        print(f"   [DATE] DOJ Field: {field_map.get('doj')}")
+        print(f"   [WARN] DEBUGGING: About to process employee records...")
+        import sys
+        sys.stdout.flush()
+        
+        # pagination params
+        page = int(request.args.get('page', 1))
+        page_size = int(request.args.get('pageSize', 5))
+        if page < 1:
+            page = 1
+        if page_size < 1:
+            page_size = 5
+        skip = (page - 1) * page_size
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json",
+            "OData-MaxVersion": "4.0",
+            "OData-Version": "4.0"
+        }
+        
+        # Build $select from available fields in this entity
+        select_list = [field_map[k] for k in ['id', 'fullname', 'firstname', 'lastname', 'email', 'contact', 'address', 'department', 'designation', 'doj', 'active', 'primary'] if field_map.get(k)]
+        if field_map.get('employee_flag'):
+            select_list.append(field_map['employee_flag'])
+        
+        # Only include alternate email fields for crc6f_employees table (not crc6f_table12s)
+        if entity_set == "crc6f_employees":
+            email_alts = ['crc6f_officialemail', 'crc6f_emailaddress', 'emailaddress', 'officialemail', 'crc6f_mail', 'crc6f_quotahours']
+            for alt in email_alts:
+                if alt not in select_list:
+                    select_list.append(alt)
+        select_fields = f"$select={','.join(select_list)}"
+        print(f"   [FETCH] DOJ field mapping: {field_map.get('doj')}")
+        print(f"   [FETCH] Select fields: {select_fields}")
+        # Fetch all records (or a large number) to support pagination
+        # Using a high limit to get all records since Dataverse doesn't support $skip well
+        fetch_count = 5000  # Fetch up to 5000 records (adjust if you have more employees)
+        top = f"$top={fetch_count}"
+        # Order by creation date descending to show newest first
+        orderby = f"$orderby=createdon desc"
+        url = f"{RESOURCE}/api/data/v9.2/{entity_set}?{select_fields}&{top}&{orderby}"
+        print(f"   [URL] Requesting: {url}")
+        resp = requests.get(url, headers=headers)
+        print(f"   [DATA] Response Status: {resp.status_code}")
+        if resp.status_code != 200:
+            # If 400, try a simpler request without $count/$orderby which can fail on some orgs
+            if resp.status_code == 400:
+                simple_url = f"{RESOURCE}/api/data/v9.2/{entity_set}?{select_fields}&$top={fetch_count}"
+                simple_headers = {
+                    "Authorization": f"Bearer {token}",
+                    "Accept": "application/json",
+                    "OData-MaxVersion": "4.0",
+                    "OData-Version": "4.0"
+                }
+                simple_resp = requests.get(simple_url, headers=simple_headers)
+                print(f"   [PROC] Fallback response status: {simple_resp.status_code}")
+                if simple_resp.status_code == 200:
+                    body = simple_resp.json()
+                    all_records = body.get("value", [])
+                    print(f"   [DATA] Found {len(all_records)} total records in Dataverse")
+                    # Slice for requested page
+                    start_idx = skip
+                    end_idx = start_idx + page_size
+                    records = all_records[start_idx:end_idx]
+                    items = []
+                    def _pick_email(rec: dict, field_map: dict):
+                        # Primary
+                        val = rec.get(field_map.get('email')) if field_map.get('email') else None
+                        def _is_email(v):
+                            return isinstance(v, str) and '@' in v and '.' in v
+                        if _is_email(val):
+                            return val
+                        # Common alternates
+                        for k in ['crc6f_officialemail', 'crc6f_emailaddress', 'emailaddress', 'officialemail', 'crc6f_mail', 'crc6f_quotahours']:
+                            v = rec.get(k)
+                            if _is_email(v):
+                                return v
+                        # Scan any field for an email-like string
+                        for k, v in rec.items():
+                            if _is_email(v):
+                                return v
+                        return val or ''
+
+                    for r in records:
+                        # Extract name fields based on table structure
+                        if field_map['fullname']:
+                            fullname = r.get(field_map['fullname'], '')
+                            parts = fullname.split(' ', 1)
+                            first_name = parts[0] if parts else ''
+                            last_name = parts[1] if len(parts) > 1 else ''
+                        else:
+                            first_name = r.get(field_map['firstname'], '')
+                            last_name = r.get(field_map['lastname'], '')
+                        
+                        # Read values directly from Dataverse fields (no swap needed)
+                        contact_from_db = r.get(field_map['contact'])
+                        address_from_db = r.get(field_map['address'])
+                        
+                        # Try multiple possible DOJ field names
+                        doj_value = r.get(field_map['doj'])
+                        original_doj_field = field_map['doj']
+                        print(f"   [SEARCH] Processing employee {r.get(field_map['id'])}, DOJ field: {original_doj_field}, value: {doj_value}")
+                        
+                        if not doj_value or doj_value == "Power BI Developer" or isinstance(doj_value, str) and not any(char.isdigit() for char in doj_value):
+                            # Try alternative field names - comprehensive list
+                            possible_doj_fields = [
+                                'crc6f_doj',
+                                'crc6f_dateofjoining', 
+                                'crc6f_joiningdate',
+                                'crc6f_joindate',
+                                'crc6f_date_of_joining',
+                                'crc6f_joining_date',
+                                'crc6f_startdate',
+                                'crc6f_hiredate',
+                                'crc6f_employmentstartdate'
+                            ]
+                            
+                            print(f"   [WARN] DOJ field '{original_doj_field}' returned invalid value: {doj_value}")
+                            print(f"   [SEARCH] Searching alternative fields in record...")
+                            
+                            for field_name in possible_doj_fields:
+                                if field_name in r:
+                                    test_value = r.get(field_name)
+                                    print(f"      Checking {field_name}: {test_value}")
+                                    # Check if this looks like a date (contains numbers, dashes, or slashes)
+                                    if test_value and isinstance(test_value, str) and (
+                                        any(char.isdigit() for char in test_value) and 
+                                        ('-' in test_value or '/' in test_value or 'T' in test_value)
+                                    ):
+                                        doj_value = test_value
+                                        print(f"   [OK] Found DOJ in field: {field_name} = {doj_value}")
+                                        break
+                                    elif test_value and not isinstance(test_value, str):
+                                        # Could be a date object
+                                        doj_value = test_value
+                                        print(f"   [OK] Found DOJ object in field: {field_name} = {doj_value}")
+                                        break
+                        
+                        # Debug DOJ values for first few records
+                        if len(items) < 3:
+                            print(f"   [SEARCH] Employee {r.get(field_map['id'])} DOJ debug:")
+                            print(f"      DOJ field name: {field_map['doj']}")
+                            print(f"      DOJ raw value: {doj_value}")
+                            print(f"      DOJ type: {type(doj_value)}")
+                            print(f"      All record keys: {list(r.keys())[:10]}...")  # Show first 10 keys
+                        
+                        items.append({
+                            "employee_id": r.get(field_map['id']),
+                            "record_guid": r.get(field_map.get('primary')) if field_map.get('primary') else None,
+                            "first_name": first_name,
+                            "last_name": last_name,
+                            "email": _pick_email(r, field_map),
+                            "contact_number": contact_from_db,
+                            "address": address_from_db,
+                            "department": r.get(field_map['department']),
+                            "designation": r.get(field_map['designation']),
+                            "doj": doj_value,
+                            "active": r.get(field_map['active']),
+                            "employee_flag": r.get(field_map.get('employee_flag'))
+                        })
+                    return jsonify({
+                        "success": True,
+                        "employees": items,
+                        "count": len(items),
+                        "total": len(all_records),
+                        "page": page,
+                        "pageSize": page_size,
+                        "note": "Client-side pagination (no $skip support)",
+                        "entitySet": entity_set
+                    })
+            # Bubble up Dataverse error details for debugging
+            try:
+                err_body = resp.json()
+            except Exception:
+                err_body = resp.text
+            return jsonify({
+                "success": False,
+                "error": f"Failed to fetch employees: {resp.status_code}",
+                "details": err_body,
+                "requestUrl": url,
+                "entitySet": entity_set
+            }), 500
+        body = resp.json()
+        all_records = body.get("value", [])
+        print(f"   [OK] Successfully retrieved {len(all_records)} records from Dataverse")
+        total_count = len(all_records)  # Total fetched so far
+        
+        # Slice records for the requested page (client-side pagination)
+        start_idx = skip
+        end_idx = start_idx + page_size
+        records = all_records[start_idx:end_idx]
+        
+        items = []
+        def _pick_email(rec: dict, field_map: dict):
+            # Primary
+            val = rec.get(field_map.get('email')) if field_map.get('email') else None
+            def _is_email(v):
+                return isinstance(v, str) and '@' in v and '.' in v
+            if _is_email(val):
+                return val
+            # Common alternates
+            for k in ['crc6f_officialemail', 'crc6f_emailaddress', 'emailaddress', 'officialemail', 'crc6f_mail', 'crc6f_quotahours']:
+                v = rec.get(k)
+                if _is_email(v):
+                    return v
+            # Scan any field for an email-like string
+            for k, v in rec.items():
+                if _is_email(v):
+                    return v
+            return val or ''
+
+        for idx, r in enumerate(records):
+            # Extract name fields based on table structure
+            if field_map['fullname']:
+                fullname = r.get(field_map['fullname'], '')
+                parts = fullname.split(' ', 1)
+                first_name = parts[0] if parts else ''
+                last_name = parts[1] if len(parts) > 1 else ''
+            else:
+                first_name = r.get(field_map['firstname'], '')
+                last_name = r.get(field_map['lastname'], '')
+            
+            # Read values directly from Dataverse fields (no swap needed)
+            contact_from_db = r.get(field_map['contact'])
+            address_from_db = r.get(field_map['address'])
+            
+            if idx < 2:  # Log first 2 records for debugging
+                print(f"[SEARCH] DEBUG - Employee {idx + 1} retrieval:")
+                print(f"   Dataverse {field_map['contact']} = {contact_from_db}")
+                print(f"   Dataverse {field_map['address']} = {address_from_db}")
+            
+            items.append({
+                "employee_id": r.get(field_map['id']),
+                "record_guid": r.get(field_map.get('primary')) if field_map.get('primary') else None,
+                "first_name": first_name,
+                "last_name": last_name,
+                "email": _pick_email(r, field_map),
+                "contact_number": contact_from_db,
+                "address": address_from_db,
+                "department": r.get(field_map['department']),
+                "designation": r.get(field_map['designation']),
+                "doj": r.get(field_map['doj']),
+                "active": r.get(field_map['active']),
+                "employee_flag": r.get(field_map.get('employee_flag'))
+            })
+        print(f"   [SEND] Returning {len(items)} items for page {page}")
+        print(f"{'='*60}\n")
+        return jsonify({
+            "success": True,
+            "employees": items,
+            "count": len(items),
+            "total": total_count,
+            "page": page,
+            "pageSize": page_size,
+            "entitySet": entity_set
+        })
+    except Exception as e:
+        print(f"   [ERROR] ERROR: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        print(f"{'='*60}\n")
+        msg = str(e) or ""
+        if "login.microsoftonline.com" in msg or "NameResolutionError" in msg:
+            print("   [WARN] Azure AD/Dataverse unreachable. Returning empty employee list for fallback.")
+            try:
+                page_size = int(request.args.get('pageSize', 5))
+            except Exception:
+                page_size = 5
+            return jsonify({
+                "success": True,
+                "employees": [],
+                "count": 0,
+                "total": 0,
+                "page": 1,
+                "pageSize": page_size,
+                "note": "Azure AD/Dataverse unreachable; returning empty list."
+            }), 200
+        return jsonify({"success": False, "error": str(e)}), 500
+# ============================================================
+# NEW ROUTE: Get full Employee Master list (No pagination)
+# ============================================================
+@app.route('/api/employees/all', methods=['GET'])
+def get_all_employees():
+    """
+    Return the complete employee master list for dropdowns, validation, or name lookups.
+    Does NOT affect the existing paginated list_employees() function.
+    """
+    try:
+        print(f"\n{'='*60}")
+        print("[FETCH] FETCHING FULL EMPLOYEE MASTER LIST (NO PAGINATION)")
+        print(f"{'='*60}")
+
+        # --- Auth + Metadata
+        token = get_access_token()
+        entity_set = get_employee_entity_set(token)
+        field_map = get_field_map(entity_set)
+
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json",
+            "OData-MaxVersion": "4.0",
+            "OData-Version": "4.0"
+        }
+
+        # --- Fetch up to 5000 employees safely
+        fetch_count = 5000
+        select_list = [
+            field_map[k]
+            for k in ['id', 'fullname', 'firstname', 'lastname',
+                      'email', 'department', 'designation', 'active']
+            if field_map.get(k)
+        ]
+
+        select_fields = f"$select={','.join(select_list)}"
+        url = f"{RESOURCE}/api/data/v9.2/{entity_set}?{select_fields}&$top={fetch_count}&$orderby=createdon desc"
+
+        print(f"[URL] Fetching from Dataverse: {url}")
+        resp = requests.get(url, headers=headers)
+        print(f"[DATA] Dataverse status: {resp.status_code}")
+
+        if resp.status_code != 200:
+            print(f"[ERROR] Dataverse error: {resp.text}")
+            return jsonify({
+                "success": False,
+                "error": f"Failed to fetch employees ({resp.status_code})",
+                "details": resp.text
+            }), 500
+
+        data = resp.json()
+        records = data.get("value", [])
+        print(f"[OK] Retrieved {len(records)} employee records")
+
+        employees = []
+        for rec in records:
+            # --- Extract name fields correctly
+            if field_map.get('fullname'):
+                fullname = rec.get(field_map['fullname'], '').strip()
+                parts = fullname.split(' ', 1)
+                first_name = parts[0] if parts else ''
+                last_name = parts[1] if len(parts) > 1 else ''
+            else:
+                first_name = rec.get(field_map.get('firstname'), '')
+                last_name = rec.get(field_map.get('lastname'), '')
+
+            employees.append({
+                "employee_id": rec.get(field_map.get('id')),
+                "first_name": first_name,
+                "last_name": last_name,
+                "email": rec.get(field_map.get('email')),
+                "department": rec.get(field_map.get('department')),
+                "designation": rec.get(field_map.get('designation')),
+                "active": rec.get(field_map.get('active')),
+            })
+
+        print(f"[SEND] Returning {len(employees)} total employees")
+        print(f"{'='*60}\n")
+
+        return jsonify({
+            "success": True,
+            "count": len(employees),
+            "employees": employees
+        }), 200
+
+    except Exception as e:
+        print(f"[ERROR] ERROR in /api/employees/all: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        print(f"{'='*60}\n")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route('/api/employees', methods=['POST'])
+def create_employee():
+    try:
+        token = get_access_token()
+        entity_set = get_employee_entity_set(token)
+        field_map = get_field_map(entity_set)
+        data = request.get_json(force=True)
+        
+        # Build payload based on table structure
+        payload = {}
+        
+        employee_id = (data.get("employee_id") or "").strip()
+        first_name = data.get("first_name", "")
+        last_name = data.get("last_name", "")
+        email = data.get("email", "")
+        designation = data.get("designation", "")
+        doj = data.get("doj")
+        contact_number = data.get("contact_number", "")
+        employee_flag = (data.get("employee_flag") or "Employee").strip() or "Employee"
+
+        # ==================== EXTERNAL DATA UPLOAD CATCH ====================
+        # Let Dataverse auto-number when no employee_id supplied
+        auto_generated_id = False
+        if not employee_id:
+            print(f"\n[PROC] No employee_id supplied — generating new ID")
+            employee_id = generate_employee_id()
+            auto_generated_id = True
+            print(f"   [ID] Generated Employee ID: {employee_id}")
+        else:
+            auto_generated_id = True
+
+        # Check for duplicate email or contact number
+        if email:
+            safe_email = email.strip().replace("'", "''")
+            check_url = f"{BASE_URL}/{entity_set}?$filter=crc6f_email eq '{safe_email}'"
+            check_response = requests.get(check_url, headers={"Authorization": f"Bearer {token}"})
+            if check_response.status_code == 200:
+                existing = check_response.json().get('value', [])
+                if existing:
+                    print(f"[WARN] Duplicate email found: {email}")
+                    return jsonify({"success": False, "error": f"Employee with email {email} already exists"}), 400
+        
+        if contact_number:
+            safe_contact = contact_number.strip().replace("'", "''")
+            check_url = f"{BASE_URL}/{entity_set}?$filter=crc6f_contactnumber eq '{safe_contact}'"
+            check_response = requests.get(check_url, headers={"Authorization": f"Bearer {token}"})
+            if check_response.status_code == 200:
+                existing = check_response.json().get('value', [])
+                if existing:
+                    print(f"[WARN] Duplicate contact number found: {contact_number}")
+                    return jsonify({"success": False, "error": f"Employee with contact number {contact_number} already exists"}), 400
+        # ==================== END EXTERNAL DATA UPLOAD CATCH ====================
+        
+        if field_map['id'] and employee_id:
+            payload[field_map['id']] = employee_id
+        
+        # Handle name fields
+        if field_map['fullname']:
+            # Combine first and last name into fullname
+            payload[field_map['fullname']] = f"{first_name} {last_name}".strip()
+        else:
+            if field_map['firstname']:
+                payload[field_map['firstname']] = first_name
+            if field_map['lastname']:
+                payload[field_map['lastname']] = last_name
+        
+        # Other fields
+        if field_map['email']:
+            payload[field_map['email']] = email
+        if field_map['contact']:
+            payload[field_map['contact']] = data.get("contact_number")
+        if field_map['address']:
+            payload[field_map['address']] = data.get("address")
+        if field_map['department']:
+            payload[field_map['department']] = data.get("department")
+        if field_map['designation']:
+            payload[field_map['designation']] = designation
+        if field_map['doj']:
+            payload[field_map['doj']] = doj
+        if field_map['active']:
+            # Convert boolean to string format expected by Dataverse
+            active_value = data.get("active")
+            if isinstance(active_value, bool):
+                payload[field_map['active']] = "Active" if active_value else "Inactive"
+            else:
+                # Handle string values
+                payload[field_map['active']] = "Active" if str(active_value).lower() in ['true', '1', 'active'] else "Inactive"
+        
+        # Employee flag (e.g., Intern / Employee)
+        if field_map.get('employee_flag') and employee_flag:
+            payload[field_map['employee_flag']] = employee_flag
+
+        # Calculate and add experience (years from DOJ to current date)
+        if field_map.get('experience') and doj:
+            experience = calculate_experience(doj)
+            payload[field_map['experience']] = str(experience)
+            print(f"   [DATA] Set experience: {experience} years")
+        
+        # Set quota hours to 9 for all employees
+        if field_map.get('quota_hours'):
+            payload[field_map['quota_hours']] = "9"
+            print(f"   [ALARM] Set quota hours: 9")
+        
+        created = create_record(entity_set, payload)
+        
+        # Auto-create login record for the new employee
+        if email:
+            try:
+                print(f"\n   [USER] Creating login record for {email}")
+                
+                # Check if login already exists
+                login_table = get_login_table(token)
+                headers_check = {
+                    "Authorization": f"Bearer {token}",
+                    "Accept": "application/json",
+                    "OData-MaxVersion": "4.0",
+                    "OData-Version": "4.0"
+                }
+                safe_email = email.strip().replace("'", "''")
+                check_url = f"{BASE_URL}/{login_table}?$top=1&$filter=crc6f_username eq '{safe_email}'"
+                resp_check = requests.get(check_url, headers=headers_check)
+                
+                login_exists = False
+                if resp_check.status_code == 200:
+                    existing_logins = resp_check.json().get("value", [])
+                    login_exists = len(existing_logins) > 0
+                    if login_exists:
+                        print(f"   ℹ️ Login already exists for {email}, skipping creation")
+                
+                if not login_exists:
+                    access_level = determine_access_level(designation)
+                    user_id = generate_user_id(employee_id, first_name)
+                    default_password = os.getenv("DEFAULT_USER_PASSWORD", "Temp@123")
+                    
+                    login_payload = {
+                        "crc6f_username": email,
+                        "crc6f_password": _hash_password(default_password),
+                        "crc6f_accesslevel": access_level,
+                        "crc6f_userid": user_id,
+                        "crc6f_employeename": f"{first_name} {last_name}".strip(),
+                        "crc6f_user_status": "Active",
+                        "crc6f_loginattempts": "0"
+                    }
+                    
+                    print(f"   [LOG] Login payload: {login_payload}")
+                    result = create_record(login_table, login_payload)
+                    print(f"   [OK] Login created: {email} | Access Level: {access_level} | User ID: {user_id}")
+                    print(f"   [FETCH] Create result: {result}")
+                    
+                    # Send login credentials email for external uploads
+                    if auto_generated_id:
+                        print(f"\n[MAIL] Sending login credentials email for external upload...")
+                        credentials = {
+                            'username': email,
+                            'password': default_password
+                        }
+                        employee_data = {
+                            'email': email,
+                            'firstname': first_name,
+                            'lastname': last_name,
+                            'employee_id': employee_id
+                        }
+                        send_login_credentials_email(employee_data, credentials)
+                        print(f"[OK] Login credentials email sent to {email}")
+            except Exception as login_err:
+                print(f"   [ERROR] Failed to create login record: {login_err}")
+                import traceback
+                traceback.print_exc()
+                # Don't fail employee creation if login creation fails
+        
+        # Auto-create leave balance record for the new employee
+        if employee_id:
+            try:
+                print(f"\n   [FETCH] Creating leave balance for {employee_id}")
+                
+                # Calculate experience if DOJ is provided
+                experience = 0
+                if doj:
+                    experience = calculate_experience(doj)
+                
+                # Get leave allocation based on experience
+                cl, sl, total, allocation_type = get_leave_allocation_by_experience(experience)
+                actual_total = cl + sl  # Actual total = CL + SL (no comp off initially)
+                
+                print(f"   [DATA] Experience: {experience} years -> {allocation_type}")
+                print(f"   [FETCH] Leave allocation: CL={cl}, SL={sl}, Total Quota={total}")
+                
+                leave_payload = {
+                    "crc6f_employeeid": employee_id,
+                    "crc6f_cl": str(cl),
+                    "crc6f_sl": str(sl),
+                    "crc6f_compoff": "0",
+                    "crc6f_total": str(total),
+                    "crc6f_actualtotal": str(actual_total),
+                    "crc6f_leaveallocationtype": allocation_type
+                }
+                
+                print(f"   [LOG] Leave balance payload: {leave_payload}")
+                print(f"   -> Target table: {LEAVE_BALANCE_ENTITY}")
+                result = create_record(LEAVE_BALANCE_ENTITY, leave_payload)
+                print(f"   [OK] Leave balance created for {employee_id}")
+                print(f"   [FETCH] Create result: {result}")
+            except Exception as leave_err:
+                print(f"   [ERROR] Failed to create leave balance: {leave_err}")
+                import traceback
+                traceback.print_exc()
+                # Don't fail employee creation if leave balance creation fails
+        
+        return jsonify({"success": True, "employee": created, "entitySet": entity_set}), 201
+    except Exception as e:
+        print(f"   [ERROR] Error creating employee: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+# ================== INTERN ROUTES ==================
+def _build_intern_select_fields(include_system=False):
+    base = {v for v in INTERN_FIELDS.values() if v}
+    if include_system:
+        base.update({"createdon", "modifiedon"})
+    else:
+        base.add("createdon")
+    return sorted(base)
+
+
+@app.route('/api/interns', methods=['GET'])
+def list_interns():
+    """List interns from Dataverse with simple pagination."""
+    try:
+        page = max(1, int(request.args.get('page', 1)))
+        page_size = max(1, int(request.args.get('pageSize', 10)))
+        skip = (page - 1) * page_size
+
+        token = get_access_token()
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json",
+            "OData-MaxVersion": "4.0",
+            "OData-Version": "4.0",
+        }
+        # 1) Resolve which employees are marked as "Intern" in the master table
+        intern_employee_ids = None
+        intern_employee_records = []
+
+        try:
+            emp_entity = get_employee_entity_set(token)
+            field_map = get_field_map(emp_entity)
+            emp_id_field = field_map.get("id") or "crc6f_employeeid"
+
+            emp_headers = {
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/json",
+                "OData-MaxVersion": "4.0",
+                "OData-Version": "4.0",
+            }
+
+            # Fetch all employees where crc6f_employeeflag = 'Intern'
+            emp_select_fields = {emp_id_field, "crc6f_employeeflag", "createdon"}
+            primary_field = field_map.get("primary")
+            if primary_field:
+                emp_select_fields.add(primary_field)
+            emp_select = "$select=" + ",".join(emp_select_fields)
+            emp_filter = "$filter=crc6f_employeeflag eq 'Intern'"
+            emp_url = f"{RESOURCE}/api/data/v9.2/{emp_entity}?{emp_select}&$top=5000&{emp_filter}"
+
+            emp_resp = requests.get(emp_url, headers=emp_headers, timeout=30)
+            if emp_resp.status_code == 200:
+                intern_employee_ids = set()
+                for er in emp_resp.json().get("value", []):
+                    flag_val = (er.get("crc6f_employeeflag") or "").strip().lower()
+                    if flag_val == "intern":
+                        emp_id_val = _normalize_employee_id(er.get(emp_id_field))
+                        if emp_id_val:
+                            intern_employee_ids.add(emp_id_val)
+                            intern_employee_records.append({
+                                "employee_id": emp_id_val,
+                                "created_on": er.get("createdon"),
+                            })
+            else:
+                print(f"[WARN] Failed to fetch employees with Intern flag: {emp_resp.status_code} {emp_resp.text}")
+                intern_employee_ids = None
+
+        except Exception as emp_err:
+            print(f"[WARN] Error while resolving Intern employees: {emp_err}")
+            intern_employee_ids = None
+
+        # 2) Fetch intern details table and keep only rows whose employee exists in the Intern set
+        select_fields = _build_intern_select_fields()
+        select_clause = ','.join(select_fields)
+        fetch_count = 5000
+        url = f"{RESOURCE}/api/data/v9.2/{INTERN_ENTITY}?$select={select_clause}&$top={fetch_count}&$orderby=createdon desc"
+
+        resp = requests.get(url, headers=headers, timeout=30)
+        if resp.status_code != 200:
+            return jsonify({
+                "success": False,
+                "error": f"Failed to fetch interns: {resp.status_code}",
+                "details": resp.text
+            }), 500
+
+        raw_records = resp.json().get("value", [])
+
+        # If we successfully loaded intern employee IDs, filter records by that set
+        if intern_employee_ids is not None:
+            all_records = []
+            existing_ids = set()
+            for rec in raw_records:
+                emp_id_val = _normalize_employee_id(rec.get(INTERN_FIELDS['employee_id']))
+                if emp_id_val and emp_id_val in intern_employee_ids:
+                    all_records.append(rec)
+                    existing_ids.add(emp_id_val)
+
+            # Add synthetic entries for flagged employees that don't yet have intern detail rows
+            for flagged in intern_employee_records:
+                fid = flagged.get("employee_id")
+                if not fid or fid in existing_ids:
+                    continue
+                synthetic = {
+                    INTERN_FIELDS['intern_id']: fid,
+                    INTERN_FIELDS['employee_id']: fid,
+                    "createdon": flagged.get("created_on") or datetime.utcnow().isoformat()
+                }
+                all_records.append(synthetic)
+        else:
+            # Fallback: no employee-filter available, keep all intern records
+            all_records = list(raw_records)
+
+        total_count = len(all_records)
+        records = all_records[skip: skip + page_size]
+
+        interns = []
+        for rec in records:
+            interns.append({
+                "intern_id": rec.get(INTERN_FIELDS['intern_id']),
+                "employee_id": rec.get(INTERN_FIELDS['employee_id']),
+                "record_id": rec.get(INTERN_FIELDS['primary']) or rec.get('crc6f_hr_interndetailsid'),
+                "created_on": rec.get('createdon'),
+            })
+
+        return jsonify({
+            "success": True,
+            "interns": interns,
+            "count": len(interns),
+            "total": total_count,
+            "page": page,
+            "pageSize": page_size
+        }), 200
+    except Exception as e:
+        print(f"[ERROR] list_interns failed: {e}")
+        traceback.print_exc()
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route('/api/interns/<intern_id>', methods=['GET'])
+def get_intern_detail(intern_id):
+    """Fetch a single intern record with phase breakdown."""
+    try:
+        token = get_access_token()
+        record = _fetch_intern_record_by_id(token, intern_id, include_system=True)
+        
+        # If no intern record found, check if this is an employee flagged as Intern
+        if not record:
+            try:
+                entity_set = get_employee_entity_set(token)
+                field_map = get_field_map(entity_set)
+                emp_id_field = field_map.get("id") or "crc6f_employeeid"
+                
+                emp_headers = {
+                    "Authorization": f"Bearer {token}",
+                    "Accept": "application/json",
+                    "OData-MaxVersion": "4.0",
+                    "OData-Version": "4.0",
+                }
+                
+                safe_id = (intern_id or '').replace("'", "''")
+                emp_filter = f"$filter={emp_id_field} eq '{safe_id}' and crc6f_employeeflag eq 'Intern'"
+                emp_url = f"{RESOURCE}/api/data/v9.2/{entity_set}?{emp_filter}&$top=1"
+                
+                emp_resp = requests.get(emp_url, headers=emp_headers, timeout=30)
+                if emp_resp.status_code == 200:
+                    emp_records = emp_resp.json().get("value", [])
+                    if emp_records:
+                        emp_rec = emp_records[0]
+                        record = {
+                            INTERN_FIELDS['intern_id']: intern_id,
+                            INTERN_FIELDS['employee_id']: intern_id,
+                            "createdon": emp_rec.get("createdon"),
+                            "_synthetic": True
+                        }
+            except Exception as emp_check_err:
+                print(f"[WARN] Failed to check employee flag for {intern_id}: {emp_check_err}")
+        
+        if not record:
+            return jsonify({"success": False, "error": "Intern not found"}), 404
+        formatted = _format_intern_record(record)
+
+        # Attach basic employee master details for sidebar card
+        try:
+            emp_id = formatted.get("employee_id")
+            if emp_id:
+                entity_set = get_employee_entity_set(token)
+                field_map = get_field_map(entity_set)
+                select_extra = []
+                for key in ["email", "contact", "address", "department", "designation", "doj", "fullname", "firstname", "lastname"]:
+                    logical = field_map.get(key)
+                    if logical:
+                        select_extra.append(logical)
+
+                emp_record = _fetch_employee_by_employee_id(token, emp_id, select_fields=select_extra)
+                if emp_record:
+                    full_name = ""
+                    first_name = ""
+                    last_name = ""
+                    if field_map.get("fullname"):
+                        full_name = emp_record.get(field_map["fullname"], "") or ""
+                        parts = full_name.split(" ", 1)
+                        first_name = parts[0] if parts else ""
+                        last_name = parts[1] if len(parts) > 1 else ""
+                    else:
+                        first_name = emp_record.get(field_map.get("firstname"), "") or ""
+                        last_name = emp_record.get(field_map.get("lastname"), "") or ""
+                        full_name = f"{first_name} {last_name}".strip()
+
+                    employee_details = {
+                        "employee_id": emp_record.get(field_map.get("id")),
+                        "first_name": first_name,
+                        "last_name": last_name,
+                        "full_name": full_name,
+                        "email": emp_record.get(field_map.get("email")),
+                        "contact_number": emp_record.get(field_map.get("contact")),
+                        "address": emp_record.get(field_map.get("address")),
+                        "designation": emp_record.get(field_map.get("designation")),
+                        "department": emp_record.get(field_map.get("department")),
+                        "doj": emp_record.get(field_map.get("doj")),
+                    }
+                    formatted["employee"] = employee_details
+        except Exception as emp_err:
+            print(f"[WARN] Failed to enrich intern {intern_id} with employee details: {emp_err}")
+
+        return jsonify({"success": True, "intern": formatted}), 200
+    except Exception as e:
+        print(f"[ERROR] get_intern_detail failed: {e}")
+        traceback.print_exc()
+        return jsonify({"success": False, "error": str(e)}), 500
+
 
 @app.route('/api/interns/<intern_id>', methods=['PATCH', 'PUT'])
 def update_intern(intern_id):
@@ -1710,8 +6245,54 @@ def update_intern(intern_id):
 
         token = get_access_token()
         record = _fetch_intern_record_by_id(token, intern_id, include_system=True)
+        
+        # If no intern record exists, check if this is an employee flagged as Intern
+        # and auto-create the intern record before updating
+        if not record:
+            try:
+                entity_set = get_employee_entity_set(token)
+                field_map = get_field_map(entity_set)
+                emp_id_field = field_map.get("id") or "crc6f_employeeid"
+                
+                emp_headers = {
+                    "Authorization": f"Bearer {token}",
+                    "Accept": "application/json",
+                    "OData-MaxVersion": "4.0",
+                    "OData-Version": "4.0",
+                }
+                
+                safe_id = (intern_id or '').replace("'", "''")
+                emp_filter = f"$filter={emp_id_field} eq '{safe_id}' and crc6f_employeeflag eq 'Intern'"
+                emp_url = f"{RESOURCE}/api/data/v9.2/{entity_set}?{emp_filter}&$top=1"
+                
+                emp_resp = requests.get(emp_url, headers=emp_headers, timeout=30)
+                if emp_resp.status_code == 200:
+                    emp_records = emp_resp.json().get("value", [])
+                    if emp_records:
+                        create_payload = {
+                            INTERN_FIELDS['intern_id']: intern_id,
+                            INTERN_FIELDS['employee_id']: intern_id,
+                        }
+                        create_url = f"{RESOURCE}/api/data/v9.2/{INTERN_ENTITY}"
+                        create_headers = {
+                            "Authorization": f"Bearer {token}",
+                            "Content-Type": "application/json",
+                            "Accept": "application/json",
+                            "Prefer": "return=representation"
+                        }
+                        create_resp = requests.post(create_url, headers=create_headers, json=create_payload, timeout=30)
+                        if create_resp.status_code in (200, 201, 204):
+                            record = _fetch_intern_record_by_id(token, intern_id, include_system=True)
+                            print(f"[INFO] Auto-created intern record for flagged employee {intern_id}")
+            except Exception as auto_create_err:
+                print(f"[WARN] Failed to auto-create intern record for {intern_id}: {auto_create_err}")
+        
         if not record:
             return jsonify({"success": False, "error": "Intern not found"}), 404
+
+        record_id = record.get(INTERN_FIELDS['primary']) or record.get('crc6f_hr_interndetailsid')
+        if not record_id:
+            return jsonify({"success": False, "error": "Unable to resolve intern record ID"}), 500
 
         payload = {}
         for friendly, logical in INTERN_FIELDS.items():
@@ -1722,29 +6303,10 @@ def update_intern(intern_id):
                 if value not in (None, ""):
                     payload[logical] = value
 
-        is_synthetic = bool(record.get('_synthetic'))
-        if not payload and not is_synthetic:
+        if not payload:
             return jsonify({"success": False, "error": "No valid fields to update"}), 400
 
-        if is_synthetic:
-            # Create real intern record from synthetic one
-            intern_field = INTERN_FIELDS['intern_id']
-            emp_field = INTERN_FIELDS['employee_id']
-            creation_payload = {
-                intern_field: record.get(intern_field) or intern_id,
-                emp_field: record.get(emp_field) or intern_id,
-            }
-            creation_payload.update(payload)
-            try:
-                print(f"[INTERN] Creating real intern record for synthetic: {creation_payload}")
-                _create_intern_record(token, creation_payload)
-            except Exception as create_err:
-                return jsonify({"success": False, "error": str(create_err)}), 500
-        else:
-            record_id = record.get(INTERN_FIELDS['primary']) or record.get('crc6f_hr_interndetailsid')
-            if not record_id:
-                return jsonify({"success": False, "error": "Unable to resolve intern record ID"}), 500
-            update_record(INTERN_ENTITY, record_id, payload)
+        update_record(INTERN_ENTITY, record_id, payload)
 
         updated = _fetch_intern_record_by_id(token, intern_id, include_system=True)
         formatted = _format_intern_record(updated) if updated else None
@@ -1753,6 +6315,10 @@ def update_intern(intern_id):
         print(f"[ERROR] update_intern failed: {e}")
         traceback.print_exc()
         return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route('/api/interns', methods=['POST'])
+def create_intern():
     """Create a new intern record in Dataverse."""
     try:
         data = request.get_json(force=True) or {}
