@@ -1305,10 +1305,12 @@ def _normalize_identifier(value: str) -> str:
 def _build_synthetic_intern_from_employee(token: str, identifier: str, include_system: bool = True):
     """Build a synthetic intern record from employee master if employee is flagged as Intern."""
     try:
+        print(f"[INTERN] Attempting to build synthetic intern for identifier: '{identifier}'")
         entity_set = get_employee_entity_set(token)
         field_map = get_field_map(entity_set)
         id_field = field_map.get("id") or "crc6f_employeeid"
         flag_field = field_map.get("employee_flag") or "crc6f_employeeflag"
+        print(f"[INTERN] Using entity_set={entity_set}, id_field={id_field}, flag_field={flag_field}")
 
         select_fields = {
             id_field,
@@ -1324,6 +1326,7 @@ def _build_synthetic_intern_from_employee(token: str, identifier: str, include_s
         select_clause = "$select=" + ",".join(sorted(select_fields))
         filter_clause = f"$filter={flag_field} eq 'Intern'"
         url = f"{RESOURCE}/api/data/v9.2/{entity_set}?{select_clause}&{filter_clause}&$top=5000"
+        print(f"[INTERN] Fetching flagged interns from: {url}")
 
         headers = {
             "Authorization": f"Bearer {token}",
@@ -1337,10 +1340,14 @@ def _build_synthetic_intern_from_employee(token: str, identifier: str, include_s
             print(f"[INTERN] Failed to fetch flagged interns from employee master: {resp.status_code} {resp.text}")
             return None
 
+        flagged_employees = resp.json().get("value", [])
+        print(f"[INTERN] Found {len(flagged_employees)} employees flagged as Intern")
+        
         identifier_norm = _normalize_identifier(identifier)
         identifier_digits = ''.join(ch for ch in identifier_norm if ch.isdigit())
+        print(f"[INTERN] Looking for identifier_norm='{identifier_norm}', digits='{identifier_digits}'")
 
-        for rec in resp.json().get("value", []):
+        for rec in flagged_employees:
             emp_id_raw = rec.get(id_field) or ''
             emp_id_norm = _normalize_identifier(emp_id_raw)
             emp_digits = ''.join(ch for ch in emp_id_norm if ch.isdigit())
@@ -1416,8 +1423,6 @@ def _fetch_intern_record_by_id(token: str, intern_id: str, include_system: bool 
 
     values = resp.json().get("value", [])
     print(f"[INTERN] Found {len(values)} intern records in Dataverse")
-    if not values:
-        return None
 
     # Log all intern IDs for debugging
     intern_id_field = INTERN_FIELDS['intern_id']
@@ -1495,73 +1500,9 @@ def _fetch_employee_by_employee_id(token: str, employee_id: str, select_fields=N
     if resp.status_code != 200:
         print(f"[WARN] Failed to fetch employee {employee_id}: {resp.status_code} {resp.text}")
         return None
-    try:
-        entity_set = get_employee_entity_set(token)
-        field_map = get_field_map(entity_set)
-        id_field = field_map.get("id") or "crc6f_employeeid"
-        flag_field = field_map.get("employee_flag") or "crc6f_employeeflag"
 
-        select_fields = {
-            id_field,
-            flag_field,
-            "createdon",
-            "modifiedon",
-        }
-        for key in ["email", "contact", "address", "department", "designation", "doj", "fullname", "firstname", "lastname"]:
-            logical = field_map.get(key)
-            if logical:
-                select_fields.add(logical)
-
-        select_clause = "$select=" + ",".join(sorted(select_fields))
-        filter_clause = f"$filter={flag_field} eq 'Intern'"
-        url = f"{RESOURCE}/api/data/v9.2/{entity_set}?{select_clause}&{filter_clause}&$top=5000"
-
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "Accept": "application/json",
-            "OData-MaxVersion": "4.0",
-            "OData-Version": "4.0"
-        }
-
-        resp = requests.get(url, headers=headers, timeout=30)
-        if resp.status_code != 200:
-            print(f"[INTERN] Failed to fetch flagged interns from employee master: {resp.status_code} {resp.text}")
-            return None
-
-        identifier_norm = _normalize_identifier(identifier)
-        identifier_digits = ''.join(ch for ch in identifier_norm if ch.isdigit())
-
-        for rec in resp.json().get("value", []):
-            emp_id_raw = rec.get(id_field) or ''
-            emp_id_norm = _normalize_identifier(emp_id_raw)
-            emp_digits = ''.join(ch for ch in emp_id_norm if ch.isdigit())
-
-            if not emp_id_norm:
-                continue
-
-            if emp_id_norm == identifier_norm or (emp_digits and emp_digits == identifier_digits):
-                synthetic = {}
-                for logical in INTERN_FIELDS.values():
-                    if logical:
-                        synthetic[logical] = None
-                intern_field = INTERN_FIELDS['intern_id']
-                emp_field = INTERN_FIELDS['employee_id']
-                synthetic[intern_field] = rec.get(id_field) or identifier
-                synthetic[emp_field] = rec.get(id_field)
-                synthetic['createdon'] = rec.get('createdon') or datetime.utcnow().isoformat()
-                if include_system:
-                    synthetic['modifiedon'] = rec.get('modifiedon') or synthetic['createdon']
-
-                # flag for downstream logic
-                synthetic['_synthetic'] = True
-                synthetic['_employee_record'] = rec
-                synthetic['_employee_entity_set'] = entity_set
-                return synthetic
-
-        return None
-    except Exception as err:
-        print(f"[INTERN] Failed to synthesize intern from employee: {err}")
-        return None
+    values = resp.json().get('value', [])
+    return values[0] if values else None
 
 
 def _fetch_login_by_username(username: str, token: str, headers: dict):
