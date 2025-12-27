@@ -346,7 +346,24 @@ const restoreTimerFromBackend = async (uid, storageKeyToClear = null, requestExp
             return true;
         }
 
-        if (requestExpiryAlert) {
+        const totalSeconds = Math.max(0, Number(statusData.total_seconds_today || 0));
+        state.timer.isRunning = false;
+        state.timer.startTime = null;
+        state.timer.lastDuration = totalSeconds;
+        updateTimerDisplay();
+        if (totalSeconds > 0) {
+            try {
+                const today = new Date();
+                const dateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+                persistTimerState(uid, {
+                    isRunning: false,
+                    startTime: null,
+                    date: dateStr,
+                    mode: 'stopped',
+                    durationSeconds: totalSeconds,
+                });
+            } catch {}
+        } else if (requestExpiryAlert) {
             showExpiryAlert = true;
         }
     } catch (err) {
@@ -362,7 +379,9 @@ const restoreTimerFromBackend = async (uid, storageKeyToClear = null, requestExp
     }
     state.timer.isRunning = false;
     state.timer.startTime = null;
-    state.timer.lastDuration = 0;
+    if (state.timer.lastDuration <= 0) {
+        state.timer.lastDuration = 0;
+    }
     updateTimerButton();
     return false;
 };
