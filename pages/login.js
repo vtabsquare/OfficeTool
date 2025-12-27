@@ -886,6 +886,7 @@ import { deriveRoleInfo } from '../utils/accessHelpers.js';
 import { state } from "../state.js";
 import { listEmployees } from "../features/employeeApi.js";
 import { startNotificationPolling } from "../features/notificationApi.js";
+import { loadTimerState, updateTimerButton } from "../features/timer.js";
 
 export const renderLoginPage = () => {
   const content = `
@@ -1656,6 +1657,13 @@ export const renderLoginPage = () => {
         }
       } catch {}
 
+      try {
+        await loadTimerState();
+        updateTimerButton();
+      } catch (timerErr) {
+        console.warn("Timer restore after login failed:", timerErr);
+      }
+
       startNotificationPolling();
 
       setTimeout(() => {
@@ -1819,6 +1827,12 @@ export const renderLoginPage = () => {
               localStorage.setItem("role", role);
             } catch {}
             startNotificationPolling();
+            try {
+              await loadTimerState();
+              updateTimerButton();
+            } catch (timerErr2) {
+              console.warn("Timer restore after auto-login failed:", timerErr2);
+            }
             setTimeout(() => {
               const appContent = document.getElementById("app-content");
               if (appContent) appContent.classList.add("page-exit-anim");
