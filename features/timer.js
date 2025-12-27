@@ -297,8 +297,26 @@ export const updateTimerButton = () => {
             timerBtn.classList.add('check-in');
             timerBtn.innerHTML = `<span id="timer-display">00:00:00</span> CHECK IN`;
         }
-        updateTimerDisplay();
+
+        if (showExpiryAlert) {
+            alert('Your previous check-in session has expired. Please check in again.');
+        }
+    } catch (err) {
+        console.warn('Failed to restore timer from backend:', err);
     }
+
+    state.timer.isRunning = false;
+    state.timer.startTime = null;
+    state.timer.lastDuration = 0;
+    if (state.timer.intervalId) {
+        clearInterval(state.timer.intervalId);
+        state.timer.intervalId = null;
+    }
+    if (storageKeyToClear) {
+        try { localStorage.removeItem(storageKeyToClear); } catch {}
+    }
+    updateTimerButton();
+    return false;
 };
 
 export const loadTimerState = async () => {
@@ -317,12 +335,18 @@ export const loadTimerState = async () => {
     } catch {
         raw = null;
     }
-    if (!raw) return;
+    if (!raw) {
+        await restoreTimerFromBackend(uid);
+        return;
+    }
 
     let parsed;
     try {
         parsed = JSON.parse(raw);
     } catch {
+        state.timer.isRunning = false;
+        state.timer.startTime = null;
+        state.timer.lastDuration = 0;
         try { if (storageKey) localStorage.removeItem(storageKey); } catch {}
         return;
     }
@@ -346,9 +370,10 @@ export const loadTimerState = async () => {
     if (mode === 'running' && startTime) {
         if (!uid) return;
         try {
-            console.log(`🔍 Verifying check-in status for: ${uid}`);
+            console.log(` Verifying check-in status for: ${uid}`);
             const base = (API_BASE_URL || 'http://localhost:5000').replace(/\/$/, '');
             const response = await fetch(`${base}/api/status/${uid}`);
+
             const statusData = await response.json();
 
             if (statusData.checked_in) {
@@ -368,32 +393,63 @@ export const loadTimerState = async () => {
                 }
 
                 state.timer.isRunning = true;
-                state.timer.startTime = startTime;
+                state.timer.startTime =
+                    backendElapsed !== null
+                        ? Date.now() - backendElapsed * 1000
+                        : startTime;
                 // Prefer backend-derived base seconds; fall back to local cached duration
                 state.timer.lastDuration =
                     baseFromBackend !== null ? baseFromBackend : (durationSeconds || 0);
+                if (state.timer.intervalId) clearInterval(state.timer.intervalId);
                 state.timer.intervalId = setInterval(updateTimerDisplay, 1000);
-                console.log('✅ Timer state restored - user is checked in');
+                updateTimerButton();
+                console.log(' Timer state restored - user is checked in');
             } else {
                 state.timer.isRunning = false;
                 state.timer.startTime = null;
                 state.timer.lastDuration = 0;
                 try { if (storageKey) localStorage.removeItem(storageKey); } catch {}
-                console.log('⚠️ Timer state cleared - user is not checked in');
+
+                console.log(' Timer state cleared - user is not checked in');
                 alert('Your previous check-in session has expired. Please check in again.');
             }
         } catch (err) {
             console.warn('Failed to verify check-in status:', err);
-            state.timer.isRunning = false;
-            state.timer.startTime = null;
-            state.timer.lastDuration = 0;
-            try { if (storageKey) localStorage.removeItem(storageKey); } catch {}
-            console.log('⚠️ Timer state cleared due to verification failure');
+            await restoreTimerFromBackend(uid, storageKey);
         }
+    } else if (mode === 'running' && !startTime) {
+        await restoreTimerFromBackend(uid, storageKey);
+        return;
     } else if (mode === 'stopped' && durationSeconds > 0) {
         state.timer.isRunning = false;
         state.timer.startTime = null;
         state.timer.lastDuration = durationSeconds;
+        updateTimerDisplay();
+    } else {
+        await restoreTimerFromBackend(uid, storageKey);
+    }
+};
+
+export const handleTimerClick = () => {
+    if (state.timer.isRunning) {
+        stopTimer();
+    } else {
+        startTimer();
+    }
+};
+
+export const updateTimerButton = () => {
+    const timerBtn = document.getElementById('timer-btn');
+    if (timerBtn) {
+        if (state.timer.isRunning) {
+            timerBtn.classList.remove('check-in');
+            timerBtn.classList.add('check-out');
+            timerBtn.innerHTML = `<span id="timer-display"></span> CHECK OUT`;
+        } else {
+            timerBtn.classList.remove('check-out');
+            timerBtn.classList.add('check-in');
+            timerBtn.innerHTML = `<span id="timer-display">00:00:00</span> CHECK IN`;
+        }
         updateTimerDisplay();
     }
 };
