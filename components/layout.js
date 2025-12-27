@@ -7,8 +7,10 @@ export const getSidebarHTML = () => {
     
     return `
     <div class="sidebar-header">
-        <div class="sidebar-logo">VS</div>
-        <span class="sidebar-title">VTAB SQUARE</span>
+        <a href="#/" class="sidebar-brand nav-link" data-page="home">
+            <div class="sidebar-logo">VS</div>
+            <span class="sidebar-title">VTAB SQUARE</span>
+        </a>
     </div>
     <ul class="sidebar-nav">
         <li><p class="nav-section-title">APPLICATIONS</p></li>

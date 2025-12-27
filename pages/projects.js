@@ -183,8 +183,6 @@ const renderList = () => {
       <td>${p.start || "."}</td>
       <td>${p.end || "."}</td>
       <td class="actions-cell">
-        <button class="icon-btn action-btn edit proj-edit" data-id="${p._recordId
-        }"><i class="fa-solid fa-pen-to-square"></i></button>
         <button class="icon-btn action-btn delete proj-del" data-id="${p._recordId
         }"><i class="fa-solid fa-trash"></i></button>
       </td>
@@ -226,8 +224,6 @@ const renderList = () => {
           </div>
         </div>
         <div class="project-card-footer">
-          <button class="icon-btn action-btn edit proj-edit" data-id="${p._recordId
-        }"><i class="fa-solid fa-pen-to-square"></i></button>
           <button class="icon-btn action-btn delete proj-del" data-id="${p._recordId
         }"><i class="fa-solid fa-trash"></i></button>
         </div>

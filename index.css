@@ -5217,6 +5217,35 @@ body.dark-theme .filter-chip-count {
   border-bottom: none;
 }
 
+.holidays-table-container .mytasks-room-card:last-child {
+  border-bottom: none;
+}
+
+/* Task link button (My Tasks) */
+.task-link {
+  border: none;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: var(--text-primary);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.task-link:hover {
+  color: var(--primary-color);
+}
+
+.task-link:focus-visible {
+  outline: 2px solid var(--primary-color);
+  outline-offset: 2px;
+}
+
+body.dark-theme .task-link {
+  color: var(--text-primary);
+}
+
 .holidays-table-container .table th,
 .holidays-table-container .table td {
   padding: 14px 16px;
@@ -5232,6 +5261,9 @@ body.dark-theme .filter-chip-count {
 .holidays-table-container .table th:nth-child(2),
 .holidays-table-container .table td:nth-child(2) {
   width: auto;
+}
+.holidays-table-container .table thead th:nth-child(2) {
+  padding-left: 48px;
 }
 
 .holidays-table-container .table th:nth-child(3),
