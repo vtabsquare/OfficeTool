@@ -380,7 +380,7 @@ const ensureTimerStatusPolling = () => {
 };
 
 export const loadTimerState = async () => {
-    let uid = String(state.user.id || '').toUpperCase();
+    const uid = String(state.user.id || '').toUpperCase();
     if (uid) {
         ensureTimerStatusPolling();
     }
