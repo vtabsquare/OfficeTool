@@ -86,7 +86,13 @@ app.post("/emit", (req, res) => {
           const room = `attendance:${uid}`;
 
           const attendanceModule = require("./attendance_module");
-          delete attendanceModule.activeTimers[uid];
+          // Preserve last stopped state so new device logins don't reset to 0.
+          attendanceModule.activeTimers[uid] = {
+            isRunning: false,
+            checkoutTime,
+            totalSeconds: typeof totalSeconds === 'number' ? totalSeconds : 0,
+            status: status || attendanceModule.deriveStatus(typeof totalSeconds === 'number' ? totalSeconds : 0),
+          };
 
           io.to(room).emit("attendance:stopped", {
             employee_id: uid,

@@ -57,6 +57,14 @@ module.exports = (io) => {
           serverNow: now,
         });
         console.log(`[ATTENDANCE] Sent sync to ${uid}: running, totalSeconds=${totalSeconds}`);
+      } else if (timer && timer.isRunning === false) {
+        socket.emit('attendance:sync', {
+          employee_id: uid,
+          isRunning: false,
+          totalSeconds: typeof timer.totalSeconds === 'number' ? timer.totalSeconds : 0,
+          status: timer.status || deriveStatus(typeof timer.totalSeconds === 'number' ? timer.totalSeconds : 0),
+          serverNow: Date.now(),
+        });
       } else {
         socket.emit('attendance:sync', {
           employee_id: uid,
@@ -109,8 +117,14 @@ module.exports = (io) => {
       const uid = String(employee_id).trim().toUpperCase();
       const room = `attendance:${uid}`;
 
-      // Clear from memory
-      delete activeTimers[uid];
+      // Preserve last stopped state in memory so new devices/reconnects don't reset to 0
+      // This is essential for pause/resume semantics across devices.
+      activeTimers[uid] = {
+        isRunning: false,
+        checkoutTime,
+        totalSeconds: typeof totalSeconds === 'number' ? totalSeconds : 0,
+        status: status || deriveStatus(typeof totalSeconds === 'number' ? totalSeconds : 0),
+      };
 
       // Broadcast to all devices of this user
       io.to(room).emit('attendance:stopped', {
@@ -148,6 +162,14 @@ module.exports = (io) => {
           status,
           checkinTime: timer.checkinTime,
           serverNow: now,
+        });
+      } else if (timer && timer.isRunning === false) {
+        socket.emit('attendance:sync', {
+          employee_id: uid,
+          isRunning: false,
+          totalSeconds: typeof timer.totalSeconds === 'number' ? timer.totalSeconds : 0,
+          status: timer.status || deriveStatus(typeof timer.totalSeconds === 'number' ? timer.totalSeconds : 0),
+          serverNow: Date.now(),
         });
       } else {
         socket.emit('attendance:sync', {
