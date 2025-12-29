@@ -3,6 +3,58 @@ import { checkIn, checkOut } from './attendanceApi.js';
 import { API_BASE_URL } from '../config.js';
 import { renderMyAttendancePage } from '../pages/attendance.js';
 
+const HALF_DAY_SECONDS = 4 * 3600;
+const FULL_DAY_SECONDS = 9 * 3600;
+
+const deriveAttendanceStatusFromSeconds = (seconds = 0) => {
+    if (seconds >= FULL_DAY_SECONDS) return 'P';
+    if (seconds >= HALF_DAY_SECONDS) return 'HL';
+    return 'A';
+};
+
+const ensureTodayAttendanceRecord = () => {
+    const uid = String(state.user.id || '').toUpperCase();
+    if (!uid) return null;
+    const today = new Date();
+    const day = today.getDate();
+    state.attendanceData[uid] = state.attendanceData[uid] || {};
+    state.attendanceData[uid][day] = state.attendanceData[uid][day] || { day };
+    return {
+        uid,
+        today,
+        day,
+        record: state.attendanceData[uid][day],
+    };
+};
+
+const maybeUpdateLiveAttendanceStatus = (totalSeconds = 0, { force = false } = {}) => {
+    if (!force && !state.timer.isRunning) return;
+    const info = ensureTodayAttendanceRecord();
+    if (!info) return;
+
+    const nextStatus = deriveAttendanceStatusFromSeconds(totalSeconds);
+    if (state.timer.lastAutoStatus === nextStatus) return;
+
+    const { record, day, uid } = info;
+
+    state.timer.lastAutoStatus = nextStatus;
+    record.day = day;
+    record.status = nextStatus;
+    record.totalHours = Number((totalSeconds / 3600).toFixed(2));
+    record.durationSeconds = totalSeconds;
+
+    // Preserve existing metadata (check-in/out timestamps) if present
+    state.attendanceData[uid][day] = record;
+
+    if (window.location.hash === '#/attendance-my') {
+        try {
+            renderMyAttendancePage();
+        } catch (err) {
+            console.warn('Failed to refresh attendance view during live status update', err);
+        }
+    }
+};
+
 /**
  * Get current geolocation from browser.
  * Returns { lat, lng, accuracy_m } or null if unavailable/denied.
@@ -68,6 +120,7 @@ export const updateTimerDisplay = () => {
     if (!timerDisplay) return;
 
     let totalSeconds = 0;
+
     if (state.timer.isRunning && state.timer.startTime) {
         const elapsed = Math.floor((Date.now() - state.timer.startTime) / 1000);
         const base = typeof state.timer.lastDuration === 'number' ? state.timer.lastDuration : 0;
@@ -80,13 +133,15 @@ export const updateTimerDisplay = () => {
     const minutes = String(Math.floor((totalSeconds % 3600) / 60)).padStart(2, '0');
     const hours = String(Math.floor(totalSeconds / 3600)).padStart(2, '0');
     timerDisplay.textContent = `${hours}:${minutes}:${seconds}`;
+
+    maybeUpdateLiveAttendanceStatus(totalSeconds);
 };
 
 const startTimer = async () => {
     // ⚡ OPTIMISTIC UI UPDATE - Start timer INSTANTLY on click
     const clickTime = Date.now();
     const previousSeconds = typeof state.timer.lastDuration === 'number' ? state.timer.lastDuration : 0;
-    
+
     // Immediately update UI state
     state.timer.isRunning = true;
     state.timer.startTime = clickTime;
@@ -95,59 +150,66 @@ const startTimer = async () => {
     state.timer.intervalId = setInterval(updateTimerDisplay, 1000);
     updateTimerButton();
     updateTimerDisplay();
-    
+
     // Save optimistic state to localStorage
     const uid = String(state.user.id || '').toUpperCase();
     const today = new Date();
     const dateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
     try {
-        persistTimerState(uid, {
+        const payload = {
             isRunning: true,
             startTime: clickTime,
             date: dateStr,
             mode: 'running',
             durationSeconds: previousSeconds,
-        });
+        };
+        localStorage.setItem(uid ? `timerState_${uid}` : 'timerState', JSON.stringify(payload));
     } catch {}
-    
+
     // 🌐 Background: Capture location and call API (non-blocking)
     (async () => {
         try {
             // Get location in background (don't block UI)
             const location = await getGeolocation();
-            
+
             // Call backend check-in
             const { record_id, checkin_time, total_seconds_today } = await checkIn(state.user.id, location);
-            
+
             // Sync with backend data if needed
             const backendSeconds = Number(total_seconds_today || 0);
             if (backendSeconds > previousSeconds) {
                 state.timer.lastDuration = backendSeconds;
                 // Update localStorage with corrected duration
-                persistTimerState(uid, {
-                    isRunning: true,
-                    startTime: clickTime,
-                    date: dateStr,
-                    mode: 'running',
-                    durationSeconds: backendSeconds,
-                });
+                try {
+                    const payload = {
+                        isRunning: true,
+                        startTime: clickTime,
+                        date: dateStr,
+                        mode: 'running',
+                        durationSeconds: backendSeconds,
+                    };
+                    localStorage.setItem(uid ? `timerState_${uid}` : 'timerState', JSON.stringify(payload));
+                } catch {}
+                maybeUpdateLiveAttendanceStatus(state.timer.lastDuration, { force: true });
             }
-            
+
             console.log('✅ Check-in confirmed by backend:', checkin_time);
-            
+
             // Update attendance state for today
             const day = today.getDate();
             state.attendanceData[uid] = state.attendanceData[uid] || {};
             state.attendanceData[uid][day] = {
                 ...(state.attendanceData[uid][day] || {}),
                 day,
-                status: 'P',
+                status: deriveAttendanceStatusFromSeconds(typeof state.timer.lastDuration === 'number' ? state.timer.lastDuration : backendSeconds),
                 checkIn: checkin_time,
                 isLate: false,
                 isManual: false,
                 isPending: false,
             };
-            
+            state.timer.lastAutoStatus = state.attendanceData[uid][day].status;
+            maybeUpdateLiveAttendanceStatus(state.timer.lastDuration || 0, { force: true });
+
             // Refresh attendance page if user is on it
             if (window.location.hash === '#/attendance-my') {
                 renderMyAttendancePage();
@@ -159,7 +221,11 @@ const startTimer = async () => {
             state.timer.isRunning = false;
             state.timer.startTime = null;
             state.timer.intervalId = null;
-            try { localStorage.removeItem(uid ? `timerState_${uid}` : 'timerState'); } catch {}
+            state.timer.lastAutoStatus = null;
+            try {
+                localStorage.removeItem(uid ? `timerState_${uid}` : 'timerState');
+            } catch {}
+
             updateTimerButton();
             updateTimerDisplay();
             alert(`Check-in failed: ${e.message || e}`);
@@ -176,39 +242,41 @@ const stopTimer = async () => {
         localElapsed = Math.max(0, Math.floor((clickTime - Number(state.timer.startTime)) / 1000));
     }
     const localTotal = baseBefore + localElapsed;
-    
+
     // Immediately update UI state
     if (state.timer.intervalId) clearInterval(state.timer.intervalId);
     state.timer.isRunning = false;
     state.timer.intervalId = null;
     state.timer.startTime = null;
     state.timer.lastDuration = localTotal;
+    maybeUpdateLiveAttendanceStatus(localTotal, { force: true });
     updateTimerButton();
     updateTimerDisplay();
-    
+
     // Save optimistic state to localStorage
     const uid = String(state.user.id || '').toUpperCase();
     const today = new Date();
     const dateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
     try {
-        persistTimerState(uid, {
+        const payload = {
             isRunning: false,
             startTime: null,
             date: dateStr,
             mode: 'stopped',
             durationSeconds: localTotal,
-        });
+        };
+        localStorage.setItem(uid ? `timerState_${uid}` : 'timerState', JSON.stringify(payload));
     } catch {}
-    
+
     // 🌐 Background: Capture location and call API (non-blocking)
     (async () => {
         try {
             // Get location in background (don't block UI)
             const location = await getGeolocation();
-            
+
             // Call backend check-out
             const { checkout_time, duration, total_hours, total_seconds_today } = await checkOut(state.user.id, location);
-            
+
             let backendTotal = 0;
             if (typeof total_seconds_today === 'number' && total_seconds_today > 0) {
                 backendTotal = Math.floor(total_seconds_today);
@@ -226,34 +294,40 @@ const stopTimer = async () => {
                 }
                 backendTotal = candidate;
             }
-            
+
             // Sync with backend if it has a larger total
             const lastSeconds = Math.max(localTotal, backendTotal || 0);
             if (lastSeconds > localTotal) {
                 state.timer.lastDuration = lastSeconds;
-                persistTimerState(uid, {
-                    isRunning: false,
-                    startTime: null,
-                    date: dateStr,
-                    mode: 'stopped',
-                    durationSeconds: lastSeconds,
-                });
+                try {
+                    const payload = {
+                        isRunning: false,
+                        startTime: null,
+                        date: dateStr,
+                        mode: 'stopped',
+                        durationSeconds: lastSeconds,
+                    };
+                    localStorage.setItem(uid ? `timerState_${uid}` : 'timerState', JSON.stringify(payload));
+                } catch {}
                 updateTimerDisplay();
             }
-            
+            const finalStatus = deriveAttendanceStatusFromSeconds(Math.max(state.timer.lastDuration || 0, lastSeconds || 0));
+            state.timer.lastAutoStatus = finalStatus;
+            maybeUpdateLiveAttendanceStatus(state.timer.lastDuration || 0, { force: true });
+
             console.log('✅ Check-out confirmed by backend:', checkout_time);
-            
+
             // Update attendance state for today
             const day = today.getDate();
             state.attendanceData[uid] = state.attendanceData[uid] || {};
             state.attendanceData[uid][day] = {
                 ...(state.attendanceData[uid][day] || {}),
                 day,
-                status: 'P',
+                status: finalStatus,
                 checkOut: checkout_time,
                 totalHours: total_hours,
             };
-            
+
             // Refresh attendance page if user is on it
             if (window.location.hash === '#/attendance-my') {
                 renderMyAttendancePage();
@@ -276,134 +350,23 @@ export const handleTimerClick = () => {
 };
 
 export const updateTimerButton = () => {
-    try {
-        const timerBtn = document.getElementById('timer-btn');
-        if (timerBtn) {
-            if (state.timer.isRunning) {
-                timerBtn.classList.remove('check-in');
-                timerBtn.classList.add('check-out');
-                timerBtn.innerHTML = `<span id="timer-display"></span> CHECK OUT`;
-            } else {
-                timerBtn.classList.remove('check-out');
-                timerBtn.classList.add('check-in');
-                timerBtn.innerHTML = `<span id="timer-display">00:00:00</span> CHECK IN`;
-            }
-
-            if (showExpiryAlert) {
-                alert('Your previous check-in session has expired. Please check in again.');
-                showExpiryAlert = false;
-            }
+    const timerBtn = document.getElementById('timer-btn');
+    if (timerBtn) {
+        if (state.timer.isRunning) {
+            timerBtn.classList.remove('check-in');
+            timerBtn.classList.add('check-out');
+            timerBtn.innerHTML = `<span id="timer-display"></span> CHECK OUT`;
+        } else {
+            timerBtn.classList.remove('check-out');
+            timerBtn.classList.add('check-in');
+            timerBtn.innerHTML = `<span id="timer-display">00:00:00</span> CHECK IN`;
         }
         updateTimerDisplay();
-    } catch (err) {
-        console.warn('Failed to update timer button:', err);
     }
-};
-
-let showExpiryAlert = false;
-let timerStatusInterval = null;
-const TIMER_STATUS_INTERVAL_MS = 30000;
-
-const persistTimerState = (uid, payload) => {
-    if (!uid) return;
-    try {
-        localStorage.setItem(`timerState_${uid}`, JSON.stringify(payload));
-    } catch {}
-};
-
-const restoreTimerFromBackend = async (uid, storageKeyToClear = null, requestExpiryAlert = false) => {
-
-    if (!uid) return false;
-    try {
-        const base = (API_BASE_URL || 'http://localhost:5000').replace(/\/$/, '');
-        const response = await fetch(`${base}/api/status/${uid}`);
-        if (!response.ok) throw new Error(`Status fetch failed: ${response.status}`);
-        const statusData = await response.json();
-
-        if (statusData.checked_in) {
-            const elapsedSeconds = Math.max(0, Number(statusData.elapsed_seconds || 0));
-            const totalSeconds = Math.max(0, Number(statusData.total_seconds_today || 0));
-            const baselineSeconds = Math.max(0, totalSeconds - elapsedSeconds);
-            const derivedStart = Date.now() - elapsedSeconds * 1000;
-
-            if (state.timer.intervalId) clearInterval(state.timer.intervalId);
-            state.timer.isRunning = true;
-            state.timer.startTime = derivedStart;
-            state.timer.lastDuration = baselineSeconds;
-            state.timer.intervalId = setInterval(updateTimerDisplay, 1000);
-
-            const today = new Date();
-            const dateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-            persistTimerState(uid, {
-                isRunning: true,
-                startTime: derivedStart,
-                date: dateStr,
-                mode: 'running',
-                durationSeconds: baselineSeconds,
-            });
-            showExpiryAlert = false;
-            updateTimerButton();
-            return true;
-        }
-
-        const totalSeconds = Math.max(0, Number(statusData.total_seconds_today || 0));
-        state.timer.isRunning = false;
-        state.timer.startTime = null;
-        state.timer.lastDuration = totalSeconds;
-        updateTimerDisplay();
-        if (totalSeconds > 0) {
-            try {
-                const today = new Date();
-                const dateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-                persistTimerState(uid, {
-                    isRunning: false,
-                    startTime: null,
-                    date: dateStr,
-                    mode: 'stopped',
-                    durationSeconds: totalSeconds,
-                });
-            } catch {}
-        } else if (requestExpiryAlert) {
-            showExpiryAlert = true;
-        }
-    } catch (err) {
-        console.warn('Failed to restore timer from backend:', err);
-    }
-
-    if (storageKeyToClear) {
-        try { localStorage.removeItem(storageKeyToClear); } catch {}
-    }
-    if (state.timer.intervalId) {
-        clearInterval(state.timer.intervalId);
-        state.timer.intervalId = null;
-    }
-    state.timer.isRunning = false;
-    state.timer.startTime = null;
-    if (state.timer.lastDuration <= 0) {
-        state.timer.lastDuration = 0;
-    }
-    updateTimerButton();
-    return false;
-};
-
-const ensureTimerStatusPolling = () => {
-    if (timerStatusInterval) return;
-    const uid = String(state.user.id || '').toUpperCase();
-    if (!uid) return;
-    const poll = async () => {
-        await restoreTimerFromBackend(uid, null, false);
-    };
-    timerStatusInterval = setInterval(() => {
-        poll().catch((err) => console.warn('Timer status poll failed:', err));
-    }, TIMER_STATUS_INTERVAL_MS);
 };
 
 export const loadTimerState = async () => {
-    const uid = String(state.user.id || '').toUpperCase();
-    if (uid) {
-        ensureTimerStatusPolling();
-    }
-
+    let uid = String(state.user.id || '').toUpperCase();
     let storageKey = null;
     let raw = null;
     try {
@@ -418,17 +381,13 @@ export const loadTimerState = async () => {
     } catch {
         raw = null;
     }
-
-    if (!raw) {
-        await restoreTimerFromBackend(uid, null, false);
-        return;
-    }
+    if (!raw) return;
 
     let parsed;
     try {
         parsed = JSON.parse(raw);
     } catch {
-        await restoreTimerFromBackend(uid, storageKey, true);
+        try { if (storageKey) localStorage.removeItem(storageKey); } catch {}
         return;
     }
 
@@ -441,17 +400,19 @@ export const loadTimerState = async () => {
     const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
 
     if (savedDate && savedDate !== todayStr) {
-        await restoreTimerFromBackend(uid, storageKey, true);
+        state.timer.isRunning = false;
+        state.timer.startTime = null;
+        state.timer.lastDuration = 0;
+        try { if (storageKey) localStorage.removeItem(storageKey); } catch {}
         return;
     }
 
     if (mode === 'running' && startTime) {
         if (!uid) return;
         try {
-            console.log(` Verifying check-in status for: ${uid}`);
+            console.log(`🔍 Verifying check-in status for: ${uid}`);
             const base = (API_BASE_URL || 'http://localhost:5000').replace(/\/$/, '');
             const response = await fetch(`${base}/api/status/${uid}`);
-
             const statusData = await response.json();
 
             if (statusData.checked_in) {
@@ -471,35 +432,32 @@ export const loadTimerState = async () => {
                 }
 
                 state.timer.isRunning = true;
-                state.timer.startTime =
-                    backendElapsed !== null
-                        ? Date.now() - backendElapsed * 1000
-                        : startTime;
+                state.timer.startTime = startTime;
                 // Prefer backend-derived base seconds; fall back to local cached duration
                 state.timer.lastDuration =
                     baseFromBackend !== null ? baseFromBackend : (durationSeconds || 0);
-                if (state.timer.intervalId) clearInterval(state.timer.intervalId);
                 state.timer.intervalId = setInterval(updateTimerDisplay, 1000);
-                updateTimerButton();
-                console.log(' Timer state restored - user is checked in');
+                console.log('✅ Timer state restored - user is checked in');
             } else {
-                showExpiryAlert = true;
-                await restoreTimerFromBackend(uid, storageKey, true);
-                return;
+                state.timer.isRunning = false;
+                state.timer.startTime = null;
+                state.timer.lastDuration = 0;
+                try { if (storageKey) localStorage.removeItem(storageKey); } catch {}
+                console.log('⚠️ Timer state cleared - user is not checked in');
+                alert('Your previous check-in session has expired. Please check in again.');
             }
         } catch (err) {
             console.warn('Failed to verify check-in status:', err);
-            await restoreTimerFromBackend(uid, storageKey, true);
+            state.timer.isRunning = false;
+            state.timer.startTime = null;
+            state.timer.lastDuration = 0;
+            try { if (storageKey) localStorage.removeItem(storageKey); } catch {}
+            console.log('⚠️ Timer state cleared due to verification failure');
         }
-    } else if (mode === 'running' && !startTime) {
-        await restoreTimerFromBackend(uid, storageKey, true);
-        return;
     } else if (mode === 'stopped' && durationSeconds > 0) {
         state.timer.isRunning = false;
         state.timer.startTime = null;
         state.timer.lastDuration = durationSeconds;
         updateTimerDisplay();
-    } else {
-        await restoreTimerFromBackend(uid, storageKey, false);
     }
 };

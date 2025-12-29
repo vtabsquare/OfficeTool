@@ -7,6 +7,7 @@ export const state = {
     startTime: null,
     isRunning: false,
     lastDuration: 0,
+    lastAutoStatus: null,
   },
   employees: [],
   interns: [],
