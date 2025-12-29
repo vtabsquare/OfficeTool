@@ -150,36 +150,35 @@ const handleNavClick = (e) => {
 
 const closeProfilePanel = () => {
   const overlay = document.getElementById('profile-overlay');
-  if (overlay) {
-    overlay.remove();
-  }
+  if (overlay) overlay.remove();
 };
 
-const openProfilePanel = () => {
+const renderProfileOverlay = (profile) => {
   const existing = document.getElementById('profile-overlay');
-  if (existing) {
-    existing.classList.add('open');
-    return;
-  }
+  if (existing) existing.remove();
 
-  const user = state?.user || {};
+  const avatarUrl = profile.avatarUrl || profile.photo || '';
+  const initials = profile.initials || (profile.name ? profile.name.split(' ').map(p => p[0]).join('').slice(0, 2).toUpperCase() : '');
+
   const overlay = document.createElement('div');
   overlay.id = 'profile-overlay';
   overlay.className = 'profile-overlay open';
   overlay.innerHTML = `
-    <div class="profile-panel">
+    <div class="profile-panel open">
       <button class="profile-close-btn" aria-label="Close profile panel">&times;</button>
       <div class="profile-header">
-        <div class="profile-avatar ${user.avatarUrl ? 'has-photo' : ''}" ${user.avatarUrl ? `style="background-image:url('${user.avatarUrl}')"` : ''}>${user.initials || ''}</div>
+        <div class="profile-avatar ${avatarUrl ? 'has-photo' : ''}" ${avatarUrl ? `style="background-image:url('${avatarUrl}')"` : ''}>${avatarUrl ? '' : initials}</div>
         <div>
-          <div class="profile-name">${user.name || 'User'}</div>
-          ${user.designation ? `<div class="profile-role">${user.designation}</div>` : ''}
-          ${user.id ? `<div class="profile-id">${user.id}</div>` : ''}
+          <div class="profile-name">${profile.name || 'User'}</div>
+          ${profile.designation ? `<div class="profile-role">${profile.designation}</div>` : ''}
+          ${profile.id ? `<div class="profile-id">${profile.id}</div>` : ''}
         </div>
       </div>
       <div class="profile-body">
-        ${user.email ? `<div class="profile-field"><span>Email</span><strong>${user.email}</strong></div>` : ''}
-        ${user.phone ? `<div class="profile-field"><span>Phone</span><strong>${user.phone}</strong></div>` : ''}
+        ${profile.email ? `<div class="profile-field"><span>Email</span><strong>${profile.email}</strong></div>` : ''}
+        ${profile.phone ? `<div class="profile-field"><span>Phone</span><strong>${profile.phone}</strong></div>` : ''}
+        ${profile.department ? `<div class="profile-field"><span>Department</span><strong>${profile.department}</strong></div>` : ''}
+        ${profile.location ? `<div class="profile-field"><span>Location</span><strong>${profile.location}</strong></div>` : ''}
       </div>
       <div class="profile-actions">
         <button id="profile-close-btn" class="btn btn-secondary" style="width:100%;">Close</button>
@@ -196,6 +195,58 @@ const openProfilePanel = () => {
   overlay.querySelector('#profile-close-btn')?.addEventListener('click', closeProfilePanel);
 
   document.body.appendChild(overlay);
+};
+
+const openProfilePanel = async () => {
+  // Show lightweight loader
+  const loaderId = 'profile-loader-toast';
+  if (!document.getElementById(loaderId)) {
+    const toast = document.createElement('div');
+    toast.id = loaderId;
+    toast.style.position = 'fixed';
+    toast.style.top = '16px';
+    toast.style.right = '16px';
+    toast.style.padding = '10px 12px';
+    toast.style.borderRadius = '6px';
+    toast.style.background = 'var(--surface-color)';
+    toast.style.color = 'var(--text-primary)';
+    toast.style.boxShadow = '0 8px 16px rgba(0,0,0,0.15)';
+    toast.textContent = 'Loading profile...';
+    document.body.appendChild(toast);
+  }
+
+  try {
+    const currentId = String(state?.user?.id || '').toUpperCase();
+    let profile = { ...(state?.user || {}) };
+
+    // Attempt to hydrate from master employee directory
+    if (currentId) {
+      try {
+        const employees = await listAllEmployees();
+        const match = (employees || []).find(e => String(e.employee_id || e.id || '').toUpperCase() === currentId);
+        if (match) {
+          profile = {
+            ...profile,
+            id: match.employee_id || match.id || profile.id,
+            name: match.name || profile.name,
+            designation: match.designation || match.role || profile.designation,
+            email: match.email || profile.email,
+            phone: match.phone || match.contact || profile.phone,
+            department: match.department || match.dept || profile.department,
+            location: match.location || match.city || profile.location,
+            avatarUrl: match.photo || match.avatarUrl || profile.avatarUrl,
+          };
+        }
+      } catch (err) {
+        console.warn('Failed to load employee profile from master table', err);
+      }
+    }
+
+    renderProfileOverlay(profile);
+  } finally {
+    const toast = document.getElementById(loaderId);
+    if (toast) toast.remove();
+  }
 };
 
 const setupRealtimeCallClient = () => {
