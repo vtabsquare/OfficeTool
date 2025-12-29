@@ -581,6 +581,11 @@ LA_FIELD_CHECKIN_LOCATION = "crc6f_checkinlocation"
 LA_FIELD_CHECKIN_TIME = "crc6f_checkintime"
 LA_FIELD_CHECKOUT_LOCATION = "crc6f_checkoutlocation"
 LA_FIELD_CHECKOUT_TIME = "crc6f_checkouttime"
+# Durable session fields (custom)
+LA_FIELD_CHECKIN_TS = "crc6f_checkin_timestamp"      # expects integer ms
+LA_FIELD_CHECKOUT_TS = "crc6f_checkout_timestamp"    # expects integer ms
+LA_FIELD_BASE_SECONDS = "crc6f_base_seconds"         # seconds accrued before current session
+LA_FIELD_TOTAL_SECONDS = "crc6f_total_seconds"       # total seconds for the day (at checkout)
 
 def reverse_geocode_to_city(lat, lng):
     """Convert lat/lng to city/locality using OpenStreetMap Nominatim API."""
@@ -803,8 +808,12 @@ def _fetch_login_activity_record(token: str, employee_id: str, date_str: str):
             LA_FIELD_DATE,
             LA_FIELD_CHECKIN_TIME,
             LA_FIELD_CHECKIN_LOCATION,
+            LA_FIELD_CHECKIN_TS,
+            LA_FIELD_BASE_SECONDS,
             LA_FIELD_CHECKOUT_TIME,
             LA_FIELD_CHECKOUT_LOCATION,
+            LA_FIELD_CHECKOUT_TS,
+            LA_FIELD_TOTAL_SECONDS,
         ]
     )
     url = (
@@ -2178,6 +2187,22 @@ def checkin():
             except Exception:
                 pass
 
+            # Persist duplicate check-in to login activity to ensure durability
+            try:
+                token = get_access_token()
+                local_date = session.get("local_date") or datetime.now().date().isoformat()
+                checkin_ts = session.get("checkin_timestamp")
+                base_seconds = int(session.get("base_seconds") or 0)
+                patch = {
+                    LA_FIELD_CHECKIN_TIME: session.get("checkin_time"),
+                    LA_FIELD_CHECKIN_TS: checkin_ts,
+                    LA_FIELD_BASE_SECONDS: base_seconds,
+                    LA_FIELD_CHECKIN_LOCATION: _login_activity_location_string(event),
+                }
+                _upsert_login_activity(token, normalized_emp_id, local_date, {k: v for k, v in patch.items() if v is not None})
+            except Exception as e:
+                print(f"[WARN] Duplicate check-in login-activity upsert failed for {key}: {e}")
+
             return jsonify({
                 "success": True,
                 "record_id": session.get("record_id"),
@@ -2251,6 +2276,17 @@ def checkin():
                 "base_seconds": base_seconds,
             }
 
+            # Persist durable session fields to login activity
+            try:
+                _upsert_login_activity(token, normalized_emp_id, formatted_date, {
+                    LA_FIELD_CHECKIN_TIME: formatted_time,
+                    LA_FIELD_CHECKIN_TS: checkin_timestamp,
+                    LA_FIELD_BASE_SECONDS: base_seconds,
+                    LA_FIELD_CHECKIN_LOCATION: _login_activity_location_string(event),
+                })
+            except Exception as e:
+                print(f"[WARN] Failed to persist login activity (continuation) for {key}: {e}")
+
             print(f"[OK] CONTINUATION CHECK-IN for {key} on {formatted_date}, record {record_id}")
 
             # Emit socket event so other devices immediately sync
@@ -2321,6 +2357,18 @@ def checkin():
                 "checkinTimestamp": checkin_timestamp,
                 "baseSeconds": 0,
             })
+
+            # Persist durable session fields to login activity
+            try:
+                token = get_access_token()
+                _upsert_login_activity(token, normalized_emp_id, formatted_date, {
+                    LA_FIELD_CHECKIN_TIME: formatted_time,
+                    LA_FIELD_CHECKIN_TS: checkin_timestamp,
+                    LA_FIELD_BASE_SECONDS: 0,
+                    LA_FIELD_CHECKIN_LOCATION: _login_activity_location_string(event),
+                })
+            except Exception as e:
+                print(f"[WARN] Failed to persist login activity (new check-in) for {key}: {e}")
 
             return jsonify(
                 {
@@ -3464,6 +3512,23 @@ def checkout():
         else:
             print("[WARN] No record_id found to update on checkout")
 
+        # Persist checkout to login activity for durability
+        try:
+            checkout_timestamp = int(local_now.timestamp() * 1000)
+            base_seconds_prev = int(session.get("base_seconds") or 0)
+            token = locals().get("token") or get_access_token()
+            _upsert_login_activity(token, normalized_emp_id, (session.get("local_date") or local_now.date().isoformat()), {
+                LA_FIELD_CHECKIN_TIME: session.get("checkin_time"),
+                LA_FIELD_CHECKIN_TS: session.get("checkin_timestamp"),
+                LA_FIELD_BASE_SECONDS: base_seconds_prev,
+                LA_FIELD_CHECKOUT_TIME: checkout_time_str,
+                LA_FIELD_CHECKOUT_TS: checkout_timestamp,
+                LA_FIELD_TOTAL_SECONDS: total_seconds_today,
+                LA_FIELD_CHECKOUT_LOCATION: _login_activity_location_string(event),
+            })
+        except Exception as e:
+            print(f"[WARN] Failed to persist login activity checkout for {key}: {e}")
+
         # Clear in-memory active session
         try:
             if key in active_sessions:
@@ -3630,6 +3695,58 @@ def get_status(employee_id):
                             print(f"[INFO] Recovered session from login activity for {key}")
             except Exception as login_recover_err:
                 print(f"[WARN] Failed login-activity recovery for {key}: {login_recover_err}")
+
+        # Fallback: derive active session from today's attendance record if check-in exists and checkout is missing
+        if key not in active_sessions:
+            try:
+                from datetime import date as _date
+                formatted_date = _date.today().isoformat()
+                token = get_access_token()
+                headers = {
+                    "Authorization": f"Bearer {token}",
+                    "Accept": "application/json",
+                    "OData-MaxVersion": "4.0",
+                    "OData-Version": "4.0",
+                }
+                filter_query = (
+                    f"?$filter={FIELD_EMPLOYEE_ID} eq '{normalized_emp_id}' "
+                    f"and {FIELD_DATE} eq '{formatted_date}'"
+                )
+                url = f"{RESOURCE}/api/data/v9.2/{ATTENDANCE_ENTITY}{filter_query}"
+                resp = requests.get(url, headers=headers, timeout=20)
+                if resp.status_code == 200:
+                    vals = resp.json().get("value", [])
+                    if vals:
+                        rec = vals[0]
+                        checkin_time_rec = rec.get(FIELD_CHECKIN)
+                        checkout_time_rec = rec.get(FIELD_CHECKOUT)
+                        if checkin_time_rec and not checkout_time_rec:
+                            # Build base_seconds from stored duration hours if present
+                            base_seconds = 0
+                            try:
+                                base_hours = float(rec.get(FIELD_DURATION) or "0")
+                                base_seconds = int(round(max(0.0, base_hours) * 3600))
+                            except Exception:
+                                base_seconds = 0
+                            checkin_dt = None
+                            try:
+                                checkin_dt = datetime.strptime(checkin_time_rec, "%H:%M:%S").replace(
+                                    year=now.year, month=now.month, day=now.day
+                                )
+                            except Exception:
+                                checkin_dt = now
+                            active_sessions[key] = {
+                                "record_id": rec.get(FIELD_RECORD_ID) or rec.get("cr6f_table13id") or rec.get("id"),
+                                "checkin_time": checkin_time_rec,
+                                "checkin_datetime": checkin_dt.isoformat(),
+                                "attendance_id": rec.get(FIELD_ATTENDANCE_ID_CUSTOM),
+                                "local_date": formatted_date,
+                                "base_seconds": base_seconds,
+                                "source": "attendance_fallback",
+                            }
+                            print(f"[INFO] Recovered session from attendance record for {key}")
+            except Exception as attendance_recover_err:
+                print(f"[WARN] Failed attendance recovery for {key}: {attendance_recover_err}")
 
         active = key in active_sessions
         elapsed = 0
