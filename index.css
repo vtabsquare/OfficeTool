@@ -962,11 +962,14 @@ body.dark-theme #app-container.sidebar-hidden .nav-link.active i {
 }
 
 .user-avatar.has-photo {
-  background: none;
+  background: none !important;
+  background-color: transparent;
   background-size: cover;
   background-position: center;
+  background-repeat: no-repeat;
   color: transparent;
-  border: 1px solid var(--border-color);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  box-shadow: none;
 }
 
 /* App Content */
