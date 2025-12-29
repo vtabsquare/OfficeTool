@@ -515,16 +515,7 @@ const init = async () => {
   document.getElementById('sidebar').innerHTML = getSidebarHTML();
   document.getElementById('header').innerHTML = getHeaderHTML(state.user, state.timer);
 
-  const userProfileEl = document.getElementById('user-profile');
   const userMenuEl = document.getElementById('user-menu');
-  if (userProfileEl && userMenuEl) {
-    userProfileEl.addEventListener('mouseenter', () => {
-      userMenuEl.style.display = 'block';
-    });
-    userProfileEl.addEventListener('mouseleave', () => {
-      userMenuEl.style.display = 'none';
-    });
-  }
 
   initTheme();
 
