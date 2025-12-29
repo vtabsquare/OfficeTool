@@ -167,8 +167,17 @@ const renderProfileOverlay = (profile) => {
     <div class="profile-panel open">
       <button class="profile-close-btn" aria-label="Close profile panel">&times;</button>
       <div class="profile-header">
-        <div class="profile-avatar ${avatarUrl ? 'has-photo' : ''}" ${avatarUrl ? `style="background-image:url('${avatarUrl}')"` : ''}>${avatarUrl ? '' : initials}</div>
-        <div>
+        <div class="profile-avatar-wrap">
+          <div class="profile-avatar ${avatarUrl ? 'has-photo' : ''}" ${avatarUrl ? `style="background-image:url('${avatarUrl}')"` : ''}>${avatarUrl ? '' : initials}</div>
+          <div class="avatar-actions">
+            <label class="avatar-upload-btn">
+              <input id="avatar-file-input" type="file" accept="image/*" style="display:none;" />
+              <span class="avatar-upload-text">Upload photo</span>
+            </label>
+            <small class="avatar-hint">Square images look best</small>
+          </div>
+        </div>
+        <div class="profile-meta">
           <div class="profile-name">${profile.name || 'User'}</div>
           ${profile.designation ? `<div class="profile-role">${profile.designation}</div>` : ''}
           ${profile.id ? `<div class="profile-id">${profile.id}</div>` : ''}
@@ -193,6 +202,38 @@ const renderProfileOverlay = (profile) => {
   });
   overlay.querySelector('.profile-close-btn')?.addEventListener('click', closeProfilePanel);
   overlay.querySelector('#profile-close-btn')?.addEventListener('click', closeProfilePanel);
+
+  // Upload handler (preview + persist in local storage/state)
+  const fileInput = overlay.querySelector('#avatar-file-input');
+  if (fileInput) {
+    fileInput.addEventListener('change', (ev) => {
+      const file = ev.target.files && ev.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        const dataUrl = reader.result;
+        const avatarEl = overlay.querySelector('.profile-avatar');
+        if (avatarEl && typeof dataUrl === 'string') {
+          avatarEl.classList.add('has-photo');
+          avatarEl.style.backgroundImage = `url('${dataUrl}')`;
+          avatarEl.textContent = '';
+          // persist to state and localStorage for reuse
+          state.user = { ...(state.user || {}), avatarUrl: dataUrl };
+          try {
+            const authRaw = localStorage.getItem('auth');
+            if (authRaw) {
+              const parsed = JSON.parse(authRaw);
+              if (parsed && parsed.user) {
+                parsed.user.avatarUrl = dataUrl;
+                localStorage.setItem('auth', JSON.stringify(parsed));
+              }
+            }
+          } catch {}
+        }
+      };
+      reader.readAsDataURL(file);
+    });
+  }
 
   document.body.appendChild(overlay);
 };
