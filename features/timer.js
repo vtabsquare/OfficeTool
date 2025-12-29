@@ -122,7 +122,8 @@ export const updateTimerDisplay = () => {
     let totalSeconds = 0;
 
     if (state.timer.isRunning && state.timer.startTime) {
-        const elapsed = Math.floor((Date.now() - state.timer.startTime) / 1000);
+        const serverNow = Date.now() + (state.timer.serverOffsetMs || 0);
+        const elapsed = Math.floor((serverNow - state.timer.startTime) / 1000);
         const base = typeof state.timer.lastDuration === 'number' ? state.timer.lastDuration : 0;
         totalSeconds = Math.max(0, base + elapsed);
     } else if (typeof state.timer.lastDuration === 'number' && state.timer.lastDuration > 0) {
@@ -173,7 +174,22 @@ const startTimer = async () => {
             const location = await getGeolocation();
 
             // Call backend check-in
-            const { record_id, checkin_time, total_seconds_today } = await checkIn(state.user.id, location);
+            const { record_id, checkin_time, total_seconds_today, checkin_timestamp } = await checkIn(state.user.id, location);
+
+            // If backend provides authoritative check-in timestamp, prefer it.
+            if (typeof checkin_timestamp === 'number' && checkin_timestamp > 0) {
+                state.timer.startTime = checkin_timestamp;
+                try {
+                    const payload = {
+                        isRunning: true,
+                        startTime: checkin_timestamp,
+                        date: dateStr,
+                        mode: 'running',
+                        durationSeconds: typeof state.timer.lastDuration === 'number' ? state.timer.lastDuration : 0,
+                    };
+                    localStorage.setItem(uid ? `timerState_${uid}` : 'timerState', JSON.stringify(payload));
+                } catch {}
+            }
 
             // Sync with backend data if needed
             const backendSeconds = Number(total_seconds_today || 0);
@@ -183,7 +199,7 @@ const startTimer = async () => {
                 try {
                     const payload = {
                         isRunning: true,
-                        startTime: clickTime,
+                        startTime: state.timer.startTime,
                         date: dateStr,
                         mode: 'running',
                         durationSeconds: backendSeconds,
@@ -235,12 +251,13 @@ const startTimer = async () => {
 
 const stopTimer = async () => {
     // ⚡ OPTIMISTIC UI UPDATE - Stop timer INSTANTLY on click
-    const clickTime = Date.now();
+    const clickTime = Date.now() + (state.timer.serverOffsetMs || 0);
     const baseBefore = typeof state.timer.lastDuration === 'number' ? state.timer.lastDuration : 0;
     let localElapsed = 0;
     if (state.timer.startTime) {
         localElapsed = Math.max(0, Math.floor((clickTime - Number(state.timer.startTime)) / 1000));
     }
+
     const localTotal = baseBefore + localElapsed;
 
     // Immediately update UI state

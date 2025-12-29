@@ -5,6 +5,8 @@ const http = require("http");
 const cors = require("cors");
 const { Server } = require("socket.io");
 
+const attachAttendanceModule = require("./attendance_module");
+
 // Create HTTP + Socket server
 const app = express();
 app.use(cors({ origin: "*", credentials: true }));
@@ -18,6 +20,7 @@ const io = new Server(server, {
 // Attach modules
 require("./chat_module")(io);
 require("./meet_module")(io);
+attachAttendanceModule(io);
 
 // HTTP bridge used by Python backend (emit_socket_event)
 // Expects body: { event: string, data: any }
@@ -44,6 +47,71 @@ app.post("/emit", (req, res) => {
     switch (event) {
       case "new_message": {
         emitToConversation("new_message", data);
+        break;
+      }
+
+      // -----------------------------------------
+      // ATTENDANCE EVENTS (from Flask backend)
+      // -----------------------------------------
+      case "attendance:checkin": {
+        const { employee_id, checkinTime, checkinTimestamp, baseSeconds } = data || {};
+        if (employee_id) {
+          const uid = String(employee_id).trim().toUpperCase();
+          const room = `attendance:${uid}`;
+
+          const attendanceModule = require("./attendance_module");
+          attendanceModule.activeTimers[uid] = {
+            isRunning: true,
+            checkinTime,
+            checkinTimestamp: checkinTimestamp || Date.now(),
+            baseSeconds: baseSeconds || 0,
+            lastStatus: "A",
+          };
+
+          io.to(room).emit("attendance:started", {
+            employee_id: uid,
+            checkinTime,
+            checkinTimestamp: attendanceModule.activeTimers[uid].checkinTimestamp,
+            baseSeconds: baseSeconds || 0,
+            serverNow: Date.now(),
+          });
+        }
+        break;
+      }
+
+      case "attendance:checkout": {
+        const { employee_id, checkoutTime, totalSeconds, status } = data || {};
+        if (employee_id) {
+          const uid = String(employee_id).trim().toUpperCase();
+          const room = `attendance:${uid}`;
+
+          const attendanceModule = require("./attendance_module");
+          delete attendanceModule.activeTimers[uid];
+
+          io.to(room).emit("attendance:stopped", {
+            employee_id: uid,
+            checkoutTime,
+            totalSeconds,
+            status,
+            serverNow: Date.now(),
+          });
+        }
+        break;
+      }
+
+      case "attendance:status-update": {
+        const { employee_id, totalSeconds, status } = data || {};
+        if (employee_id) {
+          const uid = String(employee_id).trim().toUpperCase();
+          const room = `attendance:${uid}`;
+          io.to(room).emit("attendance:status-update", {
+            employee_id: uid,
+            totalSeconds,
+            status,
+            autoUpdated: true,
+            serverNow: Date.now(),
+          });
+        }
         break;
       }
 
@@ -113,8 +181,8 @@ app.post("/emit", (req, res) => {
   }
 });
 
-// Start Server
-const PORT = process.env.SOCKET_PORT || 4001;
+// Start Server (Render sets PORT)
+const PORT = process.env.PORT || process.env.SOCKET_PORT || 4001;
 server.listen(PORT, () => {
   console.log(`🚀 Unified Socket Server running on http://localhost:${PORT}`);
 });

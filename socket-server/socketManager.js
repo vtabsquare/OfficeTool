@@ -21,7 +21,7 @@ function resolveSocketUrl() {
     return String(window.SOCKET_BASE_URL);
   }
 
-  return "http://localhost:4000";
+  return "https://office-tool-socket.onrender.com";
 }
 
 // Prefer dedicated chat socket URL, fall back to generic or localhost:4000 (same as meet)

@@ -54,6 +54,7 @@ module.exports = (io) => {
           totalSeconds,
           status,
           checkinTime: timer.checkinTime,
+          serverNow: now,
         });
         console.log(`[ATTENDANCE] Sent sync to ${uid}: running, totalSeconds=${totalSeconds}`);
       } else {
@@ -62,6 +63,7 @@ module.exports = (io) => {
           isRunning: false,
           totalSeconds: 0,
           status: 'A',
+          serverNow: Date.now(),
         });
       }
     });
@@ -91,6 +93,7 @@ module.exports = (io) => {
         checkinTime,
         checkinTimestamp: activeTimers[uid].checkinTimestamp,
         baseSeconds,
+        serverNow: Date.now(),
       });
 
       console.log(`[ATTENDANCE] Check-in broadcast for ${uid} at ${checkinTime}`);
@@ -115,6 +118,7 @@ module.exports = (io) => {
         checkoutTime,
         totalSeconds,
         status,
+        serverNow: Date.now(),
       });
 
       console.log(`[ATTENDANCE] Check-out broadcast for ${uid}, totalSeconds=${totalSeconds}, status=${status}`);
@@ -143,6 +147,7 @@ module.exports = (io) => {
           totalSeconds,
           status,
           checkinTime: timer.checkinTime,
+          serverNow: now,
         });
       } else {
         socket.emit('attendance:sync', {
@@ -150,6 +155,7 @@ module.exports = (io) => {
           isRunning: false,
           totalSeconds: 0,
           status: 'A',
+          serverNow: Date.now(),
         });
       }
     });
@@ -184,6 +190,7 @@ module.exports = (io) => {
           totalSeconds,
           status: newStatus,
           autoUpdated: true,
+          serverNow: now,
         });
 
         console.log(`[ATTENDANCE] Auto status update for ${uid}: ${newStatus} (${totalSeconds}s)`);

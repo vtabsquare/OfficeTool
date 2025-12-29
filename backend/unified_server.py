@@ -313,7 +313,7 @@ GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
 GOOGLE_REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI", "http://localhost:5000/google/oauth2callback")
 GOOGLE_SCOPES = ["https://www.googleapis.com/auth/calendar.events"]
 
-SOCKET_SERVER_URL = os.getenv("SOCKET_SERVER_URL", "http://localhost:4000")
+SOCKET_SERVER_URL = os.getenv("SOCKET_SERVER_URL", "https://office-tool-socket.onrender.com")
 
 
 def _emit_attendance_event(event: str, data: dict):
@@ -1869,7 +1869,7 @@ def _decrement_leave_balance(token: str, balance_row: dict, leave_type: str, day
                 url = f"{BASE_URL}/{entity_set_probe}?$filter={fk} eq '{safe_emp}'&$top=1"
                 resp = requests.get(url, headers=headers)
                 if resp.status_code == 200:
-                    vals = resp.json().get('value', [])
+                    vals = resp.json().get("value", [])
                     if vals:
                         # Find primary id field dynamically
                         for k, v in vals[0].items():
@@ -2160,11 +2160,29 @@ def checkin():
         if key in active_sessions:
             session = active_sessions[key]
             print(f"[INFO] Duplicate check-in attempt for {key}, returning existing session")
+
+            # Best-effort emit so other devices can sync (do not change stored session)
+            try:
+                checkin_ts = session.get("checkin_timestamp")
+                if not checkin_ts and session.get("checkin_datetime"):
+                    checkin_ts = int(datetime.fromisoformat(session.get("checkin_datetime")).timestamp() * 1000)
+                base_seconds = int(session.get("base_seconds") or 0)
+                if checkin_ts:
+                    _emit_attendance_event("attendance:checkin", {
+                        "employee_id": normalized_emp_id,
+                        "checkinTime": session.get("checkin_time"),
+                        "checkinTimestamp": checkin_ts,
+                        "baseSeconds": base_seconds,
+                    })
+            except Exception:
+                pass
+
             return jsonify({
                 "success": True,
                 "record_id": session.get("record_id"),
                 "attendance_id": session.get("attendance_id"),
                 "checkin_time": session.get("checkin_time"),
+                "checkin_timestamp": session.get("checkin_timestamp"),
                 "already_checked_in": True,
             })
 
@@ -2220,24 +2238,38 @@ def checkin():
                 except Exception:
                     pass
 
+            checkin_timestamp = int(now.timestamp() * 1000)  # milliseconds for JS
+            base_seconds = int(round(existing_hours * 3600)) if existing_hours else 0
             active_sessions[key] = {
                 "record_id": record_id,
                 "checkin_time": formatted_time,
                 "checkin_datetime": now.isoformat(),
+                "checkin_timestamp": checkin_timestamp,
                 "attendance_id": attendance_id,
                 "local_date": formatted_date,
+                "base_seconds": base_seconds,
             }
 
             print(f"[OK] CONTINUATION CHECK-IN for {key} on {formatted_date}, record {record_id}")
+
+            # Emit socket event so other devices immediately sync
+            _emit_attendance_event("attendance:checkin", {
+                "employee_id": normalized_emp_id,
+                "checkinTime": formatted_time,
+                "checkinTimestamp": checkin_timestamp,
+                "baseSeconds": base_seconds,
+            })
+
             return jsonify(
                 {
                     "success": True,
                     "record_id": record_id,
                     "attendance_id": attendance_id,
                     "checkin_time": formatted_time,
+                    "checkin_timestamp": checkin_timestamp,
                     "already_checked_in": False,
                     "continued_day": True,
-                    "total_seconds_today": int(round(existing_hours * 3600)),
+                    "total_seconds_today": base_seconds,
                 }
             )
 

@@ -9,6 +9,8 @@ import { renderMyAttendancePage } from '../pages/attendance.js';
 let socket = null;
 let isConnected = false;
 
+let serverOffsetMs = 0;
+
 const HALF_DAY_SECONDS = 4 * 3600;
 const FULL_DAY_SECONDS = 9 * 3600;
 
@@ -25,7 +27,7 @@ function resolveSocketUrl() {
     }
 
     // Default to localhost:4000
-    return 'http://localhost:4000';
+    return 'https://office-tool-socket.onrender.com';
 }
 
 const SOCKET_URL = resolveSocketUrl();
@@ -103,6 +105,24 @@ export function initAttendanceSocket() {
     return socket;
 }
 
+function updateServerOffset(payload) {
+    const serverNow = payload && typeof payload.serverNow === 'number' ? payload.serverNow : null;
+    if (serverNow === null) return;
+
+    const localNow = Date.now();
+    const measured = serverNow - localNow;
+
+    // Smooth the offset to avoid jitter from network latency.
+    // Keep it responsive enough to correct big drift quickly.
+    if (Math.abs(serverOffsetMs - measured) > 2000) {
+        serverOffsetMs = measured;
+    } else {
+        serverOffsetMs = Math.round(serverOffsetMs * 0.8 + measured * 0.2);
+    }
+
+    state.timer.serverOffsetMs = serverOffsetMs;
+}
+
 /**
  * Get the attendance socket instance
  */
@@ -169,6 +189,7 @@ export function emitCheckout(checkoutTime, totalSeconds, status) {
  * Handle timer sync from server
  */
 function handleTimerSync(data) {
+    updateServerOffset(data);
     const uid = String(state.user?.id || '').toUpperCase();
     if (data.employee_id !== uid) return;
 
@@ -178,7 +199,7 @@ function handleTimerSync(data) {
         const baseSeconds = data.baseSeconds || 0;
 
         // Calculate current elapsed based on server timestamp
-        const now = Date.now();
+        const now = Date.now() + (state.timer.serverOffsetMs || 0);
         const elapsedMs = now - serverTimestamp;
         const elapsedSeconds = Math.floor(elapsedMs / 1000);
         const totalSeconds = baseSeconds + elapsedSeconds;
@@ -231,6 +252,7 @@ function handleTimerSync(data) {
  * Handle check-in from another device
  */
 function handleRemoteCheckin(data) {
+    updateServerOffset(data);
     const uid = String(state.user?.id || '').toUpperCase();
     if (data.employee_id !== uid) return;
 
@@ -275,6 +297,7 @@ function handleRemoteCheckin(data) {
  * Handle check-out from another device
  */
 function handleRemoteCheckout(data) {
+    updateServerOffset(data);
     const uid = String(state.user?.id || '').toUpperCase();
     if (data.employee_id !== uid) return;
 
@@ -324,6 +347,7 @@ function handleRemoteCheckout(data) {
  * Handle automatic status updates (A -> HL -> P)
  */
 function handleStatusUpdate(data) {
+    updateServerOffset(data);
     const uid = String(state.user?.id || '').toUpperCase();
     if (data.employee_id !== uid) return;
 
