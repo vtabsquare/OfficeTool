@@ -571,6 +571,13 @@ const init = async () => {
       window.location.href = "/login.html";
       return;
     }
+    // Open profile panel (handle before toggling dropdown to avoid early return)
+    if (target.closest("#profile-btn")) {
+      openProfilePanel();
+      const menu = document.getElementById("user-menu");
+      if (menu) menu.style.display = "none";
+      return;
+    }
     // Toggle user dropdown on profile click (handle after logout check)
     if (target.closest("#user-profile")) {
       const menu = document.getElementById("user-menu");
@@ -578,12 +585,6 @@ const init = async () => {
         const isOpen = menu.style.display !== "none";
         menu.style.display = isOpen ? "none" : "block";
       }
-      return;
-    }
-    if (target.closest("#profile-btn")) {
-      openProfilePanel();
-      const menu = document.getElementById("user-menu");
-      if (menu) menu.style.display = "none";
       return;
     }
     if (target.id === "add-employee-btn") showAddEmployeeModal();
