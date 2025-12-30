@@ -3879,49 +3879,8 @@ def get_status(employee_id):
                 base_seconds = int(session.get("base_seconds") or 0)
                 # Ensure we always have a durable checkin_timestamp to drive elapsed
                 if session.get("checkin_timestamp") is None:
-                    # Try to pull from login activity durable seconds
-                    try:
-                        token = get_access_token()
-                        from datetime import date as _date
-                        formatted_date = _date.today().isoformat()
-                        la_rec = _fetch_login_activity_record(token, key, formatted_date)
-                        if la_rec and la_rec.get(LA_FIELD_CHECKIN_TS) is not None:
-                            session["checkin_timestamp"] = _to_epoch_ms(la_rec.get(LA_FIELD_CHECKIN_TS))
-                    except Exception:
-                        pass
-                    # Fallback: parse checkin_time string for today
-                    if session.get("checkin_timestamp") is None and session.get("checkin_time"):
-                        try:
-                            ct_str = session["checkin_time"]
-                            ct_dt = datetime.strptime(ct_str, "%H:%M:%S").replace(
-                                year=datetime.now().year,
-                                month=datetime.now().month,
-                                day=datetime.now().day,
-                            )
-                            session["checkin_timestamp"] = int(ct_dt.timestamp() * 1000)
-                        except Exception:
-                            pass
-                # Prefer durable timestamp for elapsed to avoid timezone/parse issues
-                checkin_ts_val = session.get("checkin_timestamp")
-                if checkin_ts_val is not None:
-                    elapsed = int(max(0, round(datetime.now().timestamp() - (checkin_ts_val / 1000.0))))
-                if elapsed <= 0:
-                    checkin_dt = datetime.fromisoformat(session["checkin_datetime"])
-                    elapsed = int((datetime.now() - checkin_dt).total_seconds())
-                if elapsed <= 0 and session.get("checkin_time"):
-                    ct_str = session["checkin_time"]
-                    ct_dt = datetime.strptime(ct_str, "%H:%M:%S").replace(year=datetime.now().year, month=datetime.now().month, day=datetime.now().day)
-                    elapsed = int((datetime.now() - ct_dt).total_seconds())
-                if elapsed < 0:
-                    elapsed = 0
-                # Add base_seconds from earlier sessions to the running total
-                total_seconds_today = max(total_seconds_today, base_seconds + elapsed)
-            except Exception as e:
-                print(f"[WARN] elapsed calc error: {e}")
-                elapsed = 0
 
-        # If Dataverse total_seconds is available for today, prefer it as base aggregation when higher
-        try:
+                    # Try to pull from login activity durable seconds
             token = get_access_token()
             from datetime import date as _date
             formatted_date = _date.today().isoformat()
