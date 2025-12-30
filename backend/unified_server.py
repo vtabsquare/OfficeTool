@@ -3869,6 +3869,30 @@ def get_status(employee_id):
                 checkin_time = session.get("checkin_time")
                 attendance_id = session.get("attendance_id")
                 base_seconds = int(session.get("base_seconds") or 0)
+                # Ensure we always have a durable checkin_timestamp to drive elapsed
+                if session.get("checkin_timestamp") is None:
+                    # Try to pull from login activity durable seconds
+                    try:
+                        token = get_access_token()
+                        from datetime import date as _date
+                        formatted_date = _date.today().isoformat()
+                        la_rec = _fetch_login_activity_record(token, key, formatted_date)
+                        if la_rec and la_rec.get(LA_FIELD_CHECKIN_TS) is not None:
+                            session["checkin_timestamp"] = _to_epoch_ms(la_rec.get(LA_FIELD_CHECKIN_TS))
+                    except Exception:
+                        pass
+                    # Fallback: parse checkin_time string for today
+                    if session.get("checkin_timestamp") is None and session.get("checkin_time"):
+                        try:
+                            ct_str = session["checkin_time"]
+                            ct_dt = datetime.strptime(ct_str, "%H:%M:%S").replace(
+                                year=datetime.now().year,
+                                month=datetime.now().month,
+                                day=datetime.now().day,
+                            )
+                            session["checkin_timestamp"] = int(ct_dt.timestamp() * 1000)
+                        except Exception:
+                            pass
                 # Prefer durable timestamp for elapsed to avoid timezone/parse issues
                 checkin_ts_val = session.get("checkin_timestamp")
                 if checkin_ts_val is not None:
@@ -3925,12 +3949,15 @@ def get_status(employee_id):
                         hours = float(rec.get(FIELD_DURATION) or "0")
                     except Exception:
                         hours = 0.0
-                    total_seconds_today = int(round(hours * 3600))
+                    attendance_seconds = int(round(hours * 3600))
+                    if attendance_seconds > total_seconds_today:
+                        total_seconds_today = attendance_seconds
         except Exception as fetch_err:
             print(f"[WARN] Failed to fetch today's attendance in status: {fetch_err}")
 
         if active:
-            total_seconds_today += max(0, elapsed)
+            # total_seconds_today already includes base_seconds; ensure we at least include current elapsed
+            total_seconds_today = max(total_seconds_today, (active_sessions.get(key, {}).get("base_seconds") or 0) + max(0, elapsed))
 
         # Classification from total seconds today
         total_hours_today = total_seconds_today / 3600.0
