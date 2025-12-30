@@ -3866,26 +3866,6 @@ def get_status(employee_id):
                                 "local_date": formatted_date,
                                 "base_seconds": base_seconds,
                                 "source": "attendance_fallback",
-                            }
-                            print(f"[INFO] Recovered session from attendance record for {key}")
-            except Exception as attendance_recover_err:
-                print(f"[WARN] Failed attendance recovery for {key}: {attendance_recover_err}")
-
-        active = key in active_sessions
-        elapsed = 0
-        checkin_time = None
-        attendance_id = None
-        if active:
-            try:
-                session = active_sessions[key]
-                checkin_time = session.get("checkin_time")
-                attendance_id = session.get("attendance_id")
-                base_seconds = int(session.get("base_seconds") or 0)
-
-                # If we somehow have no checkin_time at all, set it to now for the day
-                if not session.get("checkin_time"):
-                    try:
-                        now = datetime.now()
                         session["checkin_time"] = now.strftime("%H:%M:%S")
                         session["checkin_datetime"] = now.isoformat()
                         checkin_time = session["checkin_time"]
