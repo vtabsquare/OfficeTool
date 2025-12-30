@@ -579,6 +579,7 @@ LA_FIELD_EMPLOYEE_ID = "crc6f_employeeid"
 LA_FIELD_DATE = "crc6f_date"
 LA_FIELD_CHECKIN_LOCATION = "crc6f_checkinlocation"
 LA_FIELD_CHECKIN_TIME = "crc6f_checkintime"
+
 LA_FIELD_CHECKOUT_LOCATION = "crc6f_checkoutlocation"
 LA_FIELD_CHECKOUT_TIME = "crc6f_checkouttime"
 # Durable session fields (custom)
@@ -587,11 +588,15 @@ LA_FIELD_CHECKOUT_TS = "crc6f_checkout_timestamp"    # stored as epoch seconds (
 LA_FIELD_BASE_SECONDS = "crc6f_base_seconds"         # seconds accrued before current session
 LA_FIELD_TOTAL_SECONDS = "crc6f_total_seconds"       # total seconds for the day (at checkout)
 
+def reverse_geocode_to_city(lat, lng):
+    """Convert lat/lng to a city/locality string using Nominatim."""
+    try:
         url = (
             "https://nominatim.openstreetmap.org/reverse"
             f"?lat={lat}&lon={lng}&format=json&zoom=16&addressdetails=1&accept-language=en-IN"
         )
         headers = {"User-Agent": "OfficeToolApp/1.0"}
+
         resp = requests.get(url, headers=headers, timeout=7)
         if resp.status_code == 200:
             data = resp.json()
