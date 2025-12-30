@@ -2051,34 +2051,14 @@ function showEditContributorModal(projectId, recordId, contributor) {
         alert("✅ Contributor updated successfully!");
         closeModal();
         fetchContributors(projectId);
-      } else {
         console.error("❌ Update failed:", data);
         alert("❌ Update failed: " + (data.error || "Unknown error"));
       }
     } catch (err) {
-      console.error("🔥 Error updating contributor:", err);
-      alert("Server or network error during update.");
-    }
-  };
-}
-
-async function deleteContributorFromBackend(recordId) {
-  const BACKEND_URL = "http://localhost:5000";
-  const url = `${BACKEND_URL}/api/contributors/${encodeURIComponent(recordId)}`;
-  console.log("🗑 Sending DELETE request to:", url);
-
-  const res = await fetch(url, { method: "DELETE" });
-
-  if (!res.ok) {
-    const txt = await res.text();
-    console.error("❌ Delete failed:", txt);
-    throw new Error("Delete failed: " + txt);
+    console.error("🔥 Error deleting contributor:", err);
+    throw err;
   }
-
-  console.log("✅ Contributor deleted successfully on backend!");
-  return true;
 }
-
 function showContributorModal(projectId, contributor = null) {
   const isEdit = !!contributor;
 
