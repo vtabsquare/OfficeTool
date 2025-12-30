@@ -17,13 +17,132 @@ import { state as appState } from "../state.js";
 // }
 
 const LS_KEY = "tt_projects_v1";
-const API_BASE = "http://localhost:5000/api/projects";
+const API_ROOT = (window?.API_BASE_URL || "").replace(/\/$/, "") || "";
+const API_BASE = API_ROOT; // backward compatibility for existing calls below
+const PROJECTS_API = `${API_ROOT}/api/projects`;
 let projectsCache = [];
 let projectsViewMode = "table";
 const listState = {
   page: 1,
   pageSize: 10,
   sort: { by: "name", dir: "asc" },
+};
+
+// ---------------------- Bulk Upload (CSV) ----------------------
+const parseProjectsCSV = (text) => {
+  const rows = (text || "")
+    .split(/\r?\n/)
+    .map((r) => r.trim())
+    .filter(Boolean)
+    .map((line) =>
+      line
+        .split(",")
+        .map((c) => c.replace(/^\ufeff/, "").replace(/^"|"$/g, "").trim())
+    );
+  if (!rows.length) return [];
+  const header = rows[0].map((h) => h.toLowerCase());
+  const idx = {
+    name: header.findIndex((h) => ["name", "project name", "project_name"].includes(h)),
+    code: header.findIndex((h) => ["code", "project code", "project_code", "id", "projectid"].includes(h)),
+    client: header.findIndex((h) => ["client", "client name", "client_name"].includes(h)),
+    status: header.findIndex((h) => ["status"].includes(h)),
+    start: header.findIndex((h) => ["start", "start_date", "start date"].includes(h)),
+    end: header.findIndex((h) => ["end", "end_date", "end date"].includes(h)),
+    contributors: header.findIndex((h) =>
+      ["contributors", "number of contributors", "num_contributors", "noofcontributors"].includes(h)
+    ),
+  };
+  const data = [];
+  for (let i = 1; i < rows.length; i++) {
+    const row = rows[i];
+    if (!row.length) continue;
+    const get = (j) => (j >= 0 ? row[j] || "" : "");
+    data.push({
+      name: get(idx.name),
+      code: get(idx.code),
+      client: get(idx.client),
+      status: get(idx.status) || "Active",
+      start_date: get(idx.start),
+      end_date: get(idx.end),
+      contributors: get(idx.contributors),
+    });
+  }
+  return data.filter((r) => r.name || r.code || r.client);
+};
+
+const showProjectBulkUploadModal = () => {
+  const formHTML = `
+    <div class="form-group">
+      <label for="proj-csv-file">Upload CSV</label>
+      <input type="file" id="proj-csv-file" accept=".csv" />
+      <small>Columns: name, code, client, status, start_date, end_date, contributors</small>
+    </div>
+    <div id="proj-upload-preview" style="max-height:180px; overflow:auto; margin-top:12px;"></div>
+  `;
+  renderModal("Bulk Upload Projects", formHTML, "proj-upload-submit", "normal", "Upload");
+  const form = document.getElementById("modal-form");
+  if (form) {
+    form.addEventListener("submit", handleProjectBulkUpload);
+  }
+  const fileInput = document.getElementById("proj-csv-file");
+  if (fileInput) {
+    fileInput.addEventListener("change", async (e) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      const text = await file.text();
+      const rows = parseProjectsCSV(text);
+      const preview = document.getElementById("proj-upload-preview");
+      if (preview) {
+        preview.innerHTML =
+          rows && rows.length
+            ? `<pre style="white-space:pre-wrap; font-size:12px;">${rows
+                .slice(0, 5)
+                .map((r, idx) => `${idx + 1}. ${r.name} | ${r.code} | ${r.client} | ${r.status}`)
+                .join("\n")}${rows.length > 5 ? `\n...and ${rows.length - 5} more` : ""}</pre>`
+            : "<div>No rows detected.</div>";
+      }
+    });
+  }
+};
+
+const handleProjectBulkUpload = async (e) => {
+  e.preventDefault();
+  const fileInput = document.getElementById("proj-csv-file");
+  const file = fileInput?.files?.[0];
+  if (!file) {
+    alert("Please select a CSV file");
+    return;
+  }
+  let rows = [];
+  try {
+    const text = await file.text();
+    rows = parseProjectsCSV(text);
+  } catch (err) {
+    console.error("Failed to read CSV", err);
+    alert("Could not read the CSV file.");
+    return;
+  }
+  if (!rows.length) {
+    alert("No valid project rows found in CSV.");
+    return;
+  }
+  try {
+    const resp = await fetch(`${PROJECTS_API}/bulk`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ projects: rows }),
+    });
+    if (!resp.ok) {
+      const errText = await resp.text();
+      throw new Error(errText || `Bulk upload failed with status ${resp.status}`);
+    }
+    await fetchProjects(); // refresh list
+    closeModal();
+    alert(`Uploaded ${rows.length} projects`);
+  } catch (err) {
+    console.error("Bulk upload failed", err);
+    alert(`Bulk upload failed: ${err.message || err}`);
+  }
 };
 
 const getProjectAccess = () => {
@@ -560,14 +679,10 @@ const renderList = () => {
   });
 };
 
-export const renderProjectsRoute = async () => {
-  await fetchProjects();
-  const { id, tab } = getQuery();
-  if (id) return renderProjectDetails(id, tab || "details");
-  renderList();
-};
+// expose bulk upload helpers globally (for click handlers)
+window.showProjectBulkUploadModal = showProjectBulkUploadModal;
+window.handleProjectBulkUpload = handleProjectBulkUpload;
 
-// ---------- Routing helpers ----------
 const getQuery = () => {
   const h = window.location.hash || "#/time-projects";
   const q = {};
@@ -603,7 +718,7 @@ const getQuery = () => {
 // ---------- Backend integration ----------
 async function fetchProjects() {
   try {
-    const res = await fetch(API_BASE);
+    const res = await fetch(PROJECTS_API);
     const data = await res.json();
     const list = (data && data.projects) || [];
     // map to UI shape
@@ -1085,12 +1200,15 @@ const renderProjectDetails = (id, tab) => {
         //             const opt = document.createElement("option");
         //             opt.value = m.name;
         //             opt.textContent = m.name;
+
+        //             // ✅ Pre-select existing manager when editing
         //             if (
         //               p.manager &&
         //               p.manager.trim().toLowerCase() === m.name.trim().toLowerCase()
         //             ) {
         //               opt.selected = true;
         //             }
+
         //             mgrSelect.appendChild(opt);
         //           });
         //         })();
@@ -1100,7 +1218,7 @@ const renderProjectDetails = (id, tab) => {
         //           const clientSelect = document.getElementById("pd-client");
         //           clientSelect.innerHTML = `<option value="">Loading...</option>`;
 
-        //           const res = await fetch("http://localhost:5000/api/clients/names");
+        //           const res = await fetch(`${API_BASE}/api/clients/names`);
         //           const data = await res.json();
 
         //           if (!res.ok || !data.clients) {
@@ -1113,6 +1231,8 @@ const renderProjectDetails = (id, tab) => {
         //             const opt = document.createElement("option");
         //             opt.value = c.crc6f_clientname;
         //             opt.textContent = c.crc6f_clientname;
+
+        //             // ✅ Pre-select existing client when editing
         //             if (
         //               p.client &&
         //               p.client.trim().toLowerCase() ===
@@ -1120,6 +1240,7 @@ const renderProjectDetails = (id, tab) => {
         //             ) {
         //               opt.selected = true;
         //             }
+
         //             clientSelect.appendChild(opt);
         //           });
         //         })();
@@ -1465,7 +1586,8 @@ async function fetchClientsList() {
 }
 
 // ----- Details Tab -----
-
+// ----- Details Tab (replace existing contributorsTab) -----
+// ----- Details Tab (FINAL FIXED VERSION) -----
 const detailsTab = (p) => {
   let isEditMode = false; // 👈 ADD THIS LINE HERE
 
@@ -1585,9 +1707,7 @@ const saveDetails = async (id) => {
     };
 
     const res = await fetch(
-      `http://localhost:5000/api/projects/${encodeURIComponent(
-        project._recordId
-      )}`,
+      `${PROJECTS_API}/${encodeURIComponent(project._recordId)}`,
       {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -1630,8 +1750,6 @@ const fromISO = (s) => {
 
 // ----- Contributors Tab (replace existing contributorsTab) -----
 // ----- Contributors Tab (FINAL FIXED VERSION) -----
-
-// ✅ FINAL CONTRIBUTORS TAB (Single Add Button + Working Modal)
 const contributorsTab = (p) => {
   return `
     <div class="contributors-section" style="padding:10px;">
@@ -1647,33 +1765,21 @@ const contributorsTab = (p) => {
 };
 
 // ---------------------- Contributors backend helpers ----------------------
-
-// Use API_BASE defined at top: 'http://localhost:5000/api/projects'
-const CONTRIBUTORS_API_BASE = API_BASE; // already points to /api/projects
-
-/**
- * Fetch contributors from backend for a project (projectCode like VTAB001)
- */
-async function fetchContributors(projectCode) {
+async function fetchContributors(projectId) {
   try {
-    const url = `${CONTRIBUTORS_API_BASE}/${encodeURIComponent(
-      projectCode
-    )}/contributors`;
-    const res = await fetch(url, {
-      method: "GET",
-      headers: { Accept: "application/json" },
-    });
-    if (!res.ok) {
-      const txt = await res.text();
-      console.error("Failed to load contributors", txt);
+    const res = await fetch(`${PROJECTS_API}/${projectId}/contributors`);
+    const data = await res.json();
+
+    if (!res.ok || !data.contributors) {
+      console.error("Failed to load contributors", data);
       document.getElementById(
         "contributors-container"
       ).innerHTML = `<div class="placeholder-text">Failed to load contributors</div>`;
       return;
     }
-    const data = await res.json();
-    const list = (data && data.contributors) || [];
-    renderContributorsList(projectCode, list);
+
+    const list = data.contributors || [];
+    renderContributorsList(projectId, list);
   } catch (err) {
     console.error("Error fetching contributors", err);
     const c = document.getElementById("contributors-container");
@@ -1682,9 +1788,115 @@ async function fetchContributors(projectCode) {
   }
 }
 
-/**
- * Show Edit Contributor Modal (for editing existing contributor)
- */
+function renderContributorsList(projectId, list) {
+  const container = document.getElementById("contributors-container");
+  const countEl = document.getElementById("contributors-count");
+  if (countEl) countEl.textContent = String(list.length);
+
+  if (!container) return;
+
+  const { canManage } = getProjectAccess();
+
+  if (!list || list.length === 0) {
+    container.innerHTML = `<table class="table"><tbody><tr><td colspan="5" class="placeholder-text">No contributors added</td></tr></tbody></table>`;
+    return;
+  }
+
+  const rows = list
+    .map((c) => {
+      const actionsCell = canManage
+        ? `<td style="text-align:right;">
+        <button class="icon-btn ctr-edit" data-record="${encodeURIComponent(
+          c.record_id || c.contributor_id || ""
+        )}" title="Edit"><i class="fa-solid fa-pen-to-square"></i></button>
+        <button class="icon-btn ctr-del" data-record="${encodeURIComponent(
+          c.record_id || c.contributor_id || ""
+        )}" title="Remove"><i class="fa-solid fa-trash" style="color:#d93025;"></i></button>
+      </td>`
+        : "";
+      return `
+    <tr>
+      <td>${escapeHtml(c.employee_id || c.employeeId || "")}</td>
+      <td>${escapeHtml(c.employee_name || c.employeeName || "")}</td>
+     <td>${escapeHtml(c.designation || "N/A")}</td>
+
+     <td>${escapeHtml(c.billing_type || c.billingType || "Billable")}</td>
+
+      ${actionsCell}
+    </tr>
+  `;
+    })
+    .join("");
+
+  container.innerHTML = `
+    <table class="table">
+  <thead>
+    <tr>
+      <th>Employee ID</th>
+      <th>Employee Name</th>
+      <th>Designation</th>
+      <th>Billing</th>
+      ${canManage ? '<th style="text-align:right;">Actions</th>' : ""}
+    </tr>
+  </thead>
+
+    <tbody>${rows}</tbody></table>
+  `;
+
+  if (!canManage) return;
+
+  document.querySelectorAll(".ctr-edit").forEach((b) => {
+    b.addEventListener("click", (e) => {
+      const record = decodeURIComponent(
+        e.currentTarget.getAttribute("data-record") || ""
+      );
+
+      const rec = list.find(
+        (x) =>
+          x.guid === record ||
+          x.crc6f_hr_projectcontributorsid === record ||
+          x.record_id === record
+      );
+
+      if (!rec) return alert("No record found");
+
+      showEditContributorModal(
+        projectId,
+        rec.guid || rec.crc6f_hr_projectcontributorsid || record,
+        rec
+      );
+    });
+  });
+
+  document.querySelectorAll(".ctr-del").forEach((b) => {
+    b.addEventListener("click", async (e) => {
+      const record = decodeURIComponent(
+        e.currentTarget.getAttribute("data-record") || ""
+      );
+
+      const rec = list.find(
+        (x) =>
+          x.guid === record ||
+          x.crc6f_hr_projectcontributorsid === record ||
+          x.record_id === record
+      );
+      const guid = rec?.guid || rec?.crc6f_hr_projectcontributorsid || record;
+
+      if (!guid) return alert("❌ GUID missing — cannot delete this record.");
+      if (!confirm("🗑️ Delete this contributor?")) return;
+
+      try {
+        await deleteContributorFromBackend(guid);
+        alert("✅ Contributor deleted successfully!");
+        await fetchContributors(projectId);
+      } catch (err) {
+        console.error("🔥 Delete failed:", err);
+        alert("❌ Failed to delete contributor — check backend logs.");
+      }
+    });
+  });
+}
+
 function showEditContributorModal(projectId, recordId, contributor) {
   const formHtml = `
     <div class="modal-form modern-form contributor-form">
@@ -1733,6 +1945,7 @@ function showEditContributorModal(projectId, recordId, contributor) {
     try {
       const res = await fetch("http://localhost:5000/api/employees/all");
       const data = await res.json();
+
       const empSelect = document.getElementById("ct-empname-edit");
       empSelect.innerHTML = '<option value="">-- Select Employee --</option>';
 
@@ -1849,128 +2062,26 @@ function showEditContributorModal(projectId, recordId, contributor) {
   };
 }
 
-/**
- * Render the contributors table into #contributors-container
- */
-function renderContributorsList(projectCode, list) {
-  const container = document.getElementById("contributors-container");
-  const countEl = document.getElementById("contributors-count");
-  if (countEl) countEl.textContent = String(list.length);
+async function deleteContributorFromBackend(recordId) {
+  const BACKEND_URL = "http://localhost:5000";
+  const url = `${BACKEND_URL}/api/contributors/${encodeURIComponent(recordId)}`;
+  console.log("🗑 Sending DELETE request to:", url);
 
-  if (!container) return;
+  const res = await fetch(url, { method: "DELETE" });
 
-  const { canManage } = getProjectAccess();
-
-  if (!list || list.length === 0) {
-    container.innerHTML = `<table class="table"><tbody><tr><td colspan="5" class="placeholder-text">No contributors added</td></tr></tbody></table>`;
-    return;
+  if (!res.ok) {
+    const txt = await res.text();
+    console.error("❌ Delete failed:", txt);
+    throw new Error("Delete failed: " + txt);
   }
 
-  const rows = list
-    .map((c) => {
-      const actionsCell = canManage
-        ? `<td style="text-align:right;">
-        <button class="icon-btn ctr-edit" data-record="${encodeURIComponent(
-          c.record_id || c.contributor_id || ""
-        )}" title="Edit"><i class="fa-solid fa-pen-to-square"></i></button>
-        <button class="icon-btn ctr-del" data-record="${encodeURIComponent(
-          c.record_id || c.contributor_id || ""
-        )}" title="Remove"><i class="fa-solid fa-trash" style="color:#d93025;"></i></button>
-      </td>`
-        : "";
-      return `
-    <tr>
-      <td>${escapeHtml(c.employee_id || c.employeeId || "")}</td>
-      <td>${escapeHtml(c.employee_name || c.employeeName || "")}</td>
-     <td>${escapeHtml(c.designation || "N/A")}</td>
-
-     <td>${escapeHtml(c.billing_type || c.billingType || "Billable")}</td>
-
-      ${actionsCell}
-    </tr>
-  `;
-    })
-    .join("");
-
-  container.innerHTML = `
-    <table class="table">
-  <thead>
-    <tr>
-      <th>Employee ID</th>
-      <th>Employee Name</th>
-      <th>Designation</th>
-      <th>Billing</th>
-      ${canManage ? '<th style="text-align:right;">Actions</th>' : ""}
-    </tr>
-  </thead>
-
-    <tbody>${rows}</tbody></table>
-  `;
-
-  if (!canManage) return;
-
-  document.querySelectorAll(".ctr-edit").forEach((b) => {
-    b.addEventListener("click", (e) => {
-      const record = decodeURIComponent(
-        e.currentTarget.getAttribute("data-record") || ""
-      );
-
-      const rec = list.find(
-        (x) =>
-          x.guid === record ||
-          x.crc6f_hr_projectcontributorsid === record ||
-          x.record_id === record
-      );
-
-      if (!rec) return alert("No record found");
-
-      showEditContributorModal(
-        projectCode,
-        rec.guid || rec.crc6f_hr_projectcontributorsid || record,
-        rec
-      );
-    });
-  });
-
-  document.querySelectorAll(".ctr-del").forEach((b) => {
-    b.addEventListener("click", async (e) => {
-      const record = decodeURIComponent(
-        e.currentTarget.getAttribute("data-record") || ""
-      );
-
-      const rec = list.find(
-        (x) =>
-          x.guid === record ||
-          x.crc6f_hr_projectcontributorsid === record ||
-          x.record_id === record
-      );
-      const guid = rec?.guid || rec?.crc6f_hr_projectcontributorsid || record;
-
-      if (!guid) return alert("❌ GUID missing — cannot delete this record.");
-      if (!confirm("🗑️ Delete this contributor?")) return;
-
-      try {
-        await deleteContributorFromBackend(guid);
-        alert("✅ Contributor deleted successfully!");
-        await fetchContributors(projectCode);
-      } catch (err) {
-        console.error("🔥 Delete failed:", err);
-        alert("❌ Failed to delete contributor — check backend logs.");
-      }
-    });
-  });
+  console.log("✅ Contributor deleted successfully on backend!");
+  return true;
 }
 
-/**
- * Show contributor modal. If `c` is provided it becomes an edit form, otherwise create new.
- * Uses your existing renderModal(title, html, saveBtnId) function from project.js
- */
-// ✅ FINAL: Add/Edit Contributor Modal with Working Save
-// ✅ FINAL: Add/Edit Contributor Modal with Working Save & Full Employee Dropdown
 function showContributorModal(projectId, contributor = null) {
   const isEdit = !!contributor;
 
-  // ✅ --- MODERN MODAL FORM STRUCTURE ---
   const formHtml = `
     <div class="modal-form modern-form contributor-form">
       <div class="form-section">
@@ -1980,7 +2091,7 @@ function showContributorModal(projectId, contributor = null) {
             <h3>${isEdit ? "Edit contributor" : "Add contributor"}</h3>
           </div>
         </div>
-        <div class="form-grid two-col" id="contributor-form">
+        <div class="form-grid two-col">
           <div class="form-field">
             <label class="form-label" for="ct-empname">Employee Name</label>
             <select class="input-control" id="ct-empname">
@@ -2011,7 +2122,6 @@ function showContributorModal(projectId, contributor = null) {
     </div>
   `;
 
-  // ✅ Render modal (uses your existing modal rendering system)
   renderModal(
     isEdit ? "Edit Contributor" : "Add Contributor",
     formHtml,
@@ -2038,7 +2148,19 @@ function showContributorModal(projectId, contributor = null) {
           option.textContent = label;
           empSelect.appendChild(option);
         });
-        console.log(`✅ Loaded ${data.employees.length} employees`);
+
+        // Preselect existing employee in dropdown
+        setTimeout(() => {
+          for (let option of empSelect.options) {
+            if (
+              option.getAttribute("data-id") ===
+              (contributor.employee_id || contributor.employeeId)
+            ) {
+              option.selected = true;
+              break;
+            }
+          }
+        }, 300);
       } else {
         console.warn("⚠️ No employees found to populate dropdown");
       }
@@ -2113,9 +2235,7 @@ function showContributorModal(projectId, contributor = null) {
 
       try {
         const res = await fetch(
-          `http://localhost:5000/api/projects/${encodeURIComponent(
-            projectId
-          )}/contributors`,
+          `http://localhost:5000/api/projects/${projectId}/contributors`,
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -2144,13 +2264,7 @@ function showContributorModal(projectId, contributor = null) {
   });
 }
 
-/**
- * Save contributor to backend.
- * - For create: pass payload without record_id => POST /api/projects/{projectCode}/contributors
- * - For update: pass { record_id, ...fields } => PATCH /api/contributors/{record_id}
- * If inline flag true, use minimal payload mapping.
- */
-async function saveContributorToBackend(projectCode, payload, inline = false) {
+async function saveContributorToBackend(projectId, payload, inline = false) {
   // if payload contains record_id => PATCH, else POST
   if (payload.record_id) {
     const rid = payload.record_id;
@@ -2175,7 +2289,7 @@ async function saveContributorToBackend(projectCode, payload, inline = false) {
   } else {
     // create
     const url = `${CONTRIBUTORS_API_BASE}/${encodeURIComponent(
-      projectCode
+      projectId
     )}/contributors`;
     // map fields the backend expects (it accepts employeeId, employeeName, billingType, assignedDate)
     const body = {
@@ -2198,9 +2312,6 @@ async function saveContributorToBackend(projectCode, payload, inline = false) {
   }
 }
 
-/**
- * Delete contributor from backend by record id
- */
 async function deleteContributorFromBackend(recordId) {
   const BACKEND_URL = "http://localhost:5000";
   const url = `${BACKEND_URL}/api/contributors/${encodeURIComponent(recordId)}`;
@@ -2218,7 +2329,6 @@ async function deleteContributorFromBackend(recordId) {
   return true;
 }
 
-// small util to escape HTML values inserted into form/HTML
 function escapeHtml(s) {
   if (s == null) return "";
   return String(s)
@@ -2505,298 +2615,6 @@ async function deleteBoard(guid, projectId) {
 }
 
 // ---------- CRM: dynamic columns (replace the old CRM_COLS + crmTab block) ----------
-
-// default fallback columns (kept as constant defaults only)
-// const DEFAULT_CRM_COLS = ["New", "In Progress", "Hold", "Done"];
-window.GLOBAL_CRM_COLS = ["New", "In Progress", "Hold", "Completed"];
-
-// -----------------------
-// Column color helpers / globals
-// -----------------------
-const DEFAULT_COLORS = {
-  New: "#E0E0E0", // light grey
-  "In Progress": "#FFF7C5", // light yellow
-  Hold: "#FFCCCC", // light red
-  Completed: "#C8FACC", // light green
-};
-
-// Auto-smooth colors to remove dotted grainy effect
-function smoothColor(color) {
-  if (!color) return color;
-
-  const corrected = {
-    "#007bff": "#1565c0",
-    "#2196f3": "#1976d2",
-    blue: "#1976d2",
-    red: "#b71c1c",
-    orange: "#ef6c00",
-    green: "#2e7d32",
-  };
-
-  const key = color.toLowerCase();
-  return corrected[key] || color;
-}
-// map name -> hex color (populated from DB fetch)
-const COLUMN_COLORS = { ...DEFAULT_COLORS }; // start with defaults
-
-// -----------------------
-// Fetch columns (returns array of { name, color })
-// -----------------------
-async function fetchColumns(projectId, boardCode = "") {
-  try {
-    const q = boardCode ? `?board=${encodeURIComponent(boardCode)}` : "";
-    const res = await fetch(
-      `http://localhost:5000/api/projects/${encodeURIComponent(
-        projectId
-      )}/columns${q}`
-    );
-
-    if (!res.ok) {
-      console.warn("Columns fetch failed, using defaults", await res.text());
-      // return default columns as objects
-      return Object.keys(DEFAULT_COLORS).map((n) => ({
-        name: n,
-        color: DEFAULT_COLORS[n],
-      }));
-    }
-
-    const data = await res.json();
-    // expect { success:true, columns: [{ id, name, color}, ...] } or { columns: [...] }
-    const raw = data.columns || [];
-    // normalize to array of {name, color}
-    const cols = raw
-      .map((c) => {
-        if (typeof c === "string")
-          return { name: c, color: DEFAULT_COLORS[c] || null };
-        return {
-          name: c.name || c.crc6f_taskstatuscolumns,
-          color: smoothColor(
-            c.color || c.crc6f_colorcode || DEFAULT_COLORS[c.name] || null
-          ),
-        };
-      })
-      .filter(Boolean);
-
-    // populate COLUMN_COLORS map for use in rendering
-    cols.forEach((c) => {
-      if (c && c.name) {
-        COLUMN_COLORS[c.name] = c.color || DEFAULT_COLORS[c.name] || "#f5f5f5";
-      }
-    });
-
-    return cols;
-  } catch (err) {
-    console.error("fetchColumns error:", err);
-    return Object.keys(DEFAULT_COLORS).map((n) => ({
-      name: n,
-      color: DEFAULT_COLORS[n],
-    }));
-  }
-}
-
-// -----------------------
-// Open Add Column Modal (name + color picker) - replace old openAddColumnModal
-// -----------------------
-window.openAddColumnModal = async function (projectId, boardCode = "") {
-  const modalHtml = `
-    <div style="display:flex; flex-direction:column; gap:14px; padding:10px;">
-      <div>
-        <label>Column name</label>
-        <input id="new-col-name" type="text" class="form-control" placeholder="e.g. QA, Testing" />
-      </div>
-
-      <div>
-        <label>Color</label>
-        <input id="new-col-color" type="text" class="form-control" placeholder="e.g. orange, #FF8800, rgb(200,50,50)" />
-      </div>
-    </div>
-  `;
-
-  renderModal("Add Column", modalHtml, "create-col-save");
-
-  const saveBtn = document.getElementById("create-col-save");
-  saveBtn.onclick = async () => {
-    const name = (document.getElementById("new-col-name").value || "").trim();
-    const color = smoothColor(
-      (document.getElementById("new-col-color").value || "").trim()
-    );
-
-    if (!name) {
-      alert("Column name is required");
-      return;
-    }
-
-    // Check duplicates
-    const existing = await fetchColumns(projectId, boardCode);
-    const existingNames = existing
-      .map((col) =>
-        typeof col === "string" ? col : col.name || col.crc6f_taskstatuscolumns
-      )
-      .filter(Boolean)
-      .map((n) => n.toLowerCase());
-
-    if (existingNames.includes(name.toLowerCase())) {
-      alert("⚠ Column already exists.");
-      return;
-    }
-    const payload = { name, board: boardCode, color };
-
-    const res = await fetch(
-      ` http://localhost:5000/api/projects/${projectId}/columns`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      }
-    );
-
-    const data = await res.json().catch(() => ({}));
-
-    if (!res.ok) {
-      alert("❌ Failed: " + (data.error || "Unknown"));
-      return;
-    }
-
-    alert("Column created");
-    closeModal();
-    renderProjectDetails(projectId, "crm");
-  };
-};
-
-// -----------------------
-// Create column (sends color)
-// -----------------------
-async function createColumn(projectId, boardCode, columnName, colorHex = null) {
-  try {
-    const payload = {
-      board: boardCode || null,
-      name: columnName,
-      color: colorHex || null,
-    };
-    const res = await fetch(
-      `http://localhost:5000/api/projects/${encodeURIComponent(
-        projectId
-      )}/columns`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      }
-    );
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok || data.success === false) {
-      throw new Error(data.error || `Status ${res.status}`);
-    }
-    return { ok: true, data };
-  } catch (err) {
-    console.error("createColumn error:", err);
-    return { ok: false, error: err.message || String(err) };
-  }
-}
-
-// -----------------------
-// Rename column frontend (PATCH) - keep keys oldName/newName
-// -----------------------
-async function renameColumnFrontend(projectId, boardId, oldName) {
-  // ❌ BLOCK RENAME FOR DEFAULT COLUMNS
-  if (
-    DEFAULT_COLS.map((x) => x.toLowerCase()).includes(oldName.toLowerCase())
-  ) {
-    alert("⚠ Default column cannot be renamed.");
-    return;
-  }
-
-  const newName = prompt(`Enter new name for "${oldName}":`)?.trim();
-  if (!newName) return;
-
-  const res = await fetch(
-    `http://localhost:5000/api/projects/${projectId}/columns`,
-    {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        board: boardId,
-        oldName: oldName,
-        newName: newName,
-      }),
-    }
-  );
-
-  const data = await res.json().catch(() => null);
-
-  if (!res.ok) {
-    alert("Rename failed: " + (data?.error || "Server error"));
-    return;
-  }
-
-  alert("Column renamed!");
-  // update local map and UI
-  COLUMN_COLORS[newName] =
-    COLUMN_COLORS[oldName] || DEFAULT_COLORS[newName] || "#f5f5f5";
-  delete COLUMN_COLORS[oldName];
-  renderProjectDetails(projectId, "crm");
-}
-
-// -----------------------
-// Delete column frontend (DELETE) - sends board + name
-// -----------------------
-async function deleteColumnFrontend(projectId, boardId, columnName) {
-  // ❌ BLOCK DELETE FOR DEFAULT COLUMNS
-  if (
-    DEFAULT_COLS.map((x) => x.toLowerCase()).includes(columnName.toLowerCase())
-  ) {
-    alert("⚠ Default column cannot be deleted.");
-    return;
-  }
-  if (!confirm(`Delete column "${columnName}"?`)) return;
-
-  const res = await fetch(
-    `http://localhost:5000/api/projects/${projectId}/columns`,
-    {
-      method: "DELETE",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        board: boardId,
-        name: columnName,
-      }),
-    }
-  );
-
-  const data = await res.json().catch(() => null);
-
-  if (!res.ok) {
-    alert("Delete failed: " + (data?.error || "Server error"));
-    return;
-  }
-
-  alert("Column deleted!");
-  delete COLUMN_COLORS[columnName];
-  renderProjectDetails(projectId, "crm");
-}
-
-window.openColumnMenu = async function (projectId, boardId, columnName) {
-  if (!getProjectAccess().canManage) {
-    alert("You do not have permission to modify columns.");
-    return;
-  }
-  const choice = prompt(
-    `Choose:
-     1 = Delete column
-     2 = Rename column`
-  );
-
-  if (!choice) return;
-
-  if (choice.trim() === "1") {
-    deleteColumnFrontend(projectId, boardId, columnName);
-  } else if (choice.trim() === "2") {
-    renameColumnFrontend(projectId, boardId, columnName);
-  } else {
-    alert("Invalid choice");
-  }
-};
-
-// ----------------- crmTab: uses dynamic columns -----------------
 // -----------------------------------------------
 // DEFAULT COLUMNS (never disappear)
 // -----------------------------------------------
@@ -2849,120 +2667,155 @@ const crmTab = async (p, canManage = null) => {
       )}`
     );
 
-    if (colRes.ok) {
-      const colData = await colRes.json();
-      columns = colData.columns || [];
+    if (!colRes.ok) {
+      console.warn("Columns fetch failed, using defaults", await colRes.text());
+      // return default columns as objects
+      return Object.keys(DEFAULT_COLORS).map((n) => ({
+        name: n,
+        color: DEFAULT_COLORS[n],
+      }));
     }
-  } catch (err) {
-    console.warn("⚠️ Column fetch failed. Using defaults only.");
-  }
 
-  // -----------------------------------------------
-  // 2️⃣ MERGE DEFAULT + DB COLUMNS (IMPORTANT FIX)
-  // -----------------------------------------------
-  // Fix: normalize DB columns first, then merge with defaults
-  // full DB objects still inside columns
-  // extract only names for CRM columns
-  const columnNames = columns
-    .map((c) =>
-      typeof c === "string"
-        ? c.trim()
-        : (c.name || c.crc6f_taskstatuscolumns || "").trim()
-    )
-    .filter(Boolean);
+    const data = await colRes.json();
+    // expect { success:true, columns: [{ id, name, color}, ...] } or { columns: [...] }
+    const raw = data.columns || [];
+    // normalize to array of {name, color}
+    const cols = raw
+      .map((c) => {
+        if (typeof c === "string")
+          return { name: c, color: DEFAULT_COLORS[c] || null };
+        return {
+          name: c.name || c.crc6f_taskstatuscolumns,
+          color: smoothColor(
+            c.color || c.crc6f_colorcode || DEFAULT_COLORS[c.name] || null
+          ),
+        };
+      })
+      .filter(Boolean);
 
-  // merge default + names
-  window.GLOBAL_CRM_COLS = Array.from(
-    new Set([...DEFAULT_COLS, ...columnNames])
-  );
-  // -----------------------------------------------
-  // 3️⃣ Fetch tasks
-  // -----------------------------------------------
-  const res = await fetch(
-    `http://localhost:5000/api/projects/${projectId}/tasks`
-  );
-  const data = await res.json();
-
-  if (!res.ok || !data.success) {
-    return `<div class="placeholder-text">❌ Failed to load tasks.</div>`;
-  }
-
-  let tasks = data.tasks || [];
-
-  // Filter tasks only for this board
-  if (selectedBoard) {
-    tasks = tasks.filter(
-      (t) =>
-        (t.board_id || "").trim().toLowerCase() ===
-        selectedBoard.trim().toLowerCase()
-    );
-  }
-
-  // -----------------------------------------------
-  // 4️⃣ Group tasks by column
-  // -----------------------------------------------
-  const byCol = {};
-  window.GLOBAL_CRM_COLS.forEach((c) => (byCol[c] = []));
-
-  tasks.forEach((t) => {
-    let s = (t.task_status || "New").trim();
-
-    // Fix case sensitivity
-    // Fix case sensitivity & support objects
-    const match = window.GLOBAL_CRM_COLS.find((col) => {
-      const colName =
-        typeof col === "string"
-          ? col
-          : col.name || col.crc6f_taskstatuscolumns || "";
-
-      return colName && colName.toLowerCase().trim() === s.toLowerCase().trim();
+    // populate COLUMN_COLORS map for use in rendering
+    cols.forEach((c) => {
+      if (c && c.name) {
+        COLUMN_COLORS[c.name] = c.color || DEFAULT_COLORS[c.name] || "#f5f5f5";
+      }
     });
 
-    // Always resolve finalStatus as a pure string
-    let finalName =
-      typeof match === "object"
-        ? match.name || match.crc6f_taskstatuscolumns || "New"
-        : match || "New";
+    return cols;
+  } catch (err) {
+    console.error("fetchColumns error:", err);
+    return Object.keys(DEFAULT_COLORS).map((n) => ({
+      name: n,
+      color: DEFAULT_COLORS[n],
+    }));
+  }
+}
 
-    if (!byCol[finalName]) byCol[finalName] = [];
-    byCol[finalName].push(t);
+// -----------------------------------------------
+// 2️⃣ MERGE DEFAULT + DB COLUMNS (IMPORTANT FIX)
+// -----------------------------------------------
+// Fix: normalize DB columns first, then merge with defaults
+// full DB objects still inside columns
+// extract only names for CRM columns
+const columnNames = columns
+  .map((c) =>
+    typeof c === "string"
+      ? c.trim()
+      : (c.name || c.crc6f_taskstatuscolumns || "").trim()
+  )
+  .filter(Boolean);
+
+// merge default + names
+window.GLOBAL_CRM_COLS = Array.from(
+  new Set([...DEFAULT_COLS, ...columnNames])
+);
+// -----------------------------------------------
+// 3️⃣ Fetch tasks
+// -----------------------------------------------
+const res = await fetch(
+  `http://localhost:5000/api/projects/${projectId}/tasks`
+);
+const data = await res.json();
+
+if (!res.ok || !data.success) {
+  return `<div class="placeholder-text">❌ Failed to load tasks.</div>`;
+}
+
+let tasks = data.tasks || [];
+
+// Filter tasks only for this board
+if (selectedBoard) {
+  tasks = tasks.filter(
+    (t) =>
+      (t.board_id || "").trim().toLowerCase() ===
+      selectedBoard.trim().toLowerCase()
+  );
+}
+
+// -----------------------------------------------
+// 4️⃣ Group tasks by column
+// -----------------------------------------------
+const byCol = {};
+window.GLOBAL_CRM_COLS.forEach((c) => (byCol[c] = []));
+
+tasks.forEach((t) => {
+  let s = (t.task_status || "New").trim();
+
+  // Fix case sensitivity
+  // Fix case sensitivity & support objects
+  const match = window.GLOBAL_CRM_COLS.find((col) => {
+    const colName =
+      typeof col === "string"
+        ? col
+        : col.name || col.crc6f_taskstatuscolumns || "";
+
+    return colName && colName.toLowerCase().trim() === s.toLowerCase().trim();
   });
 
-  // -----------------------------------------------
-  // 5️⃣ Build column HTML
-  // -----------------------------------------------
-  const colHtml = (c, idx) => {
-    const colObj = columns.find(
-      (col) => (col.name || col.crc6f_taskstatuscolumns) === c
-    );
-    const bg = smoothColor(
-      colObj?.color || COLUMN_COLORS[c] || getDefaultColor(c)
-    );
+  // Always resolve finalStatus as a pure string
+  let finalName =
+    typeof match === "object"
+      ? match.name || match.crc6f_taskstatuscolumns || "New"
+      : match || "New";
 
-    // // 🔐 ACCESS CONTROL FOR L1 (disable CRM actions)
-    // const role = localStorage.getItem("role") || "L1";
-    // if (role === "L1") {
-    //   // hide "+ Add Column" button
-    //   setTimeout(() => {
-    //     document.querySelector(".add-col-box")?.remove();
-    //   }, 50);
+  if (!byCol[finalName]) byCol[finalName] = [];
+  byCol[finalName].push(t);
+});
 
-    //   // hide 3-dot column menus
-    //   setTimeout(() => {
-    //     document.querySelectorAll(".col-menu").forEach((el) => el.remove());
-    //   }, 50);
+// -----------------------------------------------
+// 5️⃣ Build column HTML
+// -----------------------------------------------
+const colHtml = (c, idx) => {
+  const colObj = columns.find(
+    (col) => (col.name || col.crc6f_taskstatuscolumns) === c
+  );
+  const bg = smoothColor(
+    colObj?.color || COLUMN_COLORS[c] || getDefaultColor(c)
+  );
 
-    //   // hide "Add New Task" button (your dropdown)
-    //   setTimeout(() => {
-    //     document.getElementById("crm-add-dd")?.remove();
-    //   }, 50);
-    // }
+  // 🔐 ACCESS CONTROL FOR L1 (disable CRM actions)
+  // const role = localStorage.getItem("role") || "L1";
+  // if (role === "L1") {
+  //   // hide "+ Add Column" button
+  //   setTimeout(() => {
+  //     document.querySelector(".add-col-box")?.remove();
+  //   }, 50);
 
-    const menuHtml = allowManage
-      ? `<span class="col-menu" onclick="openColumnMenu('${projectId}','${selectedBoard}','${c}')">⋮</span>`
-      : "";
+  //   // hide 3-dot column menus
+  //   setTimeout(() => {
+  //     document.querySelectorAll(".col-menu").forEach((el) => el.remove());
+  //   }, 50);
 
-    return `
+  //   // hide "Add New Task" button (your dropdown)
+  //   setTimeout(() => {
+  //     document.getElementById("crm-add-dd")?.remove();
+  //   }, 50);
+  // }
+
+  const menuHtml = allowManage
+    ? `<span class="col-menu" onclick="openColumnMenu('${projectId}','${selectedBoard}','${c}')">⋮</span>`
+    : "";
+
+  return `
     <div class="kan-col" data-col="${c}" style="background:${bg};">
       <div class="kan-head">
         <div style="display:flex; align-items:center; gap:8px;">
@@ -2976,20 +2829,20 @@ const crmTab = async (p, canManage = null) => {
       </div>
     </div>
   `;
-  };
+};
 
-  // -----------------------------------------------
-  // 6️⃣ Enable Drag Drop
-  // -----------------------------------------------
-  setTimeout(() => enableDragDrop(projectId, selectedBoard), 100);
+// -----------------------------------------------
+// 6️⃣ Enable Drag Drop
+// -----------------------------------------------
+setTimeout(() => enableDragDrop(projectId, selectedBoard), 100);
 
-  const displayBoardName = selectedBoardName || selectedBoard;
+const displayBoardName = selectedBoardName || selectedBoard;
 
-  const headerText = displayBoardName
-    ? `<div style="padding:10px 0 0 10px;"><strong>Board:</strong> ${displayBoardName}</div>`
-    : "";
+const headerText = displayBoardName
+  ? `<div style="padding:10px 0 0 10px;"><strong>Board:</strong> ${displayBoardName}</div>`
+  : "";
 
-  return `
+return `
     ${headerText}
 
     <div class="kan-wrap">
@@ -3493,7 +3346,7 @@ function renderTaskFormPage(projectId, boardName, defaultStatus = "New") {
   async function populateContributorsDropdown() {
     try {
       const res = await fetch(
-        `http://localhost:5000/api/projects/${projectId}/contributors`
+        `${PROJECTS_API}/${projectId}/contributors`
       );
       const data = await res.json();
 
@@ -3605,7 +3458,7 @@ async function deleteTask(taskId, projectId) {
 async function openTaskDetailsPage(projectId, taskId) {
   const app = document.getElementById("app-content");
 
-  const res = await fetch(`http://localhost:5000/api/tasks/${taskId}`);
+  const res = await fetch(`${API_BASE}/api/tasks/${taskId}`);
   if (!res.ok) {
     const txt = await res.text();
     app.innerHTML = `<div class="placeholder-text">Failed to load task: ${txt}</div>`;
@@ -3794,14 +3647,11 @@ async function openTaskDetailsPage(projectId, taskId) {
         due_date: dueDate,
       };
 
-      const resPatch = await fetch(
-        `http://localhost:5000/api/tasks/${taskId}`,
-        {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        }
-      );
+      const resPatch = await fetch(`${API_BASE}/api/tasks/${taskId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
 
       const resp = await resPatch.json().catch(() => ({ success: false }));
 
