@@ -367,6 +367,8 @@ const renderList = () => {
         <div class="projects-toolbar-actions">
           <button id="proj-add" class="btn btn-light" style="background: white; color: var(--primary-color); font-weight: 600; border-radius: 8px;">ADD NEW</button>
           <button id="proj-filter" class="btn btn-secondary" title="Filter"><i class="fa-solid fa-filter"></i></button>
+          <button id="proj-bulk-upload" class="btn btn-secondary" title="Bulk upload CSV"><i class="fa-solid fa-upload"></i></button>
+          <button id="proj-bulk-delete" class="btn btn-secondary" title="Bulk delete by Project ID"><i class="fa-solid fa-trash"></i></button>
           <button id="proj-more" class="btn btn-secondary" title="More"><i class="fa-solid fa-ellipsis-vertical"></i></button>
         </div>
       </div>
@@ -496,6 +498,14 @@ const renderList = () => {
     } else {
       addBtn.addEventListener("click", () => showProjectModal());
     }
+  }
+  const bulkUploadBtn = document.getElementById("proj-bulk-upload");
+  if (bulkUploadBtn) {
+    bulkUploadBtn.addEventListener("click", () => showProjectBulkUploadModal());
+  }
+  const bulkDeleteBtn = document.getElementById("proj-bulk-delete");
+  if (bulkDeleteBtn) {
+    bulkDeleteBtn.addEventListener("click", () => showProjectBulkDeleteModal());
   }
 
   document.querySelectorAll(".proj-edit").forEach((btn) => {
