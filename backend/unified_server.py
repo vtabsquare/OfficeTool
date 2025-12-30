@@ -3877,6 +3877,7 @@ def get_status(employee_id):
                 checkin_time = session.get("checkin_time")
                 attendance_id = session.get("attendance_id")
                 base_seconds = int(session.get("base_seconds") or 0)
+
                 # Ensure we always have a durable checkin_timestamp to drive elapsed
                 if session.get("checkin_timestamp") is None:
                     # Try to pull from login activity durable seconds
@@ -3901,19 +3902,49 @@ def get_status(employee_id):
                             session["checkin_timestamp"] = int(ct_dt.timestamp() * 1000)
                         except Exception:
                             pass
+
                 # Prefer durable timestamp for elapsed to avoid timezone/parse issues
+                now_ts = datetime.now().timestamp()
+                elapsed_candidates = []
                 checkin_ts_val = session.get("checkin_timestamp")
                 if checkin_ts_val is not None:
-                    elapsed = int(max(0, round(datetime.now().timestamp() - (checkin_ts_val / 1000.0))))
-                if elapsed <= 0:
-                    checkin_dt = datetime.fromisoformat(session["checkin_datetime"])
-                    elapsed = int((datetime.now() - checkin_dt).total_seconds())
-                if elapsed <= 0 and session.get("checkin_time"):
-                    ct_str = session["checkin_time"]
-                    ct_dt = datetime.strptime(ct_str, "%H:%M:%S").replace(year=datetime.now().year, month=datetime.now().month, day=datetime.now().day)
-                    elapsed = int((datetime.now() - ct_dt).total_seconds())
-                if elapsed < 0:
+                    try:
+                        ts = float(checkin_ts_val)
+                        # Accept both ms and seconds
+                        if ts > 1e12:  # ms
+                            ts = ts / 1000.0
+                        elapsed_candidates.append(int(max(0, round(now_ts - ts))))
+                    except Exception:
+                        pass
+
+                if session.get("checkin_datetime"):
+                    try:
+                        checkin_dt = datetime.fromisoformat(session["checkin_datetime"])
+                        elapsed_candidates.append(int((datetime.now() - checkin_dt).total_seconds()))
+                    except Exception:
+                        pass
+
+                if session.get("checkin_time"):
+                    try:
+                        ct_str = session["checkin_time"]
+                        ct_dt = datetime.strptime(ct_str, "%H:%M:%S").replace(
+                            year=datetime.now().year,
+                            month=datetime.now().month,
+                            day=datetime.now().day,
+                        )
+                        elapsed_candidates.append(int((datetime.now() - ct_dt).total_seconds()))
+                    except Exception:
+                        pass
+
+                if elapsed_candidates:
+                    elapsed = max(0, max(elapsed_candidates))
+                else:
                     elapsed = 0
+
+                # If still zero, bootstrap a fresh timestamp now so it starts ticking
+                if elapsed == 0 and session.get("checkin_timestamp") is None:
+                    session["checkin_timestamp"] = int(datetime.now().timestamp() * 1000)
+
                 # Add base_seconds from earlier sessions to the running total
                 total_seconds_today = max(total_seconds_today, base_seconds + elapsed)
             except Exception as e:
