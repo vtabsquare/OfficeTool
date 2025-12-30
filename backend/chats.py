@@ -2003,12 +2003,14 @@ def employee_search():
 
             emp_id = r.get("crc6f_employeeid") or r.get("crc6f_table12id")
             avatar = (fn[:1] or "U").upper()
+            photo = r.get("crc6f_profilepicture") or None
 
             out.append({
                 "id": emp_id,
                 "name": full or emp_id,
                 "email": r.get("crc6f_email"),
-                "avatar": avatar
+                "avatar": avatar,
+                "photo": photo
             })
 
         return jsonify(out)
@@ -2024,7 +2026,7 @@ def employee_search():
 @chat_bp.route("/employees/all", methods=["GET"])
 def employee_all():
     try:
-        resp = dataverse_get(EMPLOYEE_ENTITY_SET, "$top=200")
+        resp = dataverse_get(EMPLOYEE_ENTITY_SET, "$top=200&$select=crc6f_firstname,crc6f_lastname,crc6f_email,crc6f_employeeid,crc6f_table12id,crc6f_profilepicture")
         rows = resp.get("value", []) if resp else []
 
         out = []
@@ -2035,12 +2037,14 @@ def employee_all():
 
             emp_id = r.get("crc6f_employeeid") or r.get("crc6f_table12id")
             avatar = (fn[:1] or "U").upper()
+            photo = r.get("crc6f_profilepicture") or None
 
             out.append({
                 "id": emp_id,
                 "name": full or emp_id,
                 "email": r.get("crc6f_email"),
-                "avatar": avatar
+                "avatar": avatar,
+                "photo": photo
             })
 
         return jsonify(out)

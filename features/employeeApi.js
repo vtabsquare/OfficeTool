@@ -72,7 +72,10 @@ export async function listAllEmployees(forceRefresh = false) {
     throw new Error(data.error || 'Failed to fetch employee directory');
   }
 
-  const employees = data.employees || [];
+  const employees = (data.employees || []).map(e => ({
+    ...e,
+    photo: e.photo || e.profile_picture || null
+  }));
   allEmployeesCache = { data: employees, fetchedAt: now };
   return employees;
 }
@@ -88,6 +91,7 @@ export async function updateEmployee(employeeId, payload) {
     throw new Error(data.error || 'Failed to update employee');
   }
   try { if (state?.cache?.employees) state.cache.employees = {}; } catch { }
+  allEmployeesCache = { data: null, fetchedAt: 0 };
   return data.employee;
 }
 

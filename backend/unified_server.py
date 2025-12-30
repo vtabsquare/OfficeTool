@@ -459,7 +459,8 @@ FIELD_MAPS = {
         "experience": "crc6f_experience",
         "quota_hours": "crc6f_quotahours",
         "employee_flag": "crc6f_employeeflag",
-        "primary": "crc6f_table12id"
+        "primary": "crc6f_table12id",
+        "profile_picture": "crc6f_profilepicture"
     }
 }
 
@@ -5909,7 +5910,7 @@ def list_employees():
         }
         
         # Build $select from available fields in this entity
-        select_list = [field_map[k] for k in ['id', 'fullname', 'firstname', 'lastname', 'email', 'contact', 'address', 'department', 'designation', 'doj', 'active', 'primary'] if field_map.get(k)]
+        select_list = [field_map[k] for k in ['id', 'fullname', 'firstname', 'lastname', 'email', 'contact', 'address', 'department', 'designation', 'doj', 'active', 'primary', 'profile_picture'] if field_map.get(k)]
         if field_map.get('employee_flag'):
             select_list.append(field_map['employee_flag'])
         
@@ -6034,6 +6035,9 @@ def list_employees():
                             print(f"      DOJ type: {type(doj_value)}")
                             print(f"      All record keys: {list(r.keys())[:10]}...")  # Show first 10 keys
                         
+                        pic_raw = r.get(field_map.get('profile_picture')) if field_map.get('profile_picture') else None
+                        photo = pic_raw if isinstance(pic_raw, str) and pic_raw.strip() else None
+
                         items.append({
                             "employee_id": r.get(field_map['id']),
                             "record_guid": r.get(field_map.get('primary')) if field_map.get('primary') else None,
@@ -6046,7 +6050,8 @@ def list_employees():
                             "designation": r.get(field_map['designation']),
                             "doj": doj_value,
                             "active": r.get(field_map['active']),
-                            "employee_flag": r.get(field_map.get('employee_flag'))
+                            "employee_flag": r.get(field_map.get('employee_flag')),
+                            "photo": photo
                         })
                     return jsonify({
                         "success": True,
@@ -6207,7 +6212,8 @@ def get_all_employees():
                 'department',
                 'designation',
                 'doj',
-                'active'
+                'active',
+                'profile_picture'
             ]
             if field_map.get(k)
         ]
@@ -6243,6 +6249,9 @@ def get_all_employees():
                 first_name = rec.get(field_map.get('firstname'), '')
                 last_name = rec.get(field_map.get('lastname'), '')
 
+            pic_raw = rec.get(field_map.get('profile_picture')) if field_map.get('profile_picture') else None
+            photo = pic_raw if isinstance(pic_raw, str) and pic_raw.strip() else None
+
             employees.append({
                 "employee_id": rec.get(field_map.get('id')),
                 "first_name": first_name,
@@ -6254,6 +6263,7 @@ def get_all_employees():
                 "designation": rec.get(field_map.get('designation')),
                 "doj": rec.get(field_map.get('doj')),
                 "active": rec.get(field_map.get('active')),
+                "photo": photo
             })
 
         print(f"[SEND] Returning {len(employees)} total employees")
@@ -6292,6 +6302,7 @@ def create_employee():
         doj = data.get("doj")
         contact_number = data.get("contact_number", "")
         employee_flag = (data.get("employee_flag") or "Employee").strip() or "Employee"
+        profile_picture = data.get("profile_picture")
 
         # ==================== EXTERNAL DATA UPLOAD CATCH ====================
         # Let Dataverse auto-number when no employee_id supplied
@@ -6360,10 +6371,17 @@ def create_employee():
             else:
                 # Handle string values
                 payload[field_map['active']] = "Active" if str(active_value).lower() in ['true', '1', 'active'] else "Inactive"
-        
+
         # Employee flag (e.g., Intern / Employee)
         if field_map.get('employee_flag') and employee_flag:
             payload[field_map['employee_flag']] = employee_flag
+
+        # Profile picture (base64/data URL or null to clear)
+        if field_map.get('profile_picture') is not None:
+            if profile_picture is None:
+                payload[field_map['profile_picture']] = None
+            elif isinstance(profile_picture, str):
+                payload[field_map['profile_picture']] = profile_picture
 
         # Calculate and add experience (years from DOJ to current date)
         if field_map.get('experience') and doj:
@@ -7020,6 +7038,7 @@ def update_employee_api(employee_id):
         entity_set = get_employee_entity_set(token)
         field_map = get_field_map(entity_set)
         data = request.get_json(force=True)
+        profile_picture = data.get("profile_picture")
 
         headers = {
             "Authorization": f"Bearer {token}",
@@ -7078,6 +7097,13 @@ def update_employee_api(employee_id):
         if field_map.get('employee_flag') and data.get('employee_flag'):
             payload[field_map['employee_flag']] = data.get('employee_flag')
 
+        # Profile picture
+        if field_map.get('profile_picture') is not None:
+            if profile_picture is None:
+                payload[field_map['profile_picture']] = None
+            elif isinstance(profile_picture, str):
+                payload[field_map['profile_picture']] = profile_picture
+
         # Try to extract the primary record id
         prefer_keys = [primary_field, f"{entity_set[:-1]}id", f"{entity_set}id"]  # heuristic
         record_id = _extract_record_id(record, prefer_keys)
@@ -7085,7 +7111,13 @@ def update_employee_api(employee_id):
             return jsonify({"success": False, "error": "Unable to resolve record ID for update"}), 500
 
         update_record(entity_set, record_id, payload)
-        return jsonify({"success": True, "employee": {"employee_id": employee_id}})
+        return jsonify({
+            "success": True,
+            "employee": {
+                "employee_id": employee_id,
+                "photo": profile_picture
+            }
+        })
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
 

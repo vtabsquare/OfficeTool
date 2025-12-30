@@ -6330,9 +6330,13 @@ body.dark .msg-time {
       <div class="chat-item se-item" data-id="${
         emp.id
       }" style="padding:8px;cursor:pointer;">
-        <div class="chat-avatar-sm">${
-          emp.avatar || (emp.name || "U").slice(0, 1)
-        }</div>
+        <div class="chat-avatar-sm ${
+          emp.photo ? "has-photo" : ""
+        }" ${
+             emp.photo ? `style="background-image:url('${emp.photo}');"` : ""
+           }>
+          ${emp.photo ? "" : emp.avatar || (emp.name || "U").slice(0, 1)}
+        </div>
         <div style="margin-left:8px;">
           <div class="chat-item-name">${emp.name}</div>
           <div class="chat-item-last" style="font-size:12px;color:var(--muted)">${

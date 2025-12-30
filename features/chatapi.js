@@ -73,6 +73,7 @@ export async function searchEmployees(query) {
       name: emp.name,
       email: emp.email,
       avatar: emp.avatar || emp.name?.slice(0, 1)?.toUpperCase() || "U",
+      photo: emp.photo || null,
     }));
   } catch {
     return [];
@@ -86,7 +87,14 @@ export async function fetchAllEmployees() {
   try {
     const res = await fetch(`${CHAT_API_BASE}/employees/all`);
     if (!res.ok) return [];
-    return await res.json();
+    const arr = await res.json();
+    return (arr || []).map((emp) => ({
+      id: emp.id,
+      name: emp.name,
+      email: emp.email,
+      avatar: emp.avatar || emp.name?.slice(0, 1)?.toUpperCase() || "U",
+      photo: emp.photo || null,
+    }));
   } catch {
     return [];
   }

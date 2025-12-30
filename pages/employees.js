@@ -18,6 +18,59 @@ let restoreFilter = '';
 let currentDeletedEmployees = []; // Store current deleted employees for restore modal
 let hasDeletedEmployees = false; // Track if deleted employees exist in backend
 let employeeViewMode = 'card';
+let photoDraft = { dataUrl: null, cleared: false };
+
+const initPhotoUploader = (initialPhoto = null) => {
+    const input = document.getElementById('photo-input');
+    const trigger = document.getElementById('upload-photo-btn');
+    const removeBtn = document.getElementById('remove-photo-btn');
+    const preview = document.getElementById('photo-preview');
+
+    const applyPreview = () => {
+        const activePhoto = photoDraft.dataUrl ?? (photoDraft.cleared ? null : initialPhoto);
+        if (activePhoto) {
+            preview?.classList.add('has-photo');
+            if (preview) preview.style.backgroundImage = `url('${activePhoto}')`;
+            if (preview) preview.textContent = '';
+        } else {
+            preview?.classList.remove('has-photo');
+            if (preview) preview.style.backgroundImage = '';
+            if (preview) preview.textContent = 'No photo';
+        }
+    };
+
+    applyPreview();
+
+    if (trigger && input) {
+        trigger.addEventListener('click', () => input.click());
+        input.addEventListener('change', (ev) => {
+            const file = ev.target.files && ev.target.files[0];
+            if (!file) return;
+            if (!file.type.startsWith('image/')) {
+                alert('Please select an image file');
+                return;
+            }
+            if (file.size > 1_000_000) {
+                const proceed = confirm('Image is larger than 1MB. Continue?');
+                if (!proceed) return;
+            }
+            const reader = new FileReader();
+            reader.onload = () => {
+                photoDraft = { dataUrl: typeof reader.result === 'string' ? reader.result : null, cleared: false };
+                applyPreview();
+            };
+            reader.readAsDataURL(file);
+        });
+    }
+
+    if (removeBtn) {
+        removeBtn.addEventListener('click', () => {
+            photoDraft = { dataUrl: null, cleared: true };
+            if (input) input.value = '';
+            applyPreview();
+        });
+    }
+};
 
 export const renderEmployeesPage = async (filter = '', page = empCurrentPage) => {
     const isTableMode = employeeViewMode === 'table';
@@ -124,7 +177,8 @@ export const renderEmployeesPage = async (filter = '', page = empCurrentPage) =>
             role: '',
             employmentType: 'Full-time',
             status: (e.active === true || e.active === 'true' || e.active === 1 || e.active === 'Active') ? 'Active' : 'Inactive',
-            employeeFlag: e.employee_flag
+            employeeFlag: e.employee_flag,
+            photo: e.photo || e.profile_picture || null
         }));
 
         const totalCount = typeof total === 'number' ? total : undefined;
@@ -176,11 +230,18 @@ export const renderEmployeesPage = async (filter = '', page = empCurrentPage) =>
                 <span>${e.location}</span>
             </div>` : '';
 
+        const initials = (e.name || '').split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase();
+        const avatar = e.photo ? `
+            <div class="employee-avatar has-photo" style="background-image:url('${e.photo}');"></div>
+        ` : `
+            <div class="employee-avatar" style="background:${getAvatarColor(e.id || e.name)}; border: 2px solid rgba(255, 255, 255, 0.3); box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15), inset 0 1px 2px rgba(255, 255, 255, 0.2); color: #1a1a1a; font-weight: 600;">${initials}</div>
+        `;
+
         return `
             <div class="employee-card">
                 <div class="employee-card-header">
                     <div class="employee-card-info">
-                        <div class="employee-avatar" style="background:${getAvatarColor(e.id || e.name)}; border: 2px solid rgba(255, 255, 255, 0.3); box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15), inset 0 1px 2px rgba(255, 255, 255, 0.2); color: #1a1a1a; font-weight: 600;">${(e.name || '').split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()}</div>
+                        ${avatar}
                         <div>
                             <div class="employee-name">${e.name || ''}</div>
                             <div class="employee-meta">${e.jobTitle || ''}</div>
@@ -484,6 +545,7 @@ export const renderBulkUploadPage = async () => {
 };
 
 export const showAddEmployeeModal = () => {
+    photoDraft = { dataUrl: null, cleared: false };
     const formHTML = `
         <div class="modal-form modern-form employee-form">
             <div class="form-section">
@@ -528,7 +590,7 @@ export const showAddEmployeeModal = () => {
                     </div>
                     <div class="form-field">
                         <label class="form-label" for="designation">Designation</label>
-                        <input class="input-control" type="text" id="designation" name="designation" placeholder="Senior Developer" required>
+                        <input class="input-control" type="text" id="designation" name="designation" placeholder="UI Designer" required>
                     </div>
                     <div class="form-field">
                         <label class="form-label" for="department">Department</label>
@@ -552,9 +614,32 @@ export const showAddEmployeeModal = () => {
                     </div>
                 </div>
             </div>
+            <div class="form-section">
+                <div class="form-section-header">
+                    <div>
+                        <p class="form-eyebrow">Profile photo</p>
+                        <h3>Avatar</h3>
+                    </div>
+                    <p class="form-section-copy">Upload a square image (recommended). Max ~1MB.</p>
+                </div>
+                <div class="form-grid">
+                    <div class="form-field" style="grid-column: 1 / -1;">
+                        <div class="profile-photo-upload">
+                            <div id="photo-preview" class="avatar-preview"></div>
+                            <div class="avatar-actions">
+                                <button type="button" class="btn btn-secondary" id="upload-photo-btn"><i class="fa-solid fa-camera"></i> Upload photo</button>
+                                <button type="button" class="btn btn-link" id="remove-photo-btn">Remove</button>
+                                <input type="file" id="photo-input" accept="image/*" hidden>
+                            </div>
+                            <small class="subtle">Accepted: jpg, png. Large images may be slow to save.</small>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
     `;
     renderModal('Add New Employee', formHTML, 'save-employee-btn');
+    setTimeout(() => initPhotoUploader(null), 50);
 };
 
 export const handleAddEmployee = async (e) => {
@@ -583,13 +668,14 @@ export const handleAddEmployee = async (e) => {
             first_name: document.getElementById('firstName').value,
             last_name: document.getElementById('lastName').value,
             email: document.getElementById('email').value,
-            contact_number: addressValue,
-            address: contactNoValue,
+            address: addressValue,
+            contact_number: contactNoValue,
             department: document.getElementById('department').value,
             designation: document.getElementById('designation').value,
-            doj: new Date().toISOString().split('T')[0],
+            doj: document.getElementById('status').value === 'Active' ? new Date().toISOString().split('T')[0] : '',
             active: document.getElementById('status').value === 'Active',
-            employee_flag: document.getElementById('employeeFlag').value || 'Employee'
+            employee_flag: document.getElementById('employeeFlag').value || 'Employee',
+            profile_picture: photoDraft.cleared ? null : (photoDraft.dataUrl || undefined)
         };
 
         console.log('🔍 DEBUG - Payload:', payload);
@@ -607,7 +693,8 @@ export const handleAddEmployee = async (e) => {
             role: '',
             employmentType: 'Full-time',
             status: payload.active ? 'Active' : 'Inactive',
-            employeeFlag: payload.employee_flag || 'Employee'
+            employeeFlag: payload.employee_flag || 'Employee',
+            photo: photoDraft.cleared ? null : (photoDraft.dataUrl || null)
         });
         closeModal();
         renderEmployeesPage();
@@ -623,6 +710,7 @@ export const showEditEmployeeModal = (employeeId) => {
         alert('Employee not found');
         return;
     }
+    photoDraft = { dataUrl: null, cleared: false };
     const [firstPrefill, ...lastParts] = (emp.name || '').split(' ');
     const lastPrefill = lastParts.join(' ');
     const flagPrefill = emp.employeeFlag || 'Employee';
@@ -680,9 +768,32 @@ export const showEditEmployeeModal = (employeeId) => {
                 <label for="employeeFlag">Employee Flag</label>
             </div>
         </div>
+        <div class="form-section">
+            <div class="form-section-header">
+                <div>
+                    <p class="form-eyebrow">Profile photo</p>
+                    <h3>Avatar</h3>
+                </div>
+                <p class="form-section-copy">Upload a square image (recommended). Max ~1MB.</p>
+            </div>
+            <div class="form-grid">
+                <div class="form-field" style="grid-column: 1 / -1;">
+                    <div class="profile-photo-upload">
+                        <div id="photo-preview" class="avatar-preview"></div>
+                        <div class="avatar-actions">
+                            <button type="button" class="btn btn-secondary" id="upload-photo-btn"><i class="fa-solid fa-camera"></i> Upload photo</button>
+                            <button type="button" class="btn btn-link" id="remove-photo-btn">Remove</button>
+                            <input type="file" id="photo-input" accept="image/*" hidden>
+                        </div>
+                        <small class="subtle">Accepted: jpg, png. Large images may be slow to save.</small>
+                    </div>
+                </div>
+            </div>
+        </div>
         <input type="hidden" id="editEmployeeId" name="editEmployeeId" value="${emp.id}">
     `;
     renderModal('Edit Employee', formHTML, 'update-employee-btn');
+    setTimeout(() => initPhotoUploader(emp.photo || null), 50);
 };
 
 export const handleUpdateEmployee = (e) => {
@@ -698,7 +809,8 @@ export const handleUpdateEmployee = (e) => {
         department: document.getElementById('department').value,
         designation: document.getElementById('designation').value,
         active: document.getElementById('status').value === 'Active',
-        employee_flag: document.getElementById('employeeFlag').value || 'Employee'
+        employee_flag: document.getElementById('employeeFlag').value || 'Employee',
+        profile_picture: photoDraft.cleared ? null : (photoDraft.dataUrl || undefined)
     };
 
     updateEmployee(employee_id, payload).then(() => {
@@ -714,7 +826,8 @@ export const handleUpdateEmployee = (e) => {
                 jobTitle: payload.designation,
                 department: payload.department,
                 status: payload.active ? 'Active' : 'Inactive',
-                employeeFlag: payload.employee_flag || state.employees[idx].employeeFlag
+                employeeFlag: payload.employee_flag || state.employees[idx].employeeFlag,
+                photo: photoDraft.cleared ? null : (photoDraft.dataUrl || state.employees[idx].photo || null)
             };
         }
         closeModal();
