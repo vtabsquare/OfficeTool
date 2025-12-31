@@ -878,6 +878,22 @@ export const handleUpdateEmployee = (e) => {
         });
 };
 
+export const handleDeleteEmployee = (employeeId) => {
+    if (!employeeId) return;
+    const confirmed = confirm('Are you sure you want to delete this employee?');
+    if (!confirmed) return;
+    deleteEmployee(employeeId)
+        .then(() => {
+            try { if (state?.cache?.employees) state.cache.employees = {}; } catch {}
+            state.employees = (state.employees || []).filter((e) => e.id !== employeeId);
+            renderEmployeesPage();
+        })
+        .catch((err) => {
+            console.error('Failed to delete employee:', err);
+            alert(`Failed to delete employee: ${err.message || err}`);
+        });
+};
+
 export const showBulkUploadModal = () => {
     const formHTML = `
         <div class="form-group bulk-upload-field">
