@@ -1,0 +1,6 @@
+name,code,client,status,start_date,end_date,contributors
+Project Alpha,PA001,Alpha Corp,Active,2024-01-10,2024-06-30,5
+CRM Revamp,CRM002,Internal,Active,2024-02-01,,8
+Mobile App,MOB003,Acme Ltd,Completed,2023-05-15,2023-12-20,6
+Data Warehouse,DW004,Beta Inc,Active,2024-03-05,,4
+Website Redesign,WEB005,DesignCo,Pending,2024-04-18,,3
