@@ -7,6 +7,7 @@ import { fetchMonthlyAttendance } from '../features/attendanceApi.js';
 import { state } from '../state.js';
 import { cachedFetch, TTL, getPageState, cachePageState } from '../features/cache.js';
 import { isAdminUser } from '../utils/accessControl.js';
+import { apiBase } from '../config.js';
 
 const formatDate = (dateStr) => {
     if (!dateStr) return '';
@@ -598,12 +599,12 @@ const hydrateUserScoreboard = async (data) => {
 
         const doj = extractEmployeeDoj(data.currentEmployee || {}, user);
 
-        const API = 'http://localhost:5000/api';
+        const API = apiBase + '/api';
         const today = new Date();
         const endDate = today.toISOString().slice(0, 10);
         const startDate = `${today.getFullYear()}-01-01`;
 
-        const [tasks, logs] = await Promise.all([
+        const [tasks, logs, projects] = await Promise.all([
             (async () => {
                 if (!empId) return [];
                 try {
@@ -629,6 +630,17 @@ const hydrateUserScoreboard = async (data) => {
                     return [];
                 }
             })(),
+            (async () => {
+                if (!empId) return [];
+                try {
+                    const url = `${API}/employees/${encodeURIComponent(empId)}/projects`;
+                    const res = await fetch(url);
+                    const json = await res.json().catch(() => ({}));
+                    return res.ok && json.success && Array.isArray(json.projects) ? json.projects : [];
+                } catch {
+                    return [];
+                }
+            })(),
         ]);
 
         const totalSeconds = (logs || []).reduce((sum, log) => sum + Number(log.seconds || 0), 0);
@@ -649,17 +661,23 @@ const hydrateUserScoreboard = async (data) => {
         const completedTasks = allTasks.filter(
             (t) => String(t.task_status || '').toLowerCase() === 'completed'
         );
-        const projectsCompleted = new Set(
-            completedTasks
-                .map((t) => t.project_id || t.project || t.project_name || '')
-                .filter(Boolean)
-        ).size || completedTasks.length;
+        const projectRows = Array.isArray(projects) ? projects : [];
 
-        const projectsContributed = new Set(
-            allTasks
+        const projectsContributed = projectRows.length || new Set(
+            (tasks || [])
                 .map((t) => t.project_id || t.project || t.project_name || '')
                 .filter(Boolean)
         ).size;
+
+        const projectsCompleted = projectRows.filter(
+            (p) => String(p.project_status || '').toLowerCase() === 'completed'
+        ).length;
+
+        // Prefer project status for active; fallback to tasks in progress
+        const activeProject =
+            projectRows.find(
+                (p) => String(p.project_status || '').toLowerCase() === 'in progress'
+            ) || null;
 
         const activeTask =
             allTasks.find(
@@ -667,11 +685,12 @@ const hydrateUserScoreboard = async (data) => {
             ) || null;
 
         const activeProjectName =
+            (activeProject && (activeProject.project_name || activeProject.project_id)) ||
             (activeTask &&
                 (activeTask.project_name || activeTask.project_id || activeTask.task_name)) ||
             'No active project';
 
-        const activePercent = activeTask ? 60 : 0;
+        const activePercent = activeProject || activeTask ? 60 : 0;
 
         const animateNumber = (el, target, opts = {}) => {
             if (!el) return;
