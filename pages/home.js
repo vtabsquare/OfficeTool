@@ -770,7 +770,7 @@ const loadDashboardData = async () => {
     const currentYear = today.getFullYear();
     const currentMonth = today.getMonth() + 1;
 
-    // Fetch employees (paged) and, if not found, fall back to full directory
+    // Fetch employees (paged) and also full directory (cached) to improve DOJ coverage
     const employeesResponse = await cachedFetch('employees_list', async () => {
         try {
             return await listEmployees(1, 500);
@@ -780,18 +780,22 @@ const loadDashboardData = async () => {
         }
     }, TTL.LONG);
 
-    let employees = employeesResponse?.items || [];
-    let currentEmployee = findCurrentEmployeeRecord(employees, user, resolvedEmployeeId);
-
-    if (!currentEmployee) {
+    const allEmployees = await cachedFetch('employees_all', async () => {
         try {
-            const all = await listAllEmployees();
-            employees = all || employees;
-            currentEmployee = findCurrentEmployeeRecord(employees, user, resolvedEmployeeId);
+            return await listAllEmployees();
         } catch (err) {
             console.warn('⚠️ Failed to fetch full employee directory:', err);
+            return [];
         }
+    }, TTL.LONG);
+
+    let employees = employeesResponse?.items || [];
+    // Merge full list if available
+    if (Array.isArray(allEmployees) && allEmployees.length) {
+        employees = allEmployees;
     }
+
+    let currentEmployee = findCurrentEmployeeRecord(employees, user, resolvedEmployeeId);
     if ((!resolvedEmployeeId || resolvedEmployeeId === 'EMP000') && currentEmployee?.employee_id) {
         resolvedEmployeeId = normalizeEmployeeId(currentEmployee.employee_id);
     }
