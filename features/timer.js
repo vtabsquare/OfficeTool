@@ -162,8 +162,8 @@ export const updateTimerDisplay = () => {
             totalSeconds = Math.max(0, base + elapsed);
         }
     } else {
-        // Stopped: show zeroed display; no paused/ghost time on pill
-        totalSeconds = 0;
+        // Stopped: show last accrued time (paused display)
+        totalSeconds = typeof state.timer.lastDuration === 'number' ? Math.max(0, Math.floor(state.timer.lastDuration)) : 0;
     }
 
     if (
