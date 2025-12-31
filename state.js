@@ -1,4 +1,3 @@
-
 export const state = {
   user: { name: "Admin User", initials: "AU", id: "Emp01" },
   authenticated: false,
@@ -6,6 +5,7 @@ export const state = {
     intervalId: null,
     startTime: null,
     isRunning: false,
+    authoritativeCheckinAt: null,
     lastDuration: 0,
     lastAutoStatus: null,
   },

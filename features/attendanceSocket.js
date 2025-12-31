@@ -193,6 +193,10 @@ function handleTimerSync(data) {
     const uid = String(state.user?.id || '').toUpperCase();
     if (data.employee_id !== uid) return;
 
+    if (data.checkinTimestamp) {
+        state.timer.authoritativeCheckinAt = data.checkinTimestamp;
+    }
+
     if (data.isRunning) {
         // Timer is running - sync state
         const serverTimestamp = data.checkinTimestamp;
@@ -226,6 +230,7 @@ function handleTimerSync(data) {
                 date: dateStr,
                 mode: 'running',
                 durationSeconds: baseSeconds,
+                authoritativeCheckinAt: state.timer.authoritativeCheckinAt || null,
             }));
         } catch {}
 
@@ -261,6 +266,10 @@ function handleRemoteCheckin(data) {
     const uid = String(state.user?.id || '').toUpperCase();
     if (data.employee_id !== uid) return;
 
+    if (data.checkinTimestamp) {
+        state.timer.authoritativeCheckinAt = data.checkinTimestamp;
+    }
+
     // If we're already running, ignore (we initiated this)
     if (state.timer.isRunning && state.timer.startTime) {
         console.log('[ATTENDANCE-SOCKET] Ignoring remote check-in (already running locally)');
@@ -291,6 +300,7 @@ function handleRemoteCheckin(data) {
             date: dateStr,
             mode: 'running',
             durationSeconds: baseSeconds,
+            authoritativeCheckinAt: state.timer.authoritativeCheckinAt || null,
         }));
     } catch {}
 
@@ -337,6 +347,7 @@ function handleRemoteCheckout(data) {
             date: dateStr,
             mode: 'stopped',
             durationSeconds: typeof state.timer.lastDuration === 'number' ? state.timer.lastDuration : 0,
+            authoritativeCheckinAt: state.timer.authoritativeCheckinAt || null,
         }));
     } catch {}
 
