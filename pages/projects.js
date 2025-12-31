@@ -1,6 +1,7 @@
 import { getPageContentHTML } from "../utils.js";
 import { renderModal, closeModal } from "../components/modal.js";
 import { state as appState } from "../state.js";
+import { apiBase } from "../config.js";
 
 // // ROLE CHECKER
 // function getUserRole() {
@@ -17,7 +18,7 @@ import { state as appState } from "../state.js";
 // }
 
 const LS_KEY = "tt_projects_v1";
-const API_ROOT = (window?.API_BASE_URL || "").replace(/\/$/, "") || "";
+const API_ROOT = apiBase.replace(/\/$/, "");
 const API_BASE = API_ROOT; // backward compatibility for existing calls below
 const PROJECTS_API = `${API_ROOT}/api/projects`;
 let projectsCache = [];
@@ -158,18 +159,48 @@ const handleProjectBulkUpload = async (e) => {
     return;
   }
   try {
+    // Map CSV rows to backend field names
+    const payloadProjects = rows.map((r) => {
+      const code = (r.code || "").trim();
+      const name = (r.name || "").trim();
+      const client = (r.client || "").trim();
+      const status = (r.status || "Active").trim() || "Active";
+      const start = (r.start_date || "").trim();
+      const end = (r.end_date || "").trim();
+      const contrib = Number(r.contributors || 0) || 0;
+      return {
+        crc6f_projectid: code,
+        crc6f_projectname: name,
+        crc6f_client: client,
+        crc6f_projectstatus: status,
+        crc6f_startdate: start,
+        crc6f_enddate: end,
+        crc6f_noofcontributors: contrib,
+      };
+    });
+
     const resp = await fetch(`${PROJECTS_API}/bulk`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ projects: rows }),
+      body: JSON.stringify({ projects: payloadProjects }),
     });
-    if (!resp.ok) {
-      const errText = await resp.text();
-      throw new Error(errText || `Bulk upload failed with status ${resp.status}`);
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok || !data.success) {
+      const errText = data.error || data.message || `Bulk upload failed with status ${resp.status}`;
+      throw new Error(errText);
     }
+    const created = data.created ?? rows.length;
+    const errors = Array.isArray(data.errors) ? data.errors : [];
     await fetchProjects(); // refresh list
     closeModal();
-    alert(`Uploaded ${rows.length} projects`);
+    if (errors.length) {
+      const detail = errors
+        .map((e) => `Row ${e.index || "?"}: ${e.projectid || ""} - ${e.error || "error"}`)
+        .join("\n");
+      alert(`Uploaded ${created} projects. ${errors.length} skipped:\n${detail}`);
+    } else {
+      alert(`Uploaded ${created} projects`);
+    }
   } catch (err) {
     console.error("Bulk upload failed", err);
     alert(`Bulk upload failed: ${err.message || err}`);
