@@ -291,11 +291,6 @@ const renderProfileOverlay = (profile) => {
         <div class="profile-avatar ${avatarUrl ? 'has-photo' : ''}" ${avatarUrl ? `style="background-image:url('${avatarUrl}')"` : ''}>
           ${avatarUrl ? '' : initials}
         </div>
-        <label class="avatar-upload-pill">
-          <input id="avatar-file-input" type="file" accept="image/*" hidden />
-          <i class="fa-solid fa-camera"></i>
-          <span>Upload photo</span>
-        </label>
       </div>
 
       <div class="profile-panel-body">
@@ -326,46 +321,8 @@ const renderProfileOverlay = (profile) => {
   overlay.querySelector('.profile-close-btn')?.addEventListener('click', closeProfilePanel);
   overlay.querySelector('#profile-close-btn')?.addEventListener('click', closeProfilePanel);
 
-  // Upload handler (preview + persist in local storage/state)
-  const fileInput = overlay.querySelector('#avatar-file-input');
-  if (fileInput) {
-    fileInput.addEventListener('change', (ev) => {
-      const file = ev.target.files && ev.target.files[0];
-      if (!file) return;
-      const reader = new FileReader();
-      reader.onload = () => {
-        const dataUrl = reader.result;
-        const avatarEl = overlay.querySelector('.profile-avatar');
-        if (avatarEl && typeof dataUrl === 'string') {
-          avatarEl.classList.add('has-photo');
-          avatarEl.style.backgroundImage = `url('${dataUrl}')`;
-          avatarEl.textContent = '';
-          // persist to state and localStorage for reuse
-          state.user = { ...(state.user || {}), avatarUrl: dataUrl };
-          try {
-            const authRaw = localStorage.getItem('auth');
-            if (authRaw) {
-              const parsed = JSON.parse(authRaw);
-              if (parsed && parsed.user) {
-                parsed.user.avatarUrl = dataUrl;
-                localStorage.setItem('auth', JSON.stringify(parsed));
-              }
-            }
-          } catch {}
-          // Also update header avatar in place
-          const headerAvatar = document.querySelector('.user-profile .user-avatar');
-          if (headerAvatar) {
-            headerAvatar.classList.add('has-photo');
-            headerAvatar.style.backgroundImage = `url('${dataUrl}')`;
-            headerAvatar.textContent = '';
-          }
-        }
-      };
-      reader.readAsDataURL(file);
-    });
-  }
-
   document.body.appendChild(overlay);
+
   requestAnimationFrame(() => {
     overlay.classList.add('open');
     overlay.querySelector('.profile-panel')?.classList.add('open');
@@ -418,6 +375,7 @@ const openProfilePanel = async () => {
         if (match) {
           const fullName = match.name ||
             [match.first_name, match.last_name].filter(Boolean).join(' ').trim();
+          const resolvedPhoto = match.photo || match.avatarUrl || profile.avatarUrl;
           profile = {
             ...profile,
             id: match.employee_id || match.id || profile.id,
@@ -428,9 +386,21 @@ const openProfilePanel = async () => {
             address: match.address || profile.address || match.location,
             department: match.department || profile.department,
             doj: match.doj || profile.doj,
-            avatarUrl: match.photo || match.avatarUrl || profile.avatarUrl,
+            avatarUrl: resolvedPhoto,
             initials: profile.initials || (fullName ? fullName.split(' ').map((p) => p[0]).join('').slice(0, 2).toUpperCase() : profile.initials),
           };
+          // Persist photo to user state for header/avatar reuse
+          state.user = { ...(state.user || {}), avatarUrl: resolvedPhoto, name: profile.name, email: profile.email };
+          try {
+            const authRaw = localStorage.getItem('auth');
+            if (authRaw) {
+              const parsed = JSON.parse(authRaw);
+              if (parsed && parsed.user) {
+                parsed.user.avatarUrl = resolvedPhoto;
+                localStorage.setItem('auth', JSON.stringify(parsed));
+              }
+            }
+          } catch {}
         }
       } catch (err) {
         console.warn('Failed to load employee profile from master table', err);
@@ -743,7 +713,11 @@ const init = async () => {
               const match = (all.items || []).find(e => (e.email || '').toLowerCase() === emailToMatch);
               if (match && match.employee_id) {
                 state.user.id = match.employee_id;
+                // hydrate avatar from employee directory (crc6f_profilepicture)
+                if (match.photo) state.user.avatarUrl = match.photo;
                 try { localStorage.setItem('auth', JSON.stringify({ authenticated: true, user: state.user })); } catch { }
+                // reflect in header immediately
+                updateHeaderAvatar();
               }
             }
           } catch { }
