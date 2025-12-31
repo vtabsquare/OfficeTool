@@ -39,6 +39,11 @@ module.exports = (io) => {
 
       // Send current timer state if active
       const timer = activeTimers[uid];
+      // If we don't have any in-memory state (e.g., socket server just restarted),
+      // avoid pushing a "stopped" state that would wrongly pause a running timer on clients.
+      // Let the frontend rely on backend /api/status + local cache instead.
+      if (!timer) return;
+
       if (timer && timer.isRunning) {
         const now = Date.now();
         const elapsedMs = now - timer.checkinTimestamp;
@@ -65,15 +70,7 @@ module.exports = (io) => {
           status: timer.status || deriveStatus(typeof timer.totalSeconds === 'number' ? timer.totalSeconds : 0),
           serverNow: Date.now(),
         });
-      } else {
-        socket.emit('attendance:sync', {
-          employee_id: uid,
-          isRunning: false,
-          totalSeconds: 0,
-          status: 'A',
-          serverNow: Date.now(),
-        });
-      }
+      } 
     });
 
     // ----------------------------------------
@@ -146,6 +143,9 @@ module.exports = (io) => {
       const uid = String(employee_id).trim().toUpperCase();
 
       const timer = activeTimers[uid];
+      // If we don't have state (server restart), let frontend rely on backend /api/status + cache.
+      if (!timer) return;
+
       if (timer && timer.isRunning) {
         const now = Date.now();
         const elapsedMs = now - timer.checkinTimestamp;
@@ -169,14 +169,6 @@ module.exports = (io) => {
           isRunning: false,
           totalSeconds: typeof timer.totalSeconds === 'number' ? timer.totalSeconds : 0,
           status: timer.status || deriveStatus(typeof timer.totalSeconds === 'number' ? timer.totalSeconds : 0),
-          serverNow: Date.now(),
-        });
-      } else {
-        socket.emit('attendance:sync', {
-          employee_id: uid,
-          isRunning: false,
-          totalSeconds: 0,
-          status: 'A',
           serverNow: Date.now(),
         });
       }

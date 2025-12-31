@@ -160,9 +160,7 @@ def checkin():
                 "error": "Already checked in. Please check out first."
             }), 400
         
-        # Server-authoritative timestamps (UTC) must drive all check-in anchors
-        server_now_utc = datetime.now(timezone.utc)
-        now = datetime.now()  # Keep local formatting behavior unchanged
+        now = datetime.now()
         formatted_date = now.date().isoformat()
         formatted_time = now.strftime("%H:%M:%S")
 
@@ -177,7 +175,7 @@ def checkin():
         except Exception as e:
             print(f"[WARN] Login activity check-in punch failed: {e}")
         
-        # Create record with CORRECT field names
+        # ✅ Create record with CORRECT field names
         record_data = {
             FIELD_EMPLOYEE_ID: employee_id,
             FIELD_DATE: formatted_date,
@@ -203,8 +201,7 @@ def checkin():
             active_sessions[employee_id] = {
                 "record_id": record_id,
                 "checkin_time": formatted_time,
-                # Authoritative UTC timestamp for this check-in (single source of truth)
-                "checkin_datetime": server_now_utc.isoformat()
+                "checkin_datetime": now.isoformat()
             }
             
             print(f"✅ SUCCESS! Record ID: {record_id}")
@@ -213,12 +210,7 @@ def checkin():
             return jsonify({
                 "success": True,
                 "record_id": record_id,
-                "checkin_time": formatted_time,
-                # Explicit authoritative timestamp (UTC) for cross-device consistency
-                "checkin_timestamp": server_now_utc.isoformat(),
-                # Preserve existing expectations; additional clarity fields only
-                "attendance_status": "IN_PROGRESS",
-                "work_date": formatted_date
+                "checkin_time": formatted_time
             })
         else:
             print(f"❌ FAILED: No record ID returned")
