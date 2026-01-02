@@ -379,25 +379,33 @@ export const renderEmployeesPage = async (filter = '', page = empCurrentPage) =>
         </div>
     `;
     document.getElementById('app-content').innerHTML = getPageContentHTML('Employees', content, controls);
-    setTimeout(() => {
-        const cardBtn = document.getElementById('employee-card-view-btn');
-        const tableBtn = document.getElementById('employee-table-view-btn');
-        const cardView = document.getElementById('employee-card-view');
-        const tableView = document.getElementById('employee-table-view');
-        if (cardBtn && tableBtn && cardView && tableView) {
-            const applyViewState = (target) => {
-                const showTable = target === 'table';
-                employeeViewMode = showTable ? 'table' : 'card';
-                cardBtn.classList.toggle('active', !showTable);
-                tableBtn.classList.toggle('active', showTable);
-                cardView.classList.toggle('view-mode-visible', !showTable);
-                tableView.classList.toggle('view-mode-visible', showTable);
-            };
-            cardBtn.addEventListener('click', () => applyViewState('card'));
-            tableBtn.addEventListener('click', () => applyViewState('table'));
-            applyViewState(employeeViewMode);
-        }
-    }, 0);
+
+    // After render, wire up view toggles and search
+    const addBtn = document.getElementById('add-employee-btn');
+    if (addBtn) {
+        addBtn.onclick = (e) => {
+            e.preventDefault();
+            try { showAddEmployeeModal(); } catch (err) { console.error('Add Employee modal failed:', err); }
+        };
+    }
+
+    const cardBtn = document.getElementById('employee-card-view-btn');
+    const tableBtn = document.getElementById('employee-table-view-btn');
+    const cardView = document.getElementById('employee-card-view');
+    const tableView = document.getElementById('employee-table-view');
+    if (cardBtn && tableBtn && cardView && tableView) {
+        const applyViewState = (target) => {
+            const showTable = target === 'table';
+            employeeViewMode = showTable ? 'table' : 'card';
+            cardBtn.classList.toggle('active', !showTable);
+            tableBtn.classList.toggle('active', showTable);
+            cardView.classList.toggle('view-mode-visible', !showTable);
+            tableView.classList.toggle('view-mode-visible', showTable);
+        };
+        cardBtn.addEventListener('click', () => applyViewState('card'));
+        tableBtn.addEventListener('click', () => applyViewState('table'));
+        applyViewState(employeeViewMode);
+    }
 };
 
 // Simple CSV parser that supports quoted fields, embedded commas, and newlines
