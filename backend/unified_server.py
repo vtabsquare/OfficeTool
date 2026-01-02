@@ -3577,7 +3577,7 @@ def checkout():
         print("Updating Dataverse...")
 
         if record_id:
-            update_record(ATTENDANCE_ENTITY, record_id, update_data)
+            update_record(ATTENDANCE_ENTITY, record_id, payload)
         else:
             print("[WARN] No record_id found to update on checkout")
 
