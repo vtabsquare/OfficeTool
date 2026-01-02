@@ -5511,6 +5511,7 @@ body.dark-theme .filter-chip-count {
 
 .holidays-table-container .table {
   width: 100%;
+  table-layout: fixed;
   border-collapse: separate;
   border-spacing: 0;
   font-size: 0.85rem;
@@ -5530,6 +5531,27 @@ body.dark-theme .filter-chip-count {
   font-weight: 700;
   border-bottom: 2px solid var(--border-color);
   white-space: nowrap;
+}
+
+.holidays-table-container .table thead th:nth-child(2) {
+  text-align: center;
+}
+
+.holidays-table-container .table th:nth-child(2),
+.holidays-table-container .table td:nth-child(2) {
+  width: auto;
+  text-align: center;
+}
+
+.holidays-table-container .table td:nth-child(2) {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.holidays-table-container .table th:nth-child(3),
+.holidays-table-container .table td:nth-child(3) {
+  width: 120px;
 }
 
 .holidays-table-container .table tbody tr {
@@ -5584,17 +5606,6 @@ body.dark-theme .task-link {
 .holidays-table-container .table th:nth-child(1),
 .holidays-table-container .table td:nth-child(1) {
   width: 220px;
-}
-
-.holidays-table-container .table th:nth-child(2),
-.holidays-table-container .table td:nth-child(2) {
-  width: auto;
-  text-align: center;
-}
-
-.holidays-table-container .table th:nth-child(3),
-.holidays-table-container .table td:nth-child(3) {
-  width: 120px;
 }
 
 .holiday-date-cell {
