@@ -806,7 +806,7 @@ const init = async () => {
       }
       return;
     }
-    if (target.id === "add-employee-btn") showAddEmployeeModal();
+    if (target.closest("#add-employee-btn")) showAddEmployeeModal();
     if (target.id === "apply-leave-btn") showApplyLeaveModal();
     if (target.id === "request-compoff-btn") showRequestCompOffModal();
     // Edit Comp Off Balance

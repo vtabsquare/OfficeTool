@@ -504,7 +504,7 @@ def create_task_log():
                 "crc6f_hoursworked": hours_worked,
                 "crc6f_workdescription": b.get("description") or b.get("task_name") or "",
                 "crc6f_approvalstatus": "Pending",
-                # If Dataverse has a work date field, include here:
+                # Dataverse work date field (Date Only)
                 "crc6f_workdate": seg_work_date if seg_work_date else None
             }
             # Remove None values

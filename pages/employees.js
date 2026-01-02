@@ -754,6 +754,7 @@ export const showEditEmployeeModal = (employeeId) => {
     }
     const existingPhoto = normalizePhoto(emp.photo || emp.profile_picture || emp.avatarUrl);
     photoDraft = { dataUrl: null, cleared: false };
+    initialPhotoRef = existingPhoto || null;
     const [firstPrefill, ...lastParts] = (emp.name || '').split(' ');
     const lastPrefill = lastParts.join(' ');
     const flagPrefill = emp.employeeFlag || 'Employee';
@@ -858,8 +859,14 @@ export const handleUpdateEmployee = (e) => {
         designation: document.getElementById('designation').value,
         active: document.getElementById('status').value === 'Active',
         employee_flag: document.getElementById('employeeFlag').value || 'Employee',
-        profile_picture: photoDraft.cleared ? null : cleanDataUrl(photoDraft.dataUrl),
     };
+
+    // Only send profile_picture when changed or explicitly cleared
+    if (photoDraft.cleared) {
+        payload.profile_picture = null;
+    } else if (photoDraft.dataUrl) {
+        payload.profile_picture = cleanDataUrl(photoDraft.dataUrl);
+    }
 
     updateEmployee(employee_id, payload)
         .then((updated) => {
