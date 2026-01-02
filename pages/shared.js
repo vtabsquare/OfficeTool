@@ -486,7 +486,7 @@ export const renderMyTasksPage = async () => {
     const getPersistedSecs = (guid) => { try { return Number(localStorage.getItem(PER_TASK_KEY(empId, guid, todayStr())) || '0') || 0; } catch { return 0; } };
     const setPersistedSecs = (guid, secs) => { try { localStorage.setItem(PER_TASK_KEY(empId, guid, todayStr()), String(Math.max(0, secs | 0))); } catch { } };
 
-    const postTimesheetLog = async ({ seconds, task }) => {
+    const postTimesheetLog = async ({ seconds, task, started_at = null, ended_at = null }) => {
         const body = {
             employee_id: empId,
             project_id: task.project_id,
@@ -494,8 +494,11 @@ export const renderMyTasksPage = async () => {
             task_id: task.task_id,
             task_name: task.task_name,
             seconds: Math.max(1, seconds | 0),
-            work_date: todayStr(),
-            description: ''
+            work_date: todayStr(), // legacy fallback
+            description: '',
+            session_start_ms: started_at || null,
+            session_end_ms: ended_at || Date.now(),
+            tz_offset_minutes: new Date().getTimezoneOffset()
         };
         try {
             const res = await fetch(`${API}/time-tracker/task-log`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -558,7 +561,7 @@ export const renderMyTasksPage = async () => {
             const totalAccumulated = (cur.accumulated || 0) + elapsed;
             setActive({ ...cur, accumulated: totalAccumulated, paused: true, started_at: null });
             setPersistedSecs(t.guid, totalAccumulated);
-            await postTimesheetLog({ seconds: totalAccumulated, task: t });
+            await postTimesheetLog({ seconds: totalAccumulated, task: t, started_at: cur.started_at, ended_at: Date.now() });
             render();
             return;
         }
@@ -569,7 +572,12 @@ export const renderMyTasksPage = async () => {
             const totalAccumulated = (cur.accumulated || 0) + elapsed;
             // Persist for the old task
             setPersistedSecs(cur.task_guid, totalAccumulated);
-            await postTimesheetLog({ seconds: totalAccumulated, task: { guid: cur.task_guid, task_id: cur.task_id, task_name: cur.task_name, project_id: cur.project_id } });
+            await postTimesheetLog({
+                seconds: totalAccumulated,
+                task: { guid: cur.task_guid, task_id: cur.task_id, task_name: cur.task_name, project_id: cur.project_id },
+                started_at: cur.started_at,
+                ended_at: Date.now()
+            });
             // Clear active
             clearActive();
         }
@@ -600,7 +608,7 @@ export const renderMyTasksPage = async () => {
 
         // persist and upsert
         setPersistedSecs(t.guid, totalSeconds);
-        const ok = await postTimesheetLog({ seconds: totalSeconds, task: t });
+        const ok = await postTimesheetLog({ seconds: totalSeconds, task: t, started_at: cur.started_at, ended_at: Date.now() });
         if (ok) {
             clearActive();
         }

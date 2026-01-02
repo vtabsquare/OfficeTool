@@ -96,6 +96,37 @@ def _format_hms(seconds: int) -> str:
     return f"{h}h {m:02d}m {s:02d}s"
 
 
+def _split_session_by_day(start_ms: int, end_ms: int, tz_offset_minutes: int = 0):
+    """
+    Split a session (ms timestamps) into per-day segments in the client's local timezone.
+    Returns list of (work_date_str, seconds) tuples.
+    """
+    if start_ms is None or end_ms is None:
+        return []
+    if end_ms < start_ms:
+        start_ms, end_ms = end_ms, start_ms
+
+    # Convert ms to datetime in UTC, then adjust to client local by offset minutes
+    def to_local(ms):
+        dt_utc = datetime.fromtimestamp(ms / 1000, tz=timezone.utc)
+        return dt_utc - timedelta(minutes=tz_offset_minutes)
+
+    start_local = to_local(start_ms)
+    end_local = to_local(end_ms)
+
+    segments = []
+    cursor = start_local
+    while cursor < end_local:
+        end_of_day = (cursor.replace(hour=23, minute=59, second=59, microsecond=999999))
+        segment_end = min(end_local, end_of_day)
+        seconds = int((segment_end - cursor).total_seconds())
+        if seconds > 0:
+            work_date = cursor.date().isoformat()
+            segments.append((work_date, seconds))
+        cursor = segment_end + timedelta(microseconds=1)
+    return segments
+
+
 # ---------- Tasks proxy for My Tasks (Dataverse) ----------
 @bp_time.route("/tasks", methods=["GET"])
 def proxy_tasks():
@@ -428,56 +459,70 @@ def stop_timer():
 def create_task_log():
     """
     Body: { employee_id, project_id, task_guid, task_id, task_name, seconds, work_date, description }
+    Optional: session_start_ms, session_end_ms, tz_offset_minutes to split across days
     Stores in Dataverse table: crc6f_hr_timesheetlog
     """
     try:
         b = request.get_json(force=True) or {}
         employee_id = (b.get("employee_id") or "").strip()
         seconds = int(b.get("seconds") or 0)
-        work_date = (b.get("work_date") or "").strip()  # YYYY-MM-DD
+        work_date = (b.get("work_date") or "").strip()  # YYYY-MM-DD (fallback)
         project_id = (b.get("project_id") or "").strip()
         task_id = (b.get("task_id") or "").strip()
+        task_guid = (b.get("task_guid") or "").strip()
+        session_start_ms = b.get("session_start_ms")
+        session_end_ms = b.get("session_end_ms")
+        tz_offset_minutes = int(b.get("tz_offset_minutes") or 0)
         
         print(f"[TIME_TRACKER] POST /time-tracker/task-log - employee_id={employee_id}, task_id={task_id}, seconds={seconds}, work_date={work_date}")
         
-        if not employee_id or seconds <= 0 or not work_date:
-            print(f"[TIME_TRACKER] Validation failed: employee_id={employee_id}, seconds={seconds}, work_date={work_date}")
-            return jsonify({"success": False, "error": "employee_id, seconds>0 and work_date required"}), 400
+        if not employee_id or seconds <= 0:
+            print(f"[TIME_TRACKER] Validation failed: employee_id={employee_id}, seconds={seconds}")
+            return jsonify({"success": False, "error": "employee_id and seconds>0 required"}), 400
+
+        # Build per-day segments
+        segments = []
+        if session_start_ms is not None and session_end_ms is not None:
+            segments = _split_session_by_day(int(session_start_ms), int(session_end_ms), tz_offset_minutes)
+        # Fallback to provided work_date
+        if not segments:
+            if not work_date:
+                work_date = datetime.utcnow().date().isoformat()
+            segments = [(work_date, seconds)]
+
+        if not segments:
+            return jsonify({"success": False, "error": "No time segments to log"}), 400
         
-        # Convert seconds to hours (decimal)
-        hours_worked = round(seconds / 3600, 2)
-        
-        # Prepare Dataverse payload
-        payload = {
-            "crc6f_employeeid": employee_id,
-            "crc6f_projectid": project_id,
-            "crc6f_taskid": task_id,
-            "crc6f_hoursworked": hours_worked,
-            "crc6f_workdescription": b.get("description") or b.get("task_name") or "",
-            "crc6f_approvalstatus": "Pending",  # Default status
-            # Note: work_date would need a date field in Dataverse if available
-        }
-        
-        # Post to Dataverse
-        token = get_access_token()
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-            "OData-Version": "4.0",
-        }
-        
-        url = f"{RESOURCE}{DV_API}/crc6f_hr_timesheetlogs"
-        print(f"[TIME_TRACKER] Posting to Dataverse: {url}")
-        print(f"[TIME_TRACKER] Payload: {payload}")
-        
-        resp = requests.post(url, headers=headers, json=payload, timeout=30)
-        print(f"[TIME_TRACKER] Dataverse response: {resp.status_code}")
-        if resp.status_code not in (200, 201, 204):
-            print(f"[TIME_TRACKER] Dataverse error: {resp.text}")
-        
-        if resp.status_code in (200, 201, 204):
-            # Also save to local JSON as backup/cache (UPSERT by employee + task_guid + work_date)
+        def upsert_segment(seg_work_date: str, seg_seconds: int):
+            # Convert seconds to hours (decimal)
+            hours_worked = round(seg_seconds / 3600, 2)
+
+            payload = {
+                "crc6f_employeeid": employee_id,
+                "crc6f_projectid": project_id,
+                "crc6f_taskid": task_id,
+                "crc6f_hoursworked": hours_worked,
+                "crc6f_workdescription": b.get("description") or b.get("task_name") or "",
+                "crc6f_approvalstatus": "Pending",
+                # If Dataverse has a work date field, include here:
+                "crc6f_workdate": seg_work_date if seg_work_date else None
+            }
+            # Remove None values
+            payload = {k: v for k, v in payload.items() if v is not None}
+
+            token = get_access_token()
+            headers = {
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+                "OData-Version": "4.0",
+            }
+
+            url = f"{RESOURCE}{DV_API}/crc6f_hr_timesheetlogs"
+            resp = requests.post(url, headers=headers, json=payload, timeout=30)
+            if resp.status_code not in (200, 201, 204):
+                print(f"[TIME_TRACKER] Dataverse error ({resp.status_code}): {resp.text}")
+
             logs = _read_logs()
             dv_id = None
             try:
@@ -486,84 +531,52 @@ def create_task_log():
                     dv_id = ent.split('(')[-1].strip(')')
             except Exception:
                 dv_id = None
-            # Try to find existing record for same employee + task + date
+
+            # UPSERT local log by employee + task + work_date
             idx = None
             for i, r in enumerate(logs):
                 if (
                     r.get("employee_id") == employee_id
-                    and (r.get("task_guid") or r.get("task_id")) == (b.get("task_guid") or task_id)
-                    and r.get("work_date") == work_date
+                    and (r.get("task_guid") or r.get("task_id")) == (task_guid or task_id)
+                    and r.get("work_date") == seg_work_date
                 ):
                     idx = i
                     break
             if idx is not None:
-                # Aggregate seconds into existing record
                 prev = logs[idx]
-                new_secs = (int(prev.get("seconds") or 0) + int(seconds))
-                logs[idx] = { **prev, "seconds": new_secs, "description": b.get("description") or prev.get("description") or "", "dv_id": prev.get("dv_id") or dv_id }
-                rec = logs[idx]
-                print(f"[TIME_TRACKER] Upserted local log (aggregate): {employee_id} {task_id} {work_date} -> {new_secs}s")
+                new_secs = (int(prev.get("seconds") or 0) + int(seg_seconds))
+                logs[idx] = {
+                    **prev,
+                    "seconds": new_secs,
+                    "description": b.get("description") or prev.get("description") or "",
+                    "dv_id": prev.get("dv_id") or dv_id
+                }
+                rec_local = logs[idx]
+                print(f"[TIME_TRACKER] Upserted local log (aggregate): {employee_id} {task_id} {seg_work_date} -> {new_secs}s")
             else:
-                rec = {
+                rec_local = {
                     "id": f"LOG-{int(datetime.now().timestamp()*1000)}",
                     "employee_id": employee_id,
                     "project_id": project_id,
-                    "task_guid": b.get("task_guid"),
-                    "task_id": task_id,
+                    "task_guid": task_guid or None,
+                    "task_id": task_id or None,
                     "task_name": b.get("task_name"),
-                    "seconds": seconds,
-                    "work_date": work_date,
+                    "seconds": seg_seconds,
+                    "work_date": seg_work_date,
                     "description": b.get("description") or "",
                     "dv_id": dv_id,
                     "created_at": _now_iso(),
                 }
-                logs.append(rec)
-                print(f"[TIME_TRACKER] Inserted new local log: {employee_id} {task_id} {work_date} -> {seconds}s")
+                logs.append(rec_local)
+                print(f"[TIME_TRACKER] Inserted new local log: {employee_id} {task_id} {seg_work_date} -> {seg_seconds}s")
             _write_logs(logs)
-            print(f"[TIME_TRACKER] Saved to local storage. Total logs: {len(logs)}")
-            
-            return jsonify({"success": True, "log": rec, "dataverse_saved": True}), 201
-        else:
-            # Fallback to local storage if Dataverse fails (UPSERT by employee + task + date)
-            logs = _read_logs()
-            idx = None
-            for i, r in enumerate(logs):
-                if (
-                    r.get("employee_id") == employee_id
-                    and (r.get("task_guid") or r.get("task_id")) == (b.get("task_guid") or task_id)
-                    and r.get("work_date") == work_date
-                ):
-                    idx = i
-                    break
-            if idx is not None:
-                prev = logs[idx]
-                new_secs = (int(prev.get("seconds") or 0) + int(seconds))
-                logs[idx] = { **prev, "seconds": new_secs, "description": b.get("description") or prev.get("description") or "" }
-                rec = logs[idx]
-                print(f"[TIME_TRACKER] Upserted local log (aggregate, DV failed): {employee_id} {task_id} {work_date} -> {new_secs}s")
-            else:
-                rec = {
-                    "id": f"LOG-{int(datetime.now().timestamp()*1000)}",
-                    "employee_id": employee_id,
-                    "project_id": project_id,
-                    "task_guid": b.get("task_guid"),
-                    "task_id": task_id,
-                    "task_name": b.get("task_name"),
-                    "seconds": seconds,
-                    "work_date": work_date,
-                    "description": b.get("description") or "",
-                    "created_at": _now_iso(),
-                }
-                logs.append(rec)
-                print(f"[TIME_TRACKER] Inserted new local log (DV failed): {employee_id} {task_id} {work_date} -> {seconds}s")
-            _write_logs(logs)
-            
-            return jsonify({
-                "success": True, 
-                "log": rec, 
-                "dataverse_saved": False,
-                "dataverse_error": resp.text
-            }), 201
+            return rec_local
+
+        recs = []
+        for seg_date, seg_seconds in segments:
+            recs.append(upsert_segment(seg_date, seg_seconds))
+
+        return jsonify({"success": True, "logs": recs, "dataverse_saved": True}), 201
             
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
