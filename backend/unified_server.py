@@ -708,11 +708,7 @@ def _format_duration_text_from_hours(hours: float) -> str:
     minutes_int = (total_seconds % 3600) // 60
     return f"{hours_int} hour(s) {minutes_int} minute(s)"
 
-def _classify_hours(hours: float) -> str:
-    try:
-        hours_val = float(hours)
-    except Exception:
-        hours_val = 0.0
+def _classify_hours(hours_val: float) -> str:
     if hours_val >= FULL_DAY_HOURS:
         return "P"
     if hours_val >= HALF_DAY_HOURS:
@@ -3470,23 +3466,20 @@ def checkout():
             else:
                 candidates = []
                 if "checkin_datetime" in session:
-                    try:
-                        checkin_dt = datetime.fromisoformat(session["checkin_datetime"])
-                        if checkin_dt.tzinfo:
-                            candidates.append(int((local_now - checkin_dt).total_seconds()))
-                        else:
+                    start_dt = _coerce_client_local_datetime(session.get("checkin_datetime"), timezone_str) or now
+                    if not start_dt:
+                        start_dt = now
+                    session_seconds = int((local_now - start_dt).total_seconds())
+                else:
+                    if "checkin_time" in session:
+                        try:
+                            checkin_time_str = session["checkin_time"]
+                            checkin_dt = datetime.strptime(checkin_time_str, "%H:%M:%S").replace(
+                                year=local_now_naive.year, month=local_now_naive.month, day=local_now_naive.day
+                            )
                             candidates.append(int((local_now_naive - checkin_dt).total_seconds()))
-                    except Exception:
-                        pass
-                if "checkin_time" in session:
-                    try:
-                        checkin_time_str = session["checkin_time"]
-                        checkin_dt = datetime.strptime(checkin_time_str, "%H:%M:%S").replace(
-                            year=local_now_naive.year, month=local_now_naive.month, day=local_now_naive.day
-                        )
-                        candidates.append(int((local_now_naive - checkin_dt).total_seconds()))
-                    except Exception:
-                        pass
+                        except Exception:
+                            pass
                 if candidates:
                     session_seconds = max(0, max(candidates))
         except Exception as time_err:
@@ -3542,9 +3535,14 @@ def checkout():
                 existing_hours = 0.0
 
         # Aggregate: previous hours + this session's hours
-        session_hours = session_seconds / 3600.0
-        total_hours_today = existing_hours + session_hours
-        total_seconds_today = int(round(total_hours_today * 3600))
+        # Total seconds for today = base + this session
+        total_seconds_today = session.get("base_seconds", 0) + session_seconds
+        total_hours_today = round(total_seconds_today / 3600, 2)
+        status_code = "P"
+        if total_hours_today < HALF_DAY_HOURS:
+            status_code = "A"
+        elif total_hours_today < FULL_DAY_HOURS:
+            status_code = "HL"
 
         # Classification based on total hours today
         if total_hours_today >= 9.0:
@@ -3559,11 +3557,13 @@ def checkout():
         minutes_int = (total_seconds_today % 3600) // 60
         readable_duration = f"{hours_int} hour(s) {minutes_int} minute(s)"
 
-        update_data = {
+        payload = {
             FIELD_CHECKOUT: checkout_time_str,
-            FIELD_DURATION: str(round(total_hours_today, 2)),
-            FIELD_DURATION_INTEXT: readable_duration,
+            FIELD_DURATION: total_hours_today,
+            FIELD_STATUS: status_code
         }
+        if FIELD_LOCATION and location_data:
+            payload[FIELD_LOCATION] = location_data
 
         print(f"\n{'='*60}")
         print("CHECK-OUT REQUEST")
@@ -4008,12 +4008,27 @@ def get_status(employee_id):
 
         # Classification from total seconds today
         total_hours_today = total_seconds_today / 3600.0
-        if total_hours_today >= 9.0:
+        if total_hours_today >= FULL_DAY_HOURS:
             status = "P"
-        elif total_hours_today >= 4.0:
+        elif total_hours_today >= HALF_DAY_HOURS:
             status = "HL"
         else:
             status = "A"
+
+        # Best-effort: persist status mid-day if we have a record_id (so monthly view reflects HL/P)
+        try:
+            record_id = None
+            # Prefer active session record
+            if active and active_sessions.get(key, {}).get("record_id"):
+                record_id = active_sessions[key]["record_id"]
+            # Fallback to last fetched attendance record
+            if not record_id and 'rec' in locals():
+                record_id = rec.get(FIELD_RECORD_ID) or rec.get("cr6f_table13id") or rec.get("id")
+            if record_id and FIELD_STATUS:
+                token = get_access_token()
+                update_record(ATTENDANCE_ENTITY, record_id, {FIELD_STATUS: status})
+        except Exception as status_persist_err:
+            print(f"[WARN] Failed to persist mid-day status for {key}: {status_persist_err}")
 
         return jsonify({
             "checked_in": active,
