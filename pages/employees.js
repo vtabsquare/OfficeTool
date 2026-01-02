@@ -680,7 +680,7 @@ export const showAddEmployeeModal = () => {
                 <div class="form-grid">
                     <div class="form-field" style="grid-column: 1 / -1;">
                         <div class="profile-photo-upload">
-                            <div id="photo-preview" class="avatar-preview"></div>
+                            <div id="photo-preview" class="${previewClass}" ${previewStyle}></div>
                             <div class="avatar-actions">
                                 <button type="button" class="btn btn-secondary" id="upload-photo-btn"><i class="fa-solid fa-camera"></i> Upload photo</button>
                                 <button type="button" class="btn btn-link" id="remove-photo-btn">Remove</button>
@@ -757,6 +757,10 @@ export const showEditEmployeeModal = (employeeId) => {
     const [firstPrefill, ...lastParts] = (emp.name || '').split(' ');
     const lastPrefill = lastParts.join(' ');
     const flagPrefill = emp.employeeFlag || 'Employee';
+    const hasPhoto = !!existingPhoto;
+    const previewClass = hasPhoto ? 'avatar-preview has-photo' : 'avatar-preview';
+    const previewStyle = hasPhoto ? `style="background-image:url('${existingPhoto}');"` : '';
+
     const formHTML = `
         <div class="form-grid-2-col">
             <div class="form-group">
