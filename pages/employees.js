@@ -850,11 +850,13 @@ export const handleUpdateEmployee = (e) => {
         .then(() => {
             try { if (state?.cache?.employees) state.cache.employees = {}; } catch {}
             const photoData = cleanDataUrl(payload.profile_picture) || null;
+            const photoNormalized = normalizePhoto(photoData) || null;
             const idx = state.employees.findIndex((x) => x.id === employee_id);
             if (idx >= 0) {
                 state.employees[idx] = {
                     ...state.employees[idx],
                     name: `${payload.first_name || ''} ${payload.last_name || ''}`.trim(),
+
                     email: payload.email,
                     location: payload.contact_number,
                     jobTitle: payload.designation,
@@ -862,13 +864,14 @@ export const handleUpdateEmployee = (e) => {
                     department: payload.department,
                     status: payload.active ? 'Active' : 'Inactive',
                     employeeFlag: payload.employee_flag || state.employees[idx].employeeFlag,
-                    photo: photoData !== null ? photoData : state.employees[idx].photo,
+                    photo: photoNormalized !== null ? photoNormalized : state.employees[idx].photo,
                 };
             }
             if (state.user && (state.user.id === employee_id || state.user.employee_id === employee_id)) {
-                if (photoData !== null) state.user.avatarUrl = photoData;
+                if (photoNormalized !== null) state.user.avatarUrl = photoNormalized;
                 applyHeaderAvatar();
             }
+
             closeModal();
             renderEmployeesPage();
         })
