@@ -777,7 +777,7 @@ const init = async () => {
   startNotificationPolling();
 
   // Global event listeners (delegation)
-  document.body.addEventListener('click', async (e) => {
+  document.body.addEventListener('click', (e) => {
     const target = e.target;
     if (target.closest("#timer-btn")) handleTimerClick();
     // Explicit logout option
@@ -925,8 +925,8 @@ const init = async () => {
     const navBtn = target.closest(".month-nav-btn");
     if (navBtn) {
       const direction = navBtn.getAttribute("data-direction");
-      await handleAttendanceNav(direction);
-      return;
+      handleAttendanceNav(direction);
+      router(); // Re-render the page after updating the date
     }
 
     // My Attendance day selection
@@ -1050,6 +1050,9 @@ const init = async () => {
   };
 
   if (pageShell && (headerActions || headerGreeting)) {
+
+    // On desktop, start with the sidebar hidden and reveal only via left-edge hover.
+    // On smaller screens, keep the sidebar visible.
     if (isDesktopViewport()) {
       setSidebarHidden(true);
     } else {
@@ -1088,21 +1091,26 @@ const init = async () => {
   }
 
   if (sidebarEl && appContainer) {
-    const toggleBtn = document.getElementById('sidebar-toggle-btn');
-    const toggleSidebar = () => setSidebarHidden(!sidebarHidden);
+    // Reveal sidebar when hovering over the collapsed icon rail,
+    // and collapse again when moving sufficiently away.
+    document.addEventListener('mousemove', (event) => {
+      if (!isDesktopViewport()) return;
 
-    // Toggle via header button
-    if (toggleBtn) {
-      toggleBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        toggleSidebar();
-      });
-    }
+      const sidebarWidth = sidebarEl.offsetWidth || 280;
 
-    // When collapsed on desktop, a direct click on the sidebar rail expands it.
-    sidebarEl.addEventListener('click', () => {
-      if (isDesktopViewport() && sidebarHidden) {
-        setSidebarHidden(false);
+      if (sidebarHidden) {
+        // When collapsed, expand if cursor is within the visible rail area
+        const expandThreshold = sidebarWidth + 8;
+        if (event.clientX <= expandThreshold) {
+          setSidebarHidden(false);
+          return;
+        }
+      } else {
+        // When expanded, collapse once cursor moves far enough away from sidebar
+        const hideThreshold = sidebarWidth + 24;
+        if (event.clientX > hideThreshold) {
+          setSidebarHidden(true);
+        }
       }
     });
 
