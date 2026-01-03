@@ -4,7 +4,7 @@ import { API_BASE_URL } from '../config.js';
 import { renderMyAttendancePage } from '../pages/attendance.js';
 
 const HALF_DAY_SECONDS = 4 * 3600;
-const FULL_DAY_SECONDS = 8 * 3600;
+const FULL_DAY_SECONDS = 9 * 3600;
 
 const deriveAttendanceStatusFromSeconds = (seconds = 0) => {
     if (seconds >= FULL_DAY_SECONDS) return 'P';
