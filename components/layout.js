@@ -11,10 +11,10 @@ export const getSidebarHTML = () => {
             <div class="sidebar-logo">VS</div>
             <span class="sidebar-title">VTAB SQUARE</span>
         </a>
-        <button class="sidebar-toggle-btn" id="sidebar-toggle-btn" aria-label="Toggle sidebar" type="button">
-            <i class="fa-solid fa-chevron-left"></i>
-        </button>
     </div>
+    <button class="sidebar-toggle-btn" id="sidebar-toggle-btn" aria-label="Toggle sidebar" type="button">
+        <i class="fa-solid fa-chevron-left"></i>
+    </button>
 
     <ul class="sidebar-nav">
         <li><p class="nav-section-title">APPLICATIONS</p></li>
