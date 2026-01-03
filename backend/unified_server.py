@@ -3559,6 +3559,51 @@ def checkout():
             status = "HL"
         else:
             status = "A"
+
+        # Human-readable duration from aggregated seconds
+        hours_int = total_seconds_today // 3600
+        minutes_int = (total_seconds_today % 3600) // 60
+        readable_duration = f"{hours_int} hour(s) {minutes_int} minute(s)"
+
+        payload = {
+            FIELD_CHECKOUT: checkout_time_str,
+            FIELD_DURATION: total_hours_today,
+            FIELD_STATUS: status_code
+        }
+        if FIELD_LOCATION and location_data:
+            payload[FIELD_LOCATION] = location_data
+
+        print(f"\n{'='*60}")
+        print("CHECK-OUT REQUEST")
+        print(f"{'='*60}")
+        print(f"Employee: {normalized_emp_id}")
+        print(f"Record ID: {record_id}")
+        print(f"Session seconds: {session_seconds}")
+        print(f"Total hours today (agg): {total_hours_today}")
+        print(f"Check-out: {checkout_time_str}")
+        print(f"Duration (display): {readable_duration}")
+        print("Updating Dataverse...")
+
+        if record_id:
+            update_record(ATTENDANCE_ENTITY, record_id, payload)
+        else:
+            print("[WARN] No record_id found to update on checkout")
+
+        # Persist checkout to login activity for durability
+        try:
+            checkout_timestamp = int(local_now.timestamp() * 1000)
+            checkout_seconds = int(local_now.timestamp())
+            base_seconds_prev = int(session.get("base_seconds") or 0)
+            token = locals().get("token") or get_access_token()
+            _upsert_login_activity(token, normalized_emp_id, (session.get("local_date") or local_now.date().isoformat()), {
+                LA_FIELD_CHECKIN_TIME: session.get("checkin_time"),
+                LA_FIELD_CHECKIN_TS: int((session.get("checkin_timestamp") or 0) / 1000),
+                LA_FIELD_BASE_SECONDS: base_seconds_prev,
+                LA_FIELD_CHECKOUT_TIME: checkout_time_str,
+                LA_FIELD_CHECKOUT_TS: checkout_seconds,
+                LA_FIELD_TOTAL_SECONDS: total_seconds_today,
+                LA_FIELD_CHECKOUT_LOCATION: _login_activity_location_string(event),
+            })
         except Exception as e:
             print(f"[WARN] Failed to persist login activity checkout for {key}: {e}")
 
