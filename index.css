@@ -3531,6 +3531,16 @@ body.dark-theme .employee-avatar {
   box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.3), inset 0 0 0 1px rgba(255, 255, 255, 0.15);
 }
 
+/* Preserve employee photos in dark mode instead of gradient overlay */
+body.dark-theme .employee-avatar.has-photo {
+  background: none;
+  background-image: inherit;
+  background-size: cover;
+  background-position: center;
+  color: transparent;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+
 .user-avatar.has-photo {
   background-color: #ffffff;
   background-size: cover;
