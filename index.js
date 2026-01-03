@@ -1091,31 +1091,23 @@ const init = async () => {
   }
 
   if (sidebarEl && appContainer) {
-    // Click-to-toggle via arrow button; always visible on mobile/tablet.
-    const toggleBtn = document.getElementById('sidebar-toggle-btn');
-    if (toggleBtn) {
-      toggleBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const willHide = !sidebarHidden;
-        setSidebarHidden(willHide);
-        // Rotate arrow based on state
-        toggleBtn.classList.toggle('collapsed', willHide);
-      });
-    }
+    // Click-to-toggle behavior on desktop; always visible on mobile/tablet.
+    sidebarEl.addEventListener('click', () => {
+      if (!isDesktopViewport()) return;
+      setSidebarHidden(!sidebarHidden);
+    });
 
     // Ensure correct sidebar state when resizing
     window.addEventListener('resize', () => {
       if (!isDesktopViewport()) {
         // On smaller screens, keep sidebar visible and static
         setSidebarHidden(false);
-      } else if (sidebarHidden === false && toggleBtn) {
-        // When entering desktop breakpoint, default to hidden; sync arrow
+      } else if (sidebarHidden === false) {
+        // When entering desktop breakpoint, default to hidden
         setSidebarHidden(true);
-        toggleBtn.classList.add('collapsed');
       }
     });
   }
-
 };
 
 // Start the application
