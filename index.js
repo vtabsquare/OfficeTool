@@ -777,7 +777,7 @@ const init = async () => {
   startNotificationPolling();
 
   // Global event listeners (delegation)
-  document.body.addEventListener('click', (e) => {
+  document.body.addEventListener('click', async (e) => {
     const target = e.target;
     if (target.closest("#timer-btn")) handleTimerClick();
     // Explicit logout option
@@ -925,8 +925,8 @@ const init = async () => {
     const navBtn = target.closest(".month-nav-btn");
     if (navBtn) {
       const direction = navBtn.getAttribute("data-direction");
-      handleAttendanceNav(direction);
-      router(); // Re-render the page after updating the date
+      await handleAttendanceNav(direction);
+      return;
     }
 
     // My Attendance day selection

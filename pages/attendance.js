@@ -1067,13 +1067,22 @@ async function handleSubmitAttendance() {
     }
 }
 
-export const handleAttendanceNav = (direction) => {
-    const currentDate = state.currentAttendanceDate;
-    currentDate.setDate(1); // Avoid month skipping issues
+export const handleAttendanceNav = async (direction) => {
+    // Normalize to avoid DST/overflow issues, then move exactly one month.
+    const nextDate = new Date(state.currentAttendanceDate);
+    nextDate.setDate(1);
     if (direction === 'next') {
-        currentDate.setMonth(currentDate.getMonth() + 1);
+        nextDate.setMonth(nextDate.getMonth() + 1);
     } else {
-        currentDate.setMonth(currentDate.getMonth() - 1);
+        nextDate.setMonth(nextDate.getMonth() - 1);
     }
-    renderAttendanceTrackerPage(window.location.hash.includes('attendance-team') ? 'team' : 'my');
+    state.currentAttendanceDate = nextDate;
+
+    // Re-render the active attendance view with fresh data for the new month.
+    const isTeamView = window.location.hash.includes('attendance-team');
+    if (isTeamView) {
+        await renderTeamAttendancePage();
+    } else {
+        await renderMyAttendancePage();
+    }
 };
