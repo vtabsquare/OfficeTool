@@ -379,7 +379,7 @@ FIELD_DURATION = "crc6f_duration"
 FIELD_DURATION_INTEXT = "crc6f_duration_intext"
 FIELD_ATTENDANCE_ID_CUSTOM = "crc6f_attendanceid"
 FIELD_RECORD_ID = "crc6f_table13id"
-FIELD_STATUS = "crc6f_status"
+FIELD_STATUS = None  # Field doesn't exist in crc6f_table13 - status calculated from duration
 HALF_DAY_HOURS = 4.0
 FULL_DAY_HOURS = 8.0
 HALF_DAY_SECONDS = int(HALF_DAY_HOURS * 3600)
@@ -755,16 +755,19 @@ def _maybe_mark_thresholds(emp_key: str, record_id: str, total_seconds_today: in
     if not updated:
         return
     hours_val = round(max(0, total_seconds_today) / 3600.0, 2)
+    status = _classify_hours(hours_val)
     update_payload = {
         FIELD_DURATION: str(hours_val),
         FIELD_DURATION_INTEXT: _format_duration_text_from_hours(hours_val),
     }
+    if FIELD_STATUS:
+        update_payload[FIELD_STATUS] = status
     try:
         update_record(ATTENDANCE_ENTITY, record_id, update_payload)
         session["threshold_flags"] = flags
-        session["last_status"] = _classify_hours(hours_val)
+        session["last_status"] = status
         active_sessions[emp_key] = session
-        print(f"[OK] Persisted live threshold ({'P' if flags['full'] else 'HL'}) for {emp_key}")
+        print(f"[OK] Persisted live threshold status={status} ({'P' if flags['full'] else 'HL'}) for {emp_key}")
     except Exception as err:
         print(f"[WARN] Failed to persist live threshold for {emp_key}: {err}")
 
@@ -4158,7 +4161,7 @@ def get_status(employee_id):
         else:
             status = "A"
 
-        # Best-effort: persist status mid-day if we have a record_id (so monthly view reflects HL/P)
+        # Best-effort: persist duration mid-day at threshold crossings (so monthly view reflects HL/P)
         try:
             record_id = None
             # Prefer active session record
@@ -4167,9 +4170,9 @@ def get_status(employee_id):
             # Fallback to last fetched attendance record
             if not record_id and 'rec' in locals():
                 record_id = rec.get(FIELD_RECORD_ID) or rec.get("cr6f_table13id") or rec.get("id")
-            if record_id and FIELD_STATUS:
-                token = get_access_token()
-                update_record(ATTENDANCE_ENTITY, record_id, {FIELD_STATUS: status})
+            if record_id and active:
+                # Update duration at threshold crossings (4h=HL, 8h=P)
+                _maybe_mark_thresholds(key, record_id, total_seconds_today)
         except Exception as status_persist_err:
             print(f"[WARN] Failed to persist mid-day status for {key}: {status_persist_err}")
 
@@ -4279,12 +4282,12 @@ def get_monthly_attendance(employee_id, year, month):
             effective_hours = augmented_hours if augmented_hours > duration_hours else duration_hours
 
             # Attendance classification based on hours (post overlay)
-            if effective_hours >= 9:
+            if effective_hours >= FULL_DAY_HOURS:
                 status = "P"  # Present
-            elif 4 <= effective_hours < 9:
-                status = "HL"  # Half Day (>=4h and <9h)
+            elif effective_hours >= HALF_DAY_HOURS:
+                status = "HL"  # Half Day
             else:
-                status = "A"  # Absent (< 4 hours)
+                status = "A"  # Absent
             
             # Extract day number for frontend mapping
             day_num = None
