@@ -12,6 +12,12 @@ let syncIntervalId = null;
 
 let serverOffsetMs = 0;
 
+// Flag to track if backend state has been loaded (prevents socket from overriding backend state)
+let backendStateLoaded = false;
+
+// Timestamp of last user action (checkin/checkout) - socket sync older than this is ignored
+let lastUserActionTimestamp = 0;
+
 const HALF_DAY_SECONDS = 4 * 3600;
 const FULL_DAY_SECONDS = 8 * 3600;
 
@@ -197,12 +203,72 @@ export function emitCheckout(checkoutTime, totalSeconds, status) {
 }
 
 /**
+ * Mark backend state as loaded (call after loadTimerState completes)
+ */
+export function markBackendStateLoaded() {
+    backendStateLoaded = true;
+    console.log('[ATTENDANCE-SOCKET] Backend state marked as loaded');
+}
+
+/**
+ * Record a user action timestamp (call on checkin/checkout)
+ */
+export function recordUserAction() {
+    lastUserActionTimestamp = Date.now();
+}
+
+/**
  * Handle timer sync from server
+ * IMPORTANT: This should NOT override state that was just loaded from backend
+ * or state from a recent user action. Socket sync is for cross-device updates only.
  */
 function handleTimerSync(data) {
     updateServerOffset(data);
     const uid = String(state.user?.id || '').toUpperCase();
     if (data.employee_id !== uid) return;
+
+    // If we just loaded backend state or had a recent user action, ignore socket sync
+    // This prevents stale socket data from overriding correct backend/local state
+    const now = Date.now();
+    const recentActionThreshold = 5000; // 5 seconds
+    if (now - lastUserActionTimestamp < recentActionThreshold) {
+        console.log('[ATTENDANCE-SOCKET] Ignoring sync - recent user action');
+        return;
+    }
+
+    // If the socket server timestamp is older than our state, ignore it
+    const serverNow = data.serverNow || now;
+    const stateTimestamp = state.timer.lastSyncTimestamp || 0;
+    if (serverNow < stateTimestamp) {
+        console.log('[ATTENDANCE-SOCKET] Ignoring sync - stale data');
+        return;
+    }
+
+    // CRITICAL: Don't flip running state unless socket has valid data
+    // If socket says running but we're stopped with accumulated time, verify before flipping
+    if (data.isRunning && !state.timer.isRunning && state.timer.lastDuration > 0) {
+        // Socket says running, but we're stopped with time. This could be stale.
+        // Only accept if socket's totalSeconds is greater than our accumulated time
+        const serverTotal = typeof data.totalSeconds === 'number' ? data.totalSeconds : 0;
+        if (serverTotal < state.timer.lastDuration) {
+            console.log('[ATTENDANCE-SOCKET] Ignoring sync - socket total less than local');
+            return;
+        }
+    }
+
+    // CRITICAL: Don't flip to stopped if we're running unless socket has valid stopped state
+    if (!data.isRunning && state.timer.isRunning) {
+        // Socket says stopped, we're running. Only accept if socket has totalSeconds >= our elapsed
+        const serverTotal = typeof data.totalSeconds === 'number' ? data.totalSeconds : 0;
+        const localElapsed = state.timer.startTime ? Math.floor((now - state.timer.startTime) / 1000) : 0;
+        const localTotal = (state.timer.lastDuration || 0) + localElapsed;
+        if (serverTotal < localTotal) {
+            console.log('[ATTENDANCE-SOCKET] Ignoring sync - would lose time');
+            return;
+        }
+    }
+
+    state.timer.lastSyncTimestamp = serverNow;
 
     if (data.isRunning) {
         // Timer is running - sync state
@@ -212,8 +278,8 @@ function handleTimerSync(data) {
         const baseSeconds = Math.max(0, baseSecondsIncoming, existingBase);
 
         // Calculate current elapsed based on server timestamp
-        const now = Date.now() + (state.timer.serverOffsetMs || 0);
-        const elapsedMs = now - serverTimestamp;
+        const adjustedNow = Date.now() + (state.timer.serverOffsetMs || 0);
+        const elapsedMs = adjustedNow - serverTimestamp;
         const elapsedSeconds = Math.floor(elapsedMs / 1000);
         const totalSeconds = baseSeconds + elapsedSeconds;
 
@@ -257,10 +323,24 @@ function handleTimerSync(data) {
         // Never downgrade due to late/empty sync payloads.
         state.timer.lastDuration = incomingTotal === null ? existingTotal : Math.max(existingTotal, incomingTotal);
 
+        // Save to localStorage
+        const today = new Date();
+        const dateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+        try {
+            const uid = String(state.user?.id || '').toUpperCase();
+            localStorage.setItem(`timerState_${uid}`, JSON.stringify({
+                isRunning: false,
+                startTime: null,
+                date: dateStr,
+                mode: 'stopped',
+                durationSeconds: state.timer.lastDuration,
+            }));
+        } catch {}
+
         updateTimerButton();
         updateTimerDisplay();
 
-        console.log('[ATTENDANCE-SOCKET] Timer synced: stopped');
+        console.log(`[ATTENDANCE-SOCKET] Timer synced: stopped, totalSeconds=${state.timer.lastDuration}`);
     }
 }
 
@@ -271,6 +351,14 @@ function handleRemoteCheckin(data) {
     updateServerOffset(data);
     const uid = String(state.user?.id || '').toUpperCase();
     if (data.employee_id !== uid) return;
+
+    // If we had a recent user action, ignore remote events
+    const now = Date.now();
+    const recentActionThreshold = 5000; // 5 seconds
+    if (now - lastUserActionTimestamp < recentActionThreshold) {
+        console.log('[ATTENDANCE-SOCKET] Ignoring remote check-in - recent user action');
+        return;
+    }
 
     // If we're already running, ignore (we initiated this)
     if (state.timer.isRunning && state.timer.startTime) {
@@ -318,6 +406,14 @@ function handleRemoteCheckout(data) {
     updateServerOffset(data);
     const uid = String(state.user?.id || '').toUpperCase();
     if (data.employee_id !== uid) return;
+
+    // If we had a recent user action, ignore remote events
+    const now = Date.now();
+    const recentActionThreshold = 5000; // 5 seconds
+    if (now - lastUserActionTimestamp < recentActionThreshold) {
+        console.log('[ATTENDANCE-SOCKET] Ignoring remote check-out - recent user action');
+        return;
+    }
 
     // If we're not running, ignore
     if (!state.timer.isRunning) {

@@ -2,6 +2,7 @@ import { state } from '../state.js';
 import { checkIn, checkOut } from './attendanceApi.js';
 import { API_BASE_URL } from '../config.js';
 import { renderMyAttendancePage } from '../pages/attendance.js';
+import { recordUserAction, markBackendStateLoaded } from './attendanceSocket.js';
 
 const HALF_DAY_SECONDS = 4 * 3600;
 const FULL_DAY_SECONDS = 8 * 3600;
@@ -143,6 +144,10 @@ const startTimer = async () => {
     const clickTime = Date.now();
     const previousSeconds = typeof state.timer.lastDuration === 'number' ? state.timer.lastDuration : 0;
 
+    // Record user action to prevent socket sync from overriding
+    recordUserAction();
+    state.timer.lastSyncTimestamp = clickTime;
+
     // Immediately update UI state
     state.timer.isRunning = true;
     state.timer.startTime = clickTime;
@@ -259,6 +264,10 @@ const stopTimer = async () => {
     }
 
     const localTotal = baseBefore + localElapsed;
+
+    // Record user action to prevent socket sync from overriding
+    recordUserAction();
+    state.timer.lastSyncTimestamp = clickTime;
 
     // Immediately update UI state
     if (state.timer.intervalId) clearInterval(state.timer.intervalId);
@@ -508,6 +517,12 @@ export const loadTimerState = async () => {
                 state.timer.intervalId = setInterval(updateTimerDisplay, 1000);
                 updateTimerButton();
                 updateTimerDisplay();
+                
+                // Mark backend state as loaded and set sync timestamp to prevent socket override
+                state.timer.lastSyncTimestamp = Date.now();
+                markBackendStateLoaded();
+                recordUserAction(); // Prevent socket sync for 5 seconds
+                
                 console.log(`✅ Timer restored from backend (running, elapsed: ${backendElapsed}s, base: ${baseFromBackend}s)`);
                 return;
             } else {
@@ -533,6 +548,12 @@ export const loadTimerState = async () => {
                     }
                     updateTimerButton();
                     updateTimerDisplay();
+                    
+                    // Mark backend state as loaded and set sync timestamp to prevent socket override
+                    state.timer.lastSyncTimestamp = Date.now();
+                    markBackendStateLoaded();
+                    recordUserAction(); // Prevent socket sync for 5 seconds
+                    
                     console.log(`✅ Timer restored from backend (stopped, total: ${backendTotal}s)`);
                     return;
                 }
