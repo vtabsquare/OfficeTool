@@ -3665,10 +3665,47 @@ def get_status(employee_id):
 
         # Running totals baseline for today
         total_seconds_today = 0
+        checked_out_today = False  # Track if user has checked out today
 
-        # Try to recover session from Dataverse if not in memory
+        # First, fetch today's attendance record to check checkout status
+        # This determines if we should recover an active session or return checked-out state
+        today_attendance_rec = None
+        try:
+            from datetime import date as _date
+            formatted_date = _date.today().isoformat()
+            token = get_access_token()
+            headers = {
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/json",
+                "OData-MaxVersion": "4.0",
+                "OData-Version": "4.0",
+            }
+            filter_query = (
+                f"?$filter={FIELD_EMPLOYEE_ID} eq '{normalized_emp_id}' "
+                f"and {FIELD_DATE} eq '{formatted_date}'"
+            )
+            url = f"{RESOURCE}/api/data/v9.2/{ATTENDANCE_ENTITY}{filter_query}"
+            resp = requests.get(url, headers=headers, timeout=20)
+            if resp.status_code == 200:
+                vals = resp.json().get("value", [])
+                if vals:
+                    today_attendance_rec = vals[0]
+                    checkout_time_rec = today_attendance_rec.get(FIELD_CHECKOUT)
+                    if checkout_time_rec:
+                        # User has checked out today - don't recover session
+                        checked_out_today = True
+                        try:
+                            hours = float(today_attendance_rec.get(FIELD_DURATION) or "0")
+                            total_seconds_today = int(round(hours * 3600))
+                        except Exception:
+                            total_seconds_today = 0
+                        print(f"[INFO] User {key} has checked out today with {total_seconds_today}s")
+        except Exception as prefetch_err:
+            print(f"[WARN] Failed to prefetch attendance record: {prefetch_err}")
+
+        # Try to recover session from Dataverse if not in memory AND not checked out
         # This handles server restarts
-        if key not in active_sessions:
+        if key not in active_sessions and not checked_out_today:
 
             try:
                 from datetime import date as _date
@@ -3681,66 +3718,55 @@ def get_status(employee_id):
                     "OData-MaxVersion": "4.0",
                     "OData-Version": "4.0",
                 }
-                filter_query = (
-                    f"?$filter={FIELD_EMPLOYEE_ID} eq '{normalized_emp_id}' "
-                    f"and {FIELD_DATE} eq '{formatted_date}'"
-                )
-                url = f"{RESOURCE}/api/data/v9.2/{ATTENDANCE_ENTITY}{filter_query}"
-                resp = requests.get(url, headers=headers, timeout=20)
-                if resp.status_code == 200:
-                    vals = resp.json().get("value", [])
-                    if vals:
-                        rec = vals[0]
-                        checkin_time_rec = rec.get(FIELD_CHECKIN)
-                        checkout_time_rec = rec.get(FIELD_CHECKOUT)
-                        # If there's a check-in but no checkout, recover the session
-                        if checkin_time_rec and not checkout_time_rec:
-                            record_id = (
-                                rec.get(FIELD_RECORD_ID)
-                                or rec.get("cr6f_table13id")
-                                or rec.get("id")
-                            )
-                            attendance_id = (
-                                rec.get(FIELD_ATTENDANCE_ID_CUSTOM)
-                                or generate_random_attendance_id()
-                            )
-                            try:
-                                existing_hours = float(rec.get(FIELD_DURATION) or "0")
-                            except Exception:
-                                existing_hours = 0.0
-                            if attendance_id and not rec.get(FIELD_ATTENDANCE_ID_CUSTOM):
-                                try:
-                                    update_record(ATTENDANCE_ENTITY, record_id, {FIELD_ATTENDANCE_ID_CUSTOM: attendance_id})
-                                except Exception:
-                                    pass
+                
+                # Use prefetched record if available
+                rec = today_attendance_rec
+                if rec:
+                    checkin_time_rec = rec.get(FIELD_CHECKIN)
+                    checkout_time_rec = rec.get(FIELD_CHECKOUT)
+                    # If there's a check-in but no checkout, recover the session
+                    if checkin_time_rec and not checkout_time_rec:
+                        record_id = (
+                            rec.get(FIELD_RECORD_ID)
+                            or rec.get("cr6f_table13id")
+                            or rec.get("id")
+                        )
+                        attendance_id = (
+                            rec.get(FIELD_ATTENDANCE_ID_CUSTOM)
+                            or generate_random_attendance_id()
+                        )
+                        try:
+                            existing_hours = float(rec.get(FIELD_DURATION) or "0")
+                        except Exception:
+                            existing_hours = 0.0
 
-                            # Use stored check-in time for accurate elapsed; fall back to now if parse fails
-                            try:
-                                checkin_dt = datetime.strptime(checkin_time_rec, "%H:%M:%S").replace(
-                                    year=datetime.now().year,
-                                    month=datetime.now().month,
-                                    day=datetime.now().day,
-                                )
-                            except Exception:
-                                checkin_dt = datetime.now()
-                            checkin_timestamp = int(checkin_dt.timestamp() * 1000)  # ms for JS
-                            base_seconds = int(round(existing_hours * 3600)) if existing_hours else 0
-                            active_sessions[key] = {
-                                "record_id": record_id,
-                                "checkin_time": checkin_time_rec,
-                                "checkin_datetime": checkin_dt.isoformat(),
-                                "checkin_timestamp": checkin_timestamp,
-                                "attendance_id": attendance_id,
-                                "local_date": formatted_date,
-                                "base_seconds": base_seconds,
-                            }
+                        # Use stored check-in time for accurate elapsed; fall back to now if parse fails
+                        try:
+                            checkin_dt = datetime.strptime(checkin_time_rec, "%H:%M:%S").replace(
+                                year=datetime.now().year,
+                                month=datetime.now().month,
+                                day=datetime.now().day,
+                            )
+                        except Exception:
+                            checkin_dt = datetime.now()
+                        checkin_timestamp = int(checkin_dt.timestamp() * 1000)  # ms for JS
+                        base_seconds = int(round(existing_hours * 3600)) if existing_hours else 0
+                        active_sessions[key] = {
+                            "record_id": record_id,
+                            "checkin_time": checkin_time_rec,
+                            "checkin_datetime": checkin_dt.isoformat(),
+                            "checkin_timestamp": checkin_timestamp,
+                            "attendance_id": attendance_id,
+                            "local_date": formatted_date,
+                            "base_seconds": base_seconds,
+                        }
 
-                            print(f"[INFO] Recovered session from Dataverse for status check: {key}")
+                        print(f"[INFO] Recovered session from Dataverse for status check: {key}")
             except Exception as recover_err:
                 print(f"[WARN] Failed to recover session in status: {recover_err}")
 
         # Fallback: derive active session from today's attendance record if check-in exists and checkout is missing
-        if key not in active_sessions:
+        if key not in active_sessions and not checked_out_today:
             try:
                 from datetime import date as _date
                 formatted_date = _date.today().isoformat()
@@ -3796,7 +3822,7 @@ def get_status(employee_id):
 
         # Fallback: derive active session from login activity log (survives server restarts)
         # NOTE: placed after attendance record recovery to avoid overriding real check-in with login heartbeat
-        if key not in active_sessions:
+        if key not in active_sessions and not checked_out_today:
             try:
                 from datetime import date as _date
                 formatted_date = _date.today().isoformat()
