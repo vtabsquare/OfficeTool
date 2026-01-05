@@ -2262,8 +2262,9 @@ export const renderMeetPage = async () => {
             box-shadow: 0 16px 32px rgba(15, 23, 42, 0.12);
         }
         .meet-employee-card.selected {
-            border-color: #2563eb;
-            background: linear-gradient(135deg, #eff6ff, #e0e7ff);
+            border-color: #16a34a;
+            background: radial-gradient(circle at 20% 20%, rgba(74, 222, 128, 0.18), transparent 45%), linear-gradient(135deg, #ecfdf3, #dcfce7);
+            box-shadow: 0 0 0 2px rgba(22, 163, 74, 0.35), 0 12px 28px rgba(22, 163, 74, 0.15);
         }
         body.dark-theme .meet-employee-card {
             border-color: rgba(148, 163, 184, 0.55);
@@ -2272,8 +2273,9 @@ export const renderMeetPage = async () => {
             box-shadow: 0 18px 44px rgba(0, 0, 0, 0.7);
         }
         body.dark-theme .meet-employee-card.selected {
-            border-color: #60a5fa;
-            background: linear-gradient(135deg, rgba(37, 99, 235, 0.35), rgba(15, 23, 42, 0.92));
+            border-color: #22c55e;
+            background: radial-gradient(circle at 20% 20%, rgba(52, 211, 153, 0.28), transparent 45%), linear-gradient(135deg, rgba(21, 128, 61, 0.6), rgba(15, 23, 42, 0.92));
+            box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.35), 0 12px 28px rgba(16, 185, 129, 0.18);
         }
         .meet-employee-card h4 {
             margin: 0;
@@ -2383,92 +2385,38 @@ export const renderMeetPage = async () => {
         body.dark-theme .meet-subtle { color: #cbd5e1; }
     </style>
 
-    <div class="card">
-        <div class="card-header-flex">
-            <div>
-                <h2 style="margin:0; font-size:18px;">Start a meeting</h2>
-                <p style="margin:4px 0 0; font-size:13px; color:#6b7280;">Create a Google Meet and invite employees or an entire project team.</p>
-            </div>
-        </div>
-        <form id="meet-form" class="form-grid" style="margin-top:16px; gap:12px;">
-            <div class="form-group">
-                <label for="meet-title">Title</label>
-                <input id="meet-title" class="form-control" placeholder="Daily standup" />
-            </div>
-            <div class="form-group">
-                <label for="meet-description">Description</label>
-                <textarea id="meet-description" class="form-control" rows="2" placeholder="Optional agenda or notes"></textarea>
-            </div>
-            <div class="form-row" style="display:flex; gap:12px; flex-wrap:wrap;">
-                <div class="form-group" style="flex:1 1 220px; min-width:200px;">
-                    <label for="meet-audience-type">Audience</label>
-                    <select id="meet-audience-type" class="form-control">
-                        <option value="employees">Selected employees</option>
-                        <option value="project">Entire project</option>
-                        <option value="custom">Project + extra employees</option>
-                    </select>
-                </div>
-            </div>
-            <div id="meet-employee-ids-group" class="form-group" style="margin-top:8px;">
-                <label>Participants</label>
-                <div id="meet-participants" style="display:flex; flex-wrap:wrap; gap:8px; margin-top:4px; min-height:28px; align-items:center;">
-                    <span id="meet-participants-empty" style="font-size:12px; color:#9ca3af;">No participants added yet.</span>
-                </div>
-                <div style="display:flex; gap:8px; align-items:center; margin-top:8px; max-width:420px;">
-                    <input id="meet-employee-id-input" class="form-control" placeholder="Type employee ID (EMP001) and click Add" />
-                    <button type="button" id="meet-add-member-btn" class="btn btn-secondary btn-sm"><i class="fa-solid fa-user-plus"></i> Add</button>
-                </div>
-            </div>
-            <div id="meet-project-id-group" class="form-group" style="flex:1 1 200px; min-width:180px; margin-top:8px;">
-                <label for="meet-project-id">Project ID (for project mode)</label>
-                <input id="meet-project-id" class="form-control" placeholder="VTAB001" />
-            </div>
-            <div class="form-row" style="display:flex; gap:12px; flex-wrap:wrap; align-items:flex-end;">
-                <div class="form-group" style="flex:1 1 180px; min-width:160px;">
-                    <label>
-                        <input type="checkbox" id="meet-start-now" checked /> Start now
-                    </label>
-                </div>
-                <div class="form-group" style="flex:1 1 220px; min-width:200px;">
-                    <label for="meet-start-time">Start time</label>
-                    <input type="datetime-local" id="meet-start-time" class="form-control" />
-                </div>
-                <div class="form-group" style="flex:1 1 220px; min-width:200px;">
-                    <label for="meet-end-time">End time</label>
-                    <input type="datetime-local" id="meet-end-time" class="form-control" />
-                </div>
-            </div>
-            <div class="form-row" style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
-                <div class="form-group" style="flex:1 1 200px; min-width:180px;">
-                    <label for="meet-timezone">Timezone</label>
-                    <input id="meet-timezone" class="form-control" value="${tz}" />
-                </div>
-                <div style="flex:0 0 auto; margin-top:20px; display:flex; gap:8px; flex-wrap:wrap;">
-                    <button type="submit" class="btn btn-primary">
-                        <i class="fa-solid fa-video"></i> Create Meet
-                    </button>
-                    <button type="button" id="meet-call-btn" class="btn btn-success" disabled>
-                        <i class="fa-solid fa-phone"></i> Call Participants
-                    </button>
-                </div>
-            </div>
-        </form>
-        <div id="meet-result" style="margin-top:16px;"></div>
-    </div>
     <div class="card" style="margin-top:16px;">
         <div class="card-header-flex" style="align-items:flex-start; gap:12px;">
             <div>
                 <h3 style="margin:0; font-size:17px;">Employee directory</h3>
                 <p style="margin:4px 0 0; font-size:13px; color:#6b7280;">Tap a card to add employees to the call list.</p>
             </div>
-            <div style="margin-left:auto; font-size:13px; color:#4b5563;">
+            <div style="margin-left:auto; display:flex; align-items:center; gap:10px; font-size:13px; color:#4b5563;">
                 <span id="meet-employee-count">0 selected</span>
+                <button type="button" id="meet-call-btn" class="btn btn-success btn-sm" disabled>
+                    <i class="fa-solid fa-phone"></i> Call Participants
+                </button>
             </div>
         </div>
         <div class="form-row" style="margin-top:12px; display:flex; gap:12px; flex-wrap:wrap;">
             <div class="form-group" style="flex:1 1 280px;">
                 <label for="meet-employee-search">Search employees</label>
                 <input id="meet-employee-search" class="form-control" placeholder="Search by name, ID, department" />
+            </div>
+            <div class="form-group" style="flex:1 1 280px;">
+                <label for="meet-employee-id-input">Add by employee ID</label>
+                <div style="display:flex; gap:8px; align-items:center;">
+                    <input id="meet-employee-id-input" class="form-control" placeholder="Type employee ID (EMP001) and click Add" />
+                    <button type="button" id="meet-add-member-btn" class="btn btn-secondary btn-sm"><i class="fa-solid fa-user-plus"></i> Add</button>
+                </div>
+            </div>
+        </div>
+        <div class="form-row" style="margin-top:8px; display:flex; gap:12px; flex-wrap:wrap;">
+            <div class="form-group" style="flex:1 1 100%;">
+                <label>Selected participants</label>
+                <div id="meet-participants" style="display:flex; flex-wrap:wrap; gap:8px; margin-top:4px; min-height:28px; align-items:center;">
+                    <span id="meet-participants-empty" style="font-size:12px; color:#9ca3af;">No participants added yet.</span>
+                </div>
             </div>
         </div>
         <div id="meet-employee-grid" class="meet-employee-grid">
@@ -2478,26 +2426,7 @@ export const renderMeetPage = async () => {
             </div>
         </div>
     </div>
-    <div class="card" style="margin-top:16px;">
-        <div class="card-header-flex">
-            <div>
-                <h3 style="margin:0; font-size:17px;">Project library</h3>
-                <p style="margin:4px 0 0; font-size:13px; color:#6b7280;">Browse active projects and quickly add whole teams to a call.</p>
-            </div>
-        </div>
-        <div id="meet-project-grid" class="meet-project-grid" style="margin-top:16px;">
-            <div class="placeholder-text" style="grid-column: 1 / -1;">
-                <i class="fa-solid fa-spinner fa-spin fa-2x" style="color:#007bff; margin-bottom: 0.5rem;"></i>
-                <p>Loading projects…</p>
-            </div>
-        </div>
-        <div style="margin-top:16px;">
-            <label style="font-size:13px; color:#6b7280;">Selected projects</label>
-            <div id="meet-selected-projects" class="meet-chip-container" style="margin-top:6px;">
-                <span id="meet-selected-projects-empty" style="font-size:12px; color:#9ca3af;">No projects selected.</span>
-            </div>
-        </div>
-    </div>
+
     <div id="meet-call-modal" class="meet-call-modal incoming-call-overlay hidden">
         <div class="meet-call-modal-card incoming-call-modal">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
