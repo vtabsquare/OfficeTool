@@ -7,6 +7,17 @@ import { recordUserAction, markBackendStateLoaded } from './attendanceSocket.js'
 const HALF_DAY_SECONDS = 4 * 3600;
 const FULL_DAY_SECONDS = 9 * 3600;
 
+/**
+ * Get today's date string in YYYY-MM-DD format
+ */
+const getTodayDateStr = () => {
+    const today = new Date();
+    return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+};
+
+// Track the date when timer was active for midnight reset detection
+let timerDateStr = null;
+
 const deriveAttendanceStatusFromSeconds = (seconds = 0) => {
     if (seconds >= FULL_DAY_SECONDS) return 'P';
     if (seconds >= HALF_DAY_SECONDS) return 'HL';
@@ -119,6 +130,16 @@ const getGeolocation = () => {
 export const updateTimerDisplay = () => {
     const timerDisplay = document.getElementById('timer-display');
     if (!timerDisplay) return;
+
+    // Check if date has changed (midnight passed) - reset timer if so
+    const currentDateStr = getTodayDateStr();
+    if (timerDateStr && currentDateStr !== timerDateStr) {
+        console.log('[TIMER] Date changed detected in updateTimerDisplay - resetting timer');
+        timerDateStr = currentDateStr;
+        resetTimerForNewDay();
+        return;
+    }
+    timerDateStr = currentDateStr;
 
     let totalSeconds = 0;
 
@@ -403,13 +424,6 @@ const storageAvailable = () => {
     }
 };
 
-/**
- * Get today's date string in YYYY-MM-DD format
- */
-const getTodayDateStr = () => {
-    const today = new Date();
-    return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-};
 
 /**
  * Schedule a timer reset at midnight (12:00 AM).
