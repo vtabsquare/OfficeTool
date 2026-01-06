@@ -1,11 +1,9 @@
 import { getSidebarHTML, getHeaderHTML } from './components/layout.js';
 import { router } from './router.js';
 // V2: Backend-authoritative attendance - stateless frontend
-import { initializeAttendance, updateTimerDisplay, handleTimerClick } from './features/attendanceRenderer.js';
+import { loadTimerState, updateTimerButton, handleTimerClick } from './features/attendanceRenderer.js';
 import { initializeAttendanceSocket, registerForAttendanceEvents } from './features/attendanceSocketV2.js';
 // Legacy aliases for backward compatibility
-const loadTimerState = initializeAttendance;
-const updateTimerButton = updateTimerDisplay;
 const initAttendanceSocket = initializeAttendanceSocket;
 const registerForAttendanceUpdates = registerForAttendanceEvents;
 import { closeModal } from './components/modal.js';
