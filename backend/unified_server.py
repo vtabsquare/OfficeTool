@@ -918,10 +918,56 @@ def _maybe_mark_thresholds(emp_key: str, record_id: str, total_seconds_today: in
         print(f"[WARN] Failed to persist live threshold for {emp_key}: {err}")
 
 def _live_session_progress_hours(emp_id: str, target_date: str) -> float:
-    """Return elapsed hours for an active session on target_date (if any)."""
+    """Return elapsed hours for an active session on target_date (if any).
+    
+    Checks both in-memory active_sessions AND the login activity table (V2 system).
+    """
     if not emp_id or not target_date:
         return 0.0
-    session = active_sessions.get(emp_id.strip().upper())
+    
+    normalized_emp = emp_id.strip().upper()
+    now_utc = datetime.now(timezone.utc)
+    now_ts = int(now_utc.timestamp())
+    
+    # First try: Check login activity table (V2 system)
+    try:
+        token = get_access_token()
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json",
+            "OData-MaxVersion": "4.0",
+            "OData-Version": "4.0"
+        }
+        safe_emp = _safe_odata_string(normalized_emp)
+        safe_date = _safe_odata_string(target_date)
+        
+        filter_q = f"?$filter={LA_FIELD_EMPLOYEE_ID} eq '{safe_emp}' and {LA_FIELD_DATE} eq '{safe_date}'"
+        url = f"{RESOURCE}/api/data/v9.2/{LOGIN_ACTIVITY_ENTITY}{filter_q}&$top=1"
+        
+        resp = requests.get(url, headers=headers, timeout=10)
+        if resp.status_code == 200:
+            records = resp.json().get("value", [])
+            if records:
+                la_record = records[0]
+                checkin_ts = la_record.get(LA_FIELD_CHECKIN_TS)
+                checkout_ts = la_record.get(LA_FIELD_CHECKOUT_TS)
+                base_seconds = int(la_record.get(LA_FIELD_BASE_SECONDS) or 0)
+                
+                # If checked in but not checked out = active session
+                if checkin_ts and not checkout_ts:
+                    elapsed_seconds = now_ts - int(checkin_ts)
+                    total_seconds = base_seconds + max(0, elapsed_seconds)
+                    return total_seconds / 3600.0
+                
+                # If already checked out, return stored total
+                if checkout_ts:
+                    total_seconds = int(la_record.get(LA_FIELD_TOTAL_SECONDS) or 0)
+                    return total_seconds / 3600.0
+    except Exception as e:
+        print(f"[WARN] _live_session_progress_hours V2 lookup failed: {e}")
+    
+    # Fallback: Check in-memory active_sessions (V1 system)
+    session = active_sessions.get(normalized_emp)
     if not session:
         return 0.0
     if session.get("local_date") != target_date:
