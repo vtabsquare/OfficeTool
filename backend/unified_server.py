@@ -4095,7 +4095,13 @@ def get_status(employee_id):
         # This determines if we should recover an active session or return checked-out state
         today_attendance_rec = None
         from datetime import date as _date
-        formatted_date = _date.today().isoformat()
+        # Use client's local date if provided (handles timezone differences)
+        # Client sends date in YYYY-MM-DD format
+        client_date = request.args.get('client_date')
+        if client_date and len(client_date) == 10:
+            formatted_date = client_date
+        else:
+            formatted_date = _date.today().isoformat()
         
         try:
             token = get_access_token()

@@ -520,6 +520,11 @@ export const loadTimerState = async () => {
                     state.timer.lastAutoStatus = null;
                     updateTimerButton();
                     updateTimerDisplay();
+                    // CRITICAL: Return early to avoid backend fetch which may return
+                    // stale data due to server timezone being different from client
+                    // (e.g., server in UTC, client in IST - 5.5 hour difference)
+                    console.log('[TIMER] Day changed - timer reset to 00:00:00, skipping backend fetch');
+                    return;
                 }
             }
         } catch (e) {
@@ -528,9 +533,10 @@ export const loadTimerState = async () => {
     }
 
     // 1) Backend-first: fetch status from backend to sync across devices
+    // Pass client's local date to handle timezone differences between client and server
     if (uid) {
         try {
-            const response = await fetch(`${baseUrl}/api/status/${uid}`);
+            const response = await fetch(`${baseUrl}/api/status/${uid}?client_date=${todayStr}`);
             const statusData = await response.json();
             
             if (statusData.checked_in) {
