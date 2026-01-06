@@ -34,6 +34,8 @@ export async function fetchAttendanceStatus(employeeId) {
         const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
         const url = `${BASE_URL}/api/v2/attendance/status/${employeeId}?timezone=${encodeURIComponent(tz)}`;
         
+        console.log('[ATTENDANCE-RENDERER] Fetching status from:', url);
+        
         const response = await fetch(url, {
             method: 'GET',
             headers: { 'Accept': 'application/json' }
@@ -44,19 +46,21 @@ export async function fetchAttendanceStatus(employeeId) {
         }
         
         const data = await response.json();
+        console.log('[ATTENDANCE-RENDERER] Status response:', data);
         
         if (data.success) {
             lastStatusResponse = {
                 ...data,
                 fetchedAt: Date.now(),
-                serverNowAtFetch: new Date(data.server_now_utc).getTime()
+                serverNowAtFetch: data.server_now_utc ? new Date(data.server_now_utc).getTime() : Date.now()
             };
-            return lastStatusResponse;
+            console.log('[ATTENDANCE-RENDERER] Stored lastStatusResponse:', lastStatusResponse);
+            return data;
         }
         
         return null;
     } catch (error) {
-        console.error('[ATTENDANCE-RENDERER] Status fetch error:', error);
+        console.error('[ATTENDANCE-RENDERER] fetchAttendanceStatus error:', error);
         return null;
     }
 }
@@ -238,6 +242,16 @@ export function updateTimerDisplay() {
     const { totalSeconds, isActive } = calculateCurrentElapsed();
     const timeString = formatTime(totalSeconds);
     
+    // Debug logging
+    if (Math.random() < 0.01) { // Log 1% of the time to avoid spam
+        console.log('[ATTENDANCE-RENDERER] Display update:', {
+            totalSeconds,
+            isActive,
+            timeString,
+            hasResponse: !!lastStatusResponse
+        });
+    }
+    
     if (timerDisplay) {
         timerDisplay.textContent = timeString;
     }
@@ -302,9 +316,8 @@ export async function initializeAttendance(employeeId) {
     
     // Start display update interval (visual interpolation only)
     displayUpdateIntervalId = setInterval(() => {
-        if (lastStatusResponse?.is_active_session) {
-            updateTimerDisplay();
-        }
+        // Always update display for visual consistency
+        updateTimerDisplay();
     }, DISPLAY_UPDATE_INTERVAL_MS);
     
     // Start status refresh interval (sync with backend)
