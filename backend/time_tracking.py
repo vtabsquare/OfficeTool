@@ -11,6 +11,18 @@ RESOURCE = os.getenv("RESOURCE")
 DV_API = os.getenv("DATAVERSE_API", "/api/data/v9.2")
 ENTITY_SET_TASKS = "crc6f_hr_taskdetailses"
 
+TIMESHEET_RPT_MAP = {
+    "createdon": "crc6f_RPT_createdon",
+    "modifiedon": "crc6f_RPT_modifiedon",
+    "statecode": "crc6f_RPT_statecode",
+    "statuscode": "crc6f_RPT_statuscode",
+    "importsequencenumber": "crc6f_RPT_importsequencenumber",
+    "overriddencreatedon": "crc6f_RPT_overriddencreatedon",
+    "timezoneruleversionnumber": "crc6f_RPT_timezoneruleversionnumber",
+    "utcconversiontimezonecode": "crc6f_RPT_utcconversiontimezonecode",
+    "crc6f_workdate": "crc6f_RPT_workdate",
+}
+
 # Simple file-based store for time entries to persist across restarts
 DATA_DIR = os.path.join(os.path.dirname(__file__), "_data")
 ENTRIES_FILE = os.path.join(DATA_DIR, "time_entries.json")
@@ -507,6 +519,11 @@ def create_task_log():
                 # Dataverse work date field (Date Only)
                 "crc6f_workdate": seg_work_date if seg_work_date else None
             }
+            for base_key, rpt_key in TIMESHEET_RPT_MAP.items():
+                if base_key in payload and payload[base_key] is not None:
+                    payload[rpt_key] = payload[base_key]
+                elif base_key in b and b.get(base_key) is not None:
+                    payload[rpt_key] = b.get(base_key)
             # Remove None values
             payload = {k: v for k, v in payload.items() if v is not None}
 

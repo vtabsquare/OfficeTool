@@ -18,6 +18,59 @@ import logging
 # --------------------------------------------------------------
 chat_bp = Blueprint("chat", __name__, url_prefix="/chat")
 
+# ================== FILE ATTACHMENT RPT MIRRORING ==================
+FILEATTACH_RPT_MAP = {
+    "createdon": "crc6f_RPT_createdon",
+    "modifiedon": "crc6f_RPT_modifiedon",
+    "statecode": "crc6f_RPT_statecode",
+    "statuscode": "crc6f_RPT_statuscode",
+    "importsequencenumber": "crc6f_RPT_importsequencenumber",
+    "overriddencreatedon": "crc6f_RPT_overriddencreatedon",
+    "timezoneruleversionnumber": "crc6f_RPT_timezoneruleversionnumber",
+    "utcconversiontimezonecode": "crc6f_RPT_utcconversiontimezonecode",
+    "crc6f_filesize": "crc6f_RPT_filesize",
+}
+
+
+def _apply_fileattach_rpt(payload: dict) -> dict:
+    """Apply RPT mirroring for file attachment payloads."""
+    if not isinstance(payload, dict):
+        return {}
+    for base_key, rpt_key in FILEATTACH_RPT_MAP.items():
+        if base_key in payload and payload[base_key] not in (None, "", []):
+            payload[rpt_key] = payload[base_key]
+    return payload
+
+# ================== CONVERSATION RPT MIRRORING ==================
+CONV_RPT_MAP = {
+    "createdon": "crc6f_RPT_createdon",
+}
+
+
+def _apply_conv_rpt(payload: dict) -> dict:
+    """Apply RPT mirroring for conversation payloads."""
+    if not isinstance(payload, dict):
+        return {}
+    for base_key, rpt_key in CONV_RPT_MAP.items():
+        if base_key in payload and payload[base_key] not in (None, "", []):
+            payload[rpt_key] = payload[base_key]
+    return payload
+
+# ================== CONVERSATION MEMBERS RPT MIRRORING ==================
+MEMBER_RPT_MAP = {
+    "crc6f_joined_on": "crc6f_RPT_joined_on",
+}
+
+
+def _apply_member_rpt(payload: dict) -> dict:
+    """Apply RPT mirroring for conversation member payloads."""
+    if not isinstance(payload, dict):
+        return {}
+    for base_key, rpt_key in MEMBER_RPT_MAP.items():
+        if base_key in payload and payload[base_key] not in (None, "", []):
+            payload[rpt_key] = payload[base_key]
+    return payload
+
 # --------------------------------------------------------------
 # CHATBOT AUTOMATION - Helper Functions
 # --------------------------------------------------------------
@@ -96,6 +149,7 @@ def get_or_create_conversation(user_id, target_id):
             "crc6f_empname": f"{user_id} → {target_id}",
             "crc6f_isgroup": "false",
         }
+        _apply_conv_rpt(conv_payload)
         dataverse_create(CONV_ENTITY_SET, conv_payload)
         
         # Create 2 members
@@ -106,6 +160,7 @@ def get_or_create_conversation(user_id, target_id):
                 "crc6f_user_id": uid,
                 "crc6f_joined_on": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
             }
+            _apply_member_rpt(mem)
             dataverse_create(MEMBERS_ENTITY_SET, mem)
         
         return conversation_id, True  # New conversation
@@ -921,6 +976,7 @@ def start_direct_chat():
             "crc6f_empname": f"{u1} → {u2}",
             "crc6f_isgroup": "false",
         }
+        _apply_conv_rpt(conv_payload)
         dataverse_create(CONV_ENTITY_SET, conv_payload)
 
         # create 2 members
@@ -931,6 +987,7 @@ def start_direct_chat():
                 "crc6f_user_id": uid,
                 "crc6f_joined_on": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
             }
+            _apply_member_rpt(mem)
             dataverse_create(MEMBERS_ENTITY_SET, mem)
 
         
@@ -979,15 +1036,18 @@ def create_group():
         # Best-effort: store creator_id for "created by" info
         if creator:
             conv_payload["crc6f_created_by"] = creator
+        _apply_conv_rpt(conv_payload)
         try:
             dataverse_create(CONV_ENTITY_SET, conv_payload)
         except Exception:
             # Fallback without created_by if field doesn't exist
-            dataverse_create(CONV_ENTITY_SET, {
+            fallback_conv = {
                 "crc6f_conversationid": cid,
                 "crc6f_empname": name,
                 "crc6f_isgroup": "true",
-            })
+            }
+            _apply_conv_rpt(fallback_conv)
+            dataverse_create(CONV_ENTITY_SET, fallback_conv)
 
         for uid in members:
             member_payload = {
@@ -1211,6 +1271,7 @@ def send_files():
                 "crc6f_mimetype": f.mimetype or "application/octet-stream",
             }
 
+            _apply_fileattach_rpt(meta)
 
             res = dataverse_create("crc6f_hr_fileattachments", meta)
 

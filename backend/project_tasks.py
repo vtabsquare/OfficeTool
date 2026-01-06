@@ -15,6 +15,11 @@ DATAVERSE_BASE = os.getenv("RESOURCE")
 DATAVERSE_API = os.getenv("DATAVERSE_API", "/api/data/v9.2")
 ENTITY_SET_TASKS = "crc6f_hr_taskdetailses"
 
+TASKDETAIL_RPT_MAP = {
+    "crc6f_duedate": "crc6f_RPT_duedate",
+    "crc6f_assigneddate": "crc6f_RPT_assigneddate",
+}
+
 # ======================
 # Helper Functions
 # ======================
@@ -140,6 +145,11 @@ def add_task(project_code):
             "crc6f_projectid": project_code,
             "crc6f_boardid": body.get("board_name"),
         }
+        for base_key, rpt_key in TASKDETAIL_RPT_MAP.items():
+            if base_key in dv_payload and dv_payload[base_key] not in (None, "", []):
+                dv_payload[rpt_key] = dv_payload[base_key]
+            elif base_key in body and body.get(base_key) not in (None, "", []):
+                dv_payload[rpt_key] = body.get(base_key)
 
         dv_payload = {k: v for k, v in dv_payload.items() if v not in (None, "", [])}
         url = f"{DATAVERSE_BASE}{DATAVERSE_API}/{ENTITY_SET_TASKS}"
@@ -182,6 +192,11 @@ def update_task(guid):
         }
 
         payload = {v: body[k] for k, v in allowed_fields.items() if k in body}
+        for base_key, rpt_key in TASKDETAIL_RPT_MAP.items():
+            if base_key in payload and payload[base_key] not in (None, "", []):
+                payload[rpt_key] = payload[base_key]
+            elif base_key in body and body.get(base_key) not in (None, "", []):
+                payload[rpt_key] = body.get(base_key)
         url = f"{DATAVERSE_BASE}{DATAVERSE_API}/{ENTITY_SET_TASKS}({guid})"
         res = requests.patch(url, headers=hdrs, json=payload, timeout=20)
 

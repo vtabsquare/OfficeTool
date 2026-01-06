@@ -405,6 +405,9 @@ F_PROJECT_ID = "crc6f_projectid"
 F_RECORD_ID = "crc6f_recordid"
 F_GUID = "crc6f_hr_projectcontributorsid"
 F_RATE = "crc6f_hourlyrate"
+CONTRIB_RPT_MAP = {
+    F_ASSIGNED: "crc6f_RPT_assigneddate",
+}
 
 def dv_url(path):
     return f"{DATAVERSE_BASE}{DATAVERSE_API}{path}"
@@ -728,6 +731,11 @@ def add_contributor(project_code):
             "crc6f_projectid": project_code,
             "crc6f_recordid": generated_recordid,
         }
+        for base_key, rpt_key in CONTRIB_RPT_MAP.items():
+            if base_key in dv_payload and dv_payload[base_key] not in (None, "", []):
+                dv_payload[rpt_key] = dv_payload[base_key]
+            elif base_key in body and body.get(base_key) not in (None, "", []):
+                dv_payload[rpt_key] = body.get(base_key)
 
         dv_payload = {k: v for k, v in dv_payload.items() if v not in (None, "", [])}
 
@@ -776,6 +784,11 @@ def update_contributor(guid):
         if "employeeName" in body: data["crc6f_employeename"] = body["employeeName"]
         if "billingType" in body: data["crc6f_billingtype"] = body["billingType"]
         if "assignedDate" in body: data["crc6f_assigneddate"] = body["assignedDate"]
+        for base_key, rpt_key in CONTRIB_RPT_MAP.items():
+            if base_key in data and data[base_key] not in (None, "", []):
+                data[rpt_key] = data[base_key]
+            elif base_key in body and body.get(base_key) not in (None, "", []):
+                data[rpt_key] = body.get(base_key)
 
         url = f"{DATAVERSE_BASE}{DATAVERSE_API}/{ENTITY_SET_contributors}({guid})"
         res = requests.patch(url, headers=headers_local, json=data, timeout=20)

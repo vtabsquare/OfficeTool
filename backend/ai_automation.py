@@ -2263,6 +2263,8 @@ def execute_automation_action(action: Dict[str, Any], token: str) -> Dict[str, A
                     payload[field_map['contact']] = value
                 elif key == "doj" and field_map.get('doj'):
                     payload[field_map['doj']] = value
+                    if field_map.get('rpt_doj'):
+                        payload[field_map['rpt_doj']] = value
                 elif key == "employee_flag" and field_map.get('employee_flag'):
                     payload[field_map['employee_flag']] = value
             

@@ -369,55 +369,53 @@ LOGIN_TABLE_CANDIDATES = [
 LOGIN_TABLE = "crc6f_hr_login_detailses"  # Default to most common
 LOGIN_TABLE_RESOLVED = None
 
-# ================== ATTENDANCE CONFIGURATION ==================
-ATTENDANCE_ENTITY = "crc6f_table13s"
-FIELD_EMPLOYEE_ID = "crc6f_employeeid"
-FIELD_DATE = "crc6f_date"
-FIELD_CHECKIN = "crc6f_checkin"
-FIELD_CHECKOUT = "crc6f_checkout"
-FIELD_DURATION = "crc6f_duration"
-FIELD_DURATION_INTEXT = "crc6f_duration_intext"
-FIELD_ATTENDANCE_ID_CUSTOM = "crc6f_attendanceid"
-FIELD_RECORD_ID = "crc6f_table13id"
-FIELD_STATUS = None  # Field doesn't exist in crc6f_table13 - status calculated from duration
-HALF_DAY_HOURS = 4.0
-FULL_DAY_HOURS = 9.0
-HALF_DAY_SECONDS = int(HALF_DAY_HOURS * 3600)
-FULL_DAY_SECONDS = int(FULL_DAY_HOURS * 3600)
+# RPT mirror map for login details
+LOGIN_RPT_MAP = {
+    "crc6f_loginattempts": "crc6f_RPT_loginattempts",
+    "crc6f_last_login": "crc6f_RPT_last_login",
+}
 
-# ================== LEAVE TRACKER CONFIGURATION ==================
-LEAVE_ENTITY = "crc6f_table14s"
-# Leave quota/balance entity (Dataverse logical set for leave management)
-LEAVE_BALANCE_ENTITY = "crc6f_hr_leavemangements"  # Dataverse collection name (plural with 's')
-# Some orgs may expose different collection names; we'll auto-resolve on first use
-LEAVE_BALANCE_ENTITY_CANDIDATES = [
-    "crc6f_hr_leavemangements",     # plural variant (most common)
-    "crc6f_hr_leavemangement",      # singular variant
-    "crc6f_leave_mangements",       # pluralized without 'hr'
-    "crc6f_leave_mangement",        # underscore variant without 'hr'
-]
-LEAVE_BALANCE_ENTITY_RESOLVED = None
+def _apply_login_rpt(payload: dict) -> dict:
+    """Apply login details RPT mirroring to payload."""
+    if not isinstance(payload, dict):
+        return {}
+    for base_key, rpt_key in LOGIN_RPT_MAP.items():
+        if base_key in payload and payload[base_key] not in (None, "", []):
+            payload[rpt_key] = payload[base_key]
+    return payload
 
-# ================== EMPLOYEE CACHE FOR FAST LOADING ==================
-_employee_cache = {"data": None, "timestamp": 0}
-EMPLOYEE_CACHE_TTL = 300  # 5 minutes
+# RPT mirror map for employees
+EMPLOYEE_RPT_MAP = {
+    "createdon": "crc6f_RPT_createdon",
+    "modifiedon": "crc6f_RPT_modifiedon",
+    "statecode": "crc6f_RPT_statecode",
+    "statuscode": "crc6f_RPT_statuscode",
+    "importsequencenumber": "crc6f_RPT_importsequencenumber",
+    "overriddencreatedon": "crc6f_RPT_overriddencreatedon",
+    "timezoneruleversionnumber": "crc6f_RPT_timezoneruleversionnumber",
+    "utcconversiontimezonecode": "crc6f_RPT_utcconversiontimezonecode",
+    "crc6f_package": "crc6f_RPT_package",
+    "crc6f_package_base": "crc6f_RPT_package_base",
+    "exchangerate": "crc6f_RPT_exchangerate",
+    "crc6f_status": "crc6f_RPT_status",
+    "crc6f_mobilenumber": "crc6f_RPT_mobilenumber",
+    "crc6f_joindate": "crc6f_RPT_joindate",
+    "crc6f_hikepercentage": "crc6f_RPT_hikepercentage",
+    "crc6f_releasedate": "crc6f_RPT_releasedate",
+    "crc6f_upcomingpackage": "crc6f_RPT_upcomingpackage",
+    "crc6f_upcomingpackageforannum": "crc6f_RPT_upcomingpackageforannum",
+    "crc6f_paidleaves": "crc6f_RPT_paidleaves",
+}
 
-# ================== ASSET MANAGEMENT CONFIGURATION ==================
-API_BASE = f"{RESOURCE}/api/data/v9.2"
-ENTITY_NAME = "crc6f_hr_assetdetailses"  # Asset entity logical table name
+def _apply_employee_rpt(payload: dict) -> dict:
+    """Apply employee RPT mirroring to payload."""
+    if not isinstance(payload, dict):
+        return {}
+    for base_key, rpt_key in EMPLOYEE_RPT_MAP.items():
+        if base_key in payload and payload[base_key] not in (None, "", []):
+            payload[rpt_key] = payload[base_key]
+    return payload
 
-# ================== HOLIDAY MANAGEMENT CONFIGURATION ==================
-HOLIDAY_ENTITY = "crc6f_hr_holidayses"  # Holiday entity table name
-
-# ================== CLIENTS CONFIGURATION ==================
-CLIENTS_ENTITY = "crc6f_hr_clients"  # default logical name
-CLIENTS_ENTITY_CANDIDATES = [
-    "crc6f_hr_clientses",   # common Dataverse plural
-    "crc6f_hr_clients",     # singular logical
-    "crc6f_clients",        # alternative without 'hr'
-    "crc6f_clientses",      # alternative plural without 'hr'
-]
-CLIENTS_ENTITY_RESOLVED = None
 
 # ================== PROJECTS CONFIGURATION ==================
 # Dataverse table: crc6f_hr_projectheaders (logical: crc6f_hr_projectheader)
@@ -494,6 +492,76 @@ FIELD_MAPS = {
 
 # ================== INTERN MANAGEMENT CONFIGURATION ==================
 INTERN_ENTITY = "crc6f_hr_interndetailses"
+# RPT mirror map for intern details
+INTERN_RPT_MAP = {
+    "createdon": "crc6f_RPT_createdon",
+    "modifiedon": "crc6f_RPT_modifiedon",
+    "statecode": "crc6f_RPT_statecode",
+    "statuscode": "crc6f_RPT_statuscode",
+    "importsequencenumber": "crc6f_RPT_importsequencenumber",
+    "overriddencreatedon": "crc6f_RPT_overriddencreatedon",
+    "timezoneruleversionnumber": "crc6f_RPT_timezoneruleversionnumber",
+    "utcconversiontimezonecode": "crc6f_RPT_utcconversiontimezonecode",
+    "exchangerate": "crc6f_RPT_exchangerate",
+    "crc6f_trainingperiodsalary": "crc6f_RPT_trainingperiodsalary",
+    "crc6f_trainingperiodsalary_base": "crc6f_RPT_trainingperiodsalary_base",
+    "crc6f_probationperiodsalary": "crc6f_RPT_probationperiodsalary",
+    "crc6f_probationperiodsalary_base": "crc6f_RPT_probationperiodsalary_base",
+    "crc6f_postprobationsalary": "crc6f_RPT_postprobationsalary",
+    "crc6f_postprobationsalary_base": "crc6f_RPT_postprobationsalary_base",
+    "crc6f_postprobationend": "crc6f_RPT_postprobationend",
+    "crc6f_unpaidinternshipduration": "crc6f_RPT_unpaidinternshipduration",
+    "crc6f_unpaidinternshipstart": "crc6f_RPT_unpaidinternshipstart",
+    "crc6f_trainingperiodduration": "crc6f_RPT_trainingperiodduration",
+    "crc6f_postprobationduration": "crc6f_RPT_postprobationduration",
+    "crc6f_probationduration": "crc6f_RPT_probationduration",
+    "crc6f_postprobationstart": "crc6f_RPT_postprobationstart",
+    "crc6f_releasedate": "crc6f_RPT_releasedate",
+    "crc6f_trainingperiodstart": "crc6f_RPT_trainingperiodstart",
+    "crc6f_probationend": "crc6f_RPT_probationend",
+    "crc6f_mobilenumber": "crc6f_RPT_mobilenumber",
+    "crc6f_joindate": "crc6f_RPT_joindate",
+    "crc6f_workinghoursend": "crc6f_RPT_workinghoursend",
+    "crc6f_probationstart": "crc6f_RPT_probationstart",
+    "crc6f_workinghoursstart": "crc6f_RPT_workinghoursstart",
+    "crc6f_trainingperiodend": "crc6f_RPT_trainingperiodend",
+    "crc6f_unpaidinternshipend": "crc6f_RPT_unpaidinternshipend",
+    "crc6f_paidinternshipduration": "crc6f_RPT_paidinternshipduration",
+    "crc6f_paidinternshipstart": "crc6f_RPT_paidinternshipstart",
+    "crc6f_paidinternshipend": "crc6f_RPT_paidinternshipend",
+    "crc6f_workhoursstart": "crc6f_RPT_workhoursstart",
+    "crc6f_workhoursend": "crc6f_RPT_workhoursend",
+    "crc6f_annualhike": "crc6f_RPT_annualhike",
+    "crc6f_annualpackageinlakhs": "crc6f_RPT_annualpackageinlakhs",
+    "crc6f_monthlypackage": "crc6f_RPT_monthlypackage",
+    "crc6f_plannedleaves": "crc6f_RPT_plannedleaves",
+    "crc6f_effectivedate": "crc6f_RPT_effectivedate",
+    "crc6f_postprobstart": "crc6f_RPT_postprobstart",
+    "crc6f_postprobend": "crc6f_RPT_postprobend",
+    "crc6f_paidtrainingstart": "crc6f_RPT_paidtrainingstart",
+    "crc6f_postprobsalary": "crc6f_RPT_postprobsalary",
+    "crc6f_unpaidduration": "crc6f_RPT_unpaidduration",
+    "crc6f_postprobduration": "crc6f_RPT_postprobduration",
+    "crc6f_unpaidstart": "crc6f_RPT_unpaidstart",
+    "crc6f_probationend": "crc6f_RPT_probationend",
+    "crc6f_probationstart": "crc6f_RPT_probationstart",
+    "crc6f_paidtrainingend": "crc6f_RPT_paidtrainingend",
+    "crc6f_probationduration": "crc6f_RPT_probationduration",
+    "crc6f_paidtrainingduration": "crc6f_RPT_paidtrainingduration",
+    "crc6f_probationsalary": "crc6f_RPT_probationsalary",
+    "crc6f_unpaidend": "crc6f_RPT_unpaidend",
+    "crc6f_paidtrainingsalary": "crc6f_RPT_paidtrainingsalary",
+}
+
+def _apply_intern_rpt(payload: dict) -> dict:
+    """Apply intern details RPT mirroring to payload."""
+    if not isinstance(payload, dict):
+        return {}
+    for base_key, rpt_key in INTERN_RPT_MAP.items():
+        if base_key in payload and payload[base_key] not in (None, "", []):
+            payload[rpt_key] = payload[base_key]
+    return payload
+
 INTERN_FIELDS = {
     "primary": "crc6f_hr_interndetailsid",
     "intern_id": "crc6f_internid",
@@ -546,6 +614,58 @@ INTERN_PHASES = {
         "salary_field": "postprob_salary"
     }
 }
+
+# ================== INTERNSHIP RECORD CONFIGURATION ==================
+INTERNSHIP_RECORD_ENTITY = "crc6f_internshiprecords"
+# RPT mirror map for internship records
+INTERNSHIP_RECORD_RPT_MAP = {
+    "createdon": "crc6f_RPT_createdon",
+    "modifiedon": "crc6f_RPT_modifiedon",
+    "statecode": "crc6f_RPT_statecode",
+    "statuscode": "crc6f_RPT_statuscode",
+    "importsequencenumber": "crc6f_RPT_importsequencenumber",
+    "overriddencreatedon": "crc6f_RPT_overriddencreatedon",
+    "timezoneruleversionnumber": "crc6f_RPT_timezoneruleversionnumber",
+    "utcconversiontimezonecode": "crc6f_RPT_utcconversiontimezonecode",
+    "crc6f_trainingperiodsalary": "crc6f_RPT_trainingperiodsalary",
+    "exchangerate": "crc6f_RPT_exchangerate",
+    "crc6f_probationperiodsalary_base": "crc6f_RPT_probationperiodsalary_base",
+    "crc6f_probationperiodsalary": "crc6f_RPT_probationperiodsalary",
+    "crc6f_postprobationsalary_base": "crc6f_RPT_postprobationsalary_base",
+    "crc6f_postprobationsalary": "crc6f_RPT_postprobationsalary",
+    "crc6f_postprobationend": "crc6f_RPT_postprobationend",
+    "crc6f_unpaidinternshipstart": "crc6f_RPT_unpaidinternshipstart",
+    "crc6f_paidinternshipduration": "crc6f_RPT_paidinternshipduration",
+    "crc6f_trainingperiodduration": "crc6f_RPT_trainingperiodduration",
+    "crc6f_postprobationduration": "crc6f_RPT_postprobationduration",
+    "crc6f_probationduration": "crc6f_RPT_probationduration",
+    "crc6f_postprobationstart": "crc6f_RPT_postprobationstart",
+    "crc6f_releasedate": "crc6f_RPT_releasedate",
+    "crc6f_trainingperiodstart": "crc6f_RPT_trainingperiodstart",
+    "crc6f_probationend": "crc6f_RPT_probationend",
+    "crc6f_mobilenumber": "crc6f_RPT_mobilenumber",
+    "crc6f_joindate": "crc6f_RPT_joindate",
+    "crc6f_workinghoursend": "crc6f_RPT_workinghoursend",
+    "crc6f_probationstart": "crc6f_RPT_probationstart",
+    "crc6f_workhoursend": "crc6f_RPT_workhoursend",
+    "crc6f_workhourstart": "crc6f_RPT_workhourstart",
+    "crc6f_workhoursstart": "crc6f_RPT_workhoursstart",
+    "crc6f_trainingperiodend": "crc6f_RPT_trainingperiodend",
+    "crc6f_paidinternshipend": "crc6f_RPT_paidinternshipend",
+    "crc6f_annualhike": "crc6f_RPT_annualhike",
+    "crc6f_monthlypackage": "crc6f_RPT_monthlypackage",
+    "crc6f_plannedleaves": "crc6f_RPT_plannedleaves",
+    "crc6f_effectivedate": "crc6f_RPT_effectivedate",
+}
+
+def _apply_internship_record_rpt(payload: dict) -> dict:
+    """Apply internship record RPT mirroring to payload."""
+    if not isinstance(payload, dict):
+        return {}
+    for base_key, rpt_key in INTERNSHIP_RECORD_RPT_MAP.items():
+        if base_key in payload and payload[base_key] not in (None, "", []):
+            payload[rpt_key] = payload[base_key]
+    return payload
 
 # ================== TEAM MANAGEMENT CONFIGURATION ==================
 HIERARCHY_ENTITY = "crc6f_hierarchy"
@@ -2103,6 +2223,7 @@ def _ensure_leave_balance_row(token: str, employee_id: str, defaults: dict = Non
         "crc6f_compoff": float(defaults.get("crc6f_compoff", 0) or 0),
     }
     payload["crc6f_actualtotal"] = payload["crc6f_cl"] + payload["crc6f_sl"] + payload["crc6f_compoff"]
+    _apply_leave_balance_rpt(payload)
     # Attempt create on candidate entity sets until success
     headers = {
         "Authorization": f"Bearer {token}",
@@ -2187,12 +2308,15 @@ def create_asset(data):
         "Content-Type": "application/json",
         "Prefer": "return=representation"
     }
-    res = requests.post(url, headers=headers, json=data)
+    payload = dict(data or {})
+    _apply_asset_rpt(payload)
+    res = requests.post(url, headers=headers, json=payload)
     if res.status_code in (200, 201):
         return res.json()
     raise Exception(f"Error creating asset: {res.status_code} - {res.text}")
 
 def update_asset_by_assetid(asset_id, data):
+
     asset = get_asset_by_assetid(asset_id)
     if not asset:
         raise Exception("Asset not found for update.")
@@ -2206,7 +2330,9 @@ def update_asset_by_assetid(asset_id, data):
         "Content-Type": "application/json",
         "If-Match": "*"
     }
-    res = requests.patch(url, headers=headers, json=data)
+    payload = dict(data or {})
+    _apply_asset_rpt(payload)
+    res = requests.patch(url, headers=headers, json=payload)
     if res.status_code in (204, 1223):
         return {"message": "Asset updated successfully"}
     raise Exception(f"Error updating asset: {res.status_code} - {res.text}")
@@ -2244,6 +2370,7 @@ def _fetch_login_by_username(username: str, token: str, headers: dict):
 def _update_login_record(record_id: str, payload: dict, headers: dict, token: str):
     login_table = get_login_table(token)
     record_id = (record_id or '').strip("{}")
+    payload = _apply_login_rpt(dict(payload or {}))
     url = f"{BASE_URL}/{login_table}({record_id})"
     r = requests.patch(url, headers=headers, json=payload)
     r.raise_for_status()
@@ -3148,6 +3275,7 @@ def create_login_account():
         user_id_value = data.get("user_id")
         if user_id_value:
             payload["crc6f_userid"] = str(user_id_value)
+        _apply_login_rpt(payload)
         created = create_record(login_table, payload)
         record_id = created.get("crc6f_hr_login_detailsid") or created.get("id")
         item = {
@@ -3197,12 +3325,11 @@ def update_login_account(login_id):
             payload["crc6f_userid"] = str(data.get("user_id") or "")
         if not payload:
             return jsonify({"success": False, "error": "No fields to update"}), 400
+        _apply_login_rpt(payload)
         update_record(login_table, record_id, payload)
         return jsonify({"success": True})
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
-
-
 @app.route("/api/login-accounts/<login_id>", methods=["DELETE"])
 def delete_login_account(login_id):
     try:
@@ -6944,13 +7071,6 @@ def create_employee():
         if field_map.get('quota_hours'):
             payload[field_map['quota_hours']] = "9"
             print(f"   [ALARM] Set quota hours: 9")
-        
-        created = create_record(entity_set, payload)
-        
-        # Auto-create login record for the new employee
-        if email:
-            try:
-                print(f"\n   [USER] Creating login record for {email}")
                 
                 # Check if login already exists
                 login_table = get_login_table(token)
@@ -7360,6 +7480,7 @@ def update_intern(intern_id):
         if not payload:
             return jsonify({"success": False, "error": "No valid fields to update"}), 400
 
+        _apply_intern_rpt(payload)
         update_record(INTERN_ENTITY, record_id, payload)
 
         updated = _fetch_intern_record_by_id(token, intern_id, include_system=True)
@@ -7389,6 +7510,7 @@ def create_intern():
                 payload[logical] = data.get(friendly)
 
         token = get_access_token()
+        _apply_intern_rpt(payload)
         url = f"{RESOURCE}/api/data/v9.2/{INTERN_ENTITY}"
         headers = {
             "Authorization": f"Bearer {token}",
@@ -8558,6 +8680,7 @@ def create_client():
             "crc6f_address": data.get("crc6f_address"),
             "crc6f_country": data.get("crc6f_country"),
         }
+        _apply_clients_rpt(payload)
         created = create_record(entity_set, payload)
         return jsonify({"success": True, "client": created}), 201
     except Exception as e:
@@ -8580,6 +8703,7 @@ def update_client(record_id):
         ]:
             if k in data:
                 payload[k] = data.get(k)
+        _apply_clients_rpt(payload)
         token = get_access_token()
         entity_set = get_clients_entity(token)
         ok = update_record(entity_set, record_id, payload)
@@ -8725,6 +8849,7 @@ def create_holiday():
             "crc6f_date": data.get("crc6f_date"),
             "crc6f_holidayname": data.get("crc6f_holidayname"),
         }
+        _apply_holiday_rpt(new_record)
 
         print(f"[LOG] Creating holiday: {new_record}")
         result = create_record(HOLIDAY_ENTITY, new_record)
@@ -8754,6 +8879,7 @@ def update_holiday(holiday_id):
             "crc6f_date": data.get("crc6f_date"),
             "crc6f_holidayname": data.get("crc6f_holidayname"),
         }
+        _apply_holiday_rpt(update_data)
 
         success = update_record(HOLIDAY_ENTITY, holiday_id, update_data)
         if success:

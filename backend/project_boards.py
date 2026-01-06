@@ -242,6 +242,11 @@ F_NO_MEMBERS = "crc6f_noofmembers"
 F_PROJECT_ID = "crc6f_projectid"
 F_GUID = "crc6f_hr_projectdetailsid"
 
+BOARD_RPT_MAP = {
+    F_NO_TASKS: "crc6f_RPT_nooftasks",
+    F_NO_MEMBERS: "crc6f_RPT_noofmembers",
+}
+
 def dv_url(path):
     return f"{DATAVERSE_BASE}{DATAVERSE_API}{path}"
 
@@ -369,6 +374,11 @@ def add_board(project_code):
             F_NO_MEMBERS: str(body.get("no_of_members", 0)),
             F_PROJECT_ID: project_code,
         }
+        for base_key, rpt_key in BOARD_RPT_MAP.items():
+            if base_key in payload and payload[base_key] not in ("", None):
+                payload[rpt_key] = payload[base_key]
+            elif base_key in body and body.get(base_key) not in ("", None):
+                payload[rpt_key] = body.get(base_key)
 
         payload = {k: v for k, v in payload.items() if v not in ("", None)}
 
@@ -408,6 +418,11 @@ def update_board(guid):
             data[F_NO_TASKS] = str(body["no_of_tasks"])
         if "no_of_members" in body:
             data[F_NO_MEMBERS] = str(body["no_of_members"])
+        for base_key, rpt_key in BOARD_RPT_MAP.items():
+            if base_key in data and data[base_key] not in ("", None):
+                data[rpt_key] = data[base_key]
+            elif base_key in body and body.get(base_key) not in ("", None):
+                data[rpt_key] = body.get(base_key)
 
         url = f"{DATAVERSE_BASE}{DATAVERSE_API}/{ENTITY_SET_BOARDS}({guid})"
         res = requests.patch(url, headers=hdr, json=data, timeout=20)

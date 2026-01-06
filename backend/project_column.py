@@ -264,6 +264,17 @@ DATAVERSE_API = os.getenv("DATAVERSE_API", "/api/data/v9.2")
 ENTITY_SET = "crc6f_hr_taskstatusboards"
 TASK_ENTITY = "crc6f_hr_taskdetailses"
 
+TASKSTATUS_RPT_MAP = {
+    "createdon": "crc6f_RPT_createdon",
+    "modifiedon": "crc6f_RPT_modifiedon",
+    "statecode": "crc6f_RPT_statecode",
+    "statuscode": "crc6f_RPT_statuscode",
+    "importsequencenumber": "crc6f_RPT_importsequencenumber",
+    "overriddencreatedon": "crc6f_RPT_overriddencreatedon",
+    "timezoneruleversionnumber": "crc6f_RPT_timezoneruleversionnumber",
+    "utcconversiontimezonecode": "crc6f_RPT_utcconversiontimezonecode",
+}
+
 def dv_url(path):
     return f"{DATAVERSE_BASE}{DATAVERSE_API}{path}"
 
@@ -347,6 +358,10 @@ def create_column(project_id):
         if color:
             payload["crc6f_colorcode"] = color.strip()
 
+        for base_key, rpt_key in TASKSTATUS_RPT_MAP.items():
+            if base_key in body:
+                payload[rpt_key] = body.get(base_key)
+
         # Create record
         url = f"{DATAVERSE_BASE}{DATAVERSE_API}/{ENTITY_SET}"
         res = requests.post(url, headers=hdrs, json=payload, timeout=30)
@@ -394,6 +409,9 @@ def rename_column(project_id):
         # patch the column record with new name
         patch_url = f"{DATAVERSE_BASE}{DATAVERSE_API}/{ENTITY_SET}({rec_guid})"
         patch_body = {"crc6f_taskstatuscolumns": new_name}
+        for base_key, rpt_key in TASKSTATUS_RPT_MAP.items():
+            if base_key in body:
+                patch_body[rpt_key] = body.get(base_key)
         patch_res = requests.patch(patch_url, headers=hdrs, json=patch_body, timeout=20)
         if patch_res.status_code not in (200, 204):
             current_app.logger.error("Rename failed: %s", patch_res.text)
