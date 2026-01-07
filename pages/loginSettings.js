@@ -50,11 +50,63 @@ const formatTime = (isoString) => {
     }
 };
 
+const geocodeCache = {};
+
+const reverseGeocodeToCity = async (lat, lng) => {
+    const cacheKey = `${lat},${lng}`;
+    if (geocodeCache[cacheKey]) return geocodeCache[cacheKey];
+    try {
+        const url = `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json&zoom=16&addressdetails=1&accept-language=en-IN`;
+        const resp = await fetch(url, { headers: { 'User-Agent': 'OfficeToolApp/1.0' } });
+        if (resp.ok) {
+            const data = await resp.json();
+            const address = data.address || {};
+            const city = address.city || address.town || address.village || address.suburb || address.municipality || address.county || address.state_district || address.state;
+            if (city) {
+                geocodeCache[cacheKey] = city;
+                return city;
+            }
+        }
+    } catch (e) {
+        console.warn('[GEOCODE] Error:', e);
+    }
+    return null;
+};
+
+const parseCoordinateString = (str) => {
+    if (!str || typeof str !== 'string') return null;
+    const match = str.match(/^(-?\d+\.?\d*),\s*(-?\d+\.?\d*)$/);
+    if (match) {
+        const lat = parseFloat(match[1]);
+        const lng = parseFloat(match[2]);
+        if (!isNaN(lat) && !isNaN(lng) && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180) {
+            return { lat, lng };
+        }
+    }
+    return null;
+};
+
 const formatLocation = (loc) => {
     if (!loc) return '<span class="text-muted">Not shared</span>';
 
-    // If backend sent city string directly (legacy)
+    // If backend sent city string directly (legacy) or coordinate string
     if (typeof loc === 'string') {
+        const coords = parseCoordinateString(loc);
+        if (coords) {
+            // It's a coordinate string - return placeholder and trigger async geocoding
+            const uniqueId = `loc-${coords.lat}-${coords.lng}`.replace(/\./g, '_');
+            // Async geocode and update DOM
+            reverseGeocodeToCity(coords.lat, coords.lng).then(city => {
+                const elements = document.querySelectorAll(`[data-loc-id="${uniqueId}"]`);
+                elements.forEach(el => {
+                    if (city) {
+                        el.innerHTML = `📍 ${city}`;
+                    }
+                });
+            });
+            // Return with data attribute for later update
+            return `<span data-loc-id="${uniqueId}">📍 ${loc}</span>`;
+        }
         return loc ? `📍 ${loc}` : '<span class="text-muted">Not shared</span>';
     }
 
@@ -74,10 +126,19 @@ const formatLocation = (loc) => {
     }
 
     if (lat && lng) {
+        const uniqueId = `loc-${lat}-${lng}`.replace(/\./g, '_');
+        reverseGeocodeToCity(lat, lng).then(cityName => {
+            const elements = document.querySelectorAll(`[data-loc-id="${uniqueId}"]`);
+            elements.forEach(el => {
+                if (cityName) {
+                    el.innerHTML = `📍 ${cityName}`;
+                }
+            });
+        });
         const latStr = Number(lat).toFixed(4);
         const lngStr = Number(lng).toFixed(4);
         const accText = accuracy ? ` (±${Math.round(accuracy)}m)` : '';
-        return `🌐 ${latStr}, ${lngStr}${accText}`;
+        return `<span data-loc-id="${uniqueId}">🌐 ${latStr}, ${lngStr}${accText}</span>`;
     }
 
     return '<span class="text-muted">Not shared</span>';
@@ -258,15 +319,16 @@ const buildLoginActivityHTML = (dailySummary = []) => {
 
     const rows = dailySummary.map((item) => {
         const employeeName = resolveEmployeeName(item.employee_id);
+        const hasDistinctName = employeeName && employeeName !== item.employee_id;
         return `
         <tr>
             <td>
                 <div style="display:flex; flex-direction:column; line-height:1.35;">
                     <span style="font-weight:600; color:#0f172a; font-size:15px;">
-                        ${employeeName || item.employee_id || ''}
+                        ${hasDistinctName ? employeeName : (item.employee_id || '')}
                     </span>
                     <span style="font-size:12px; color:#6b7280; letter-spacing:0.3px;">
-                        ${item.employee_id || ''}
+                        ${hasDistinctName ? (item.employee_id || '') : ''}
                     </span>
                 </div>
             </td>
@@ -287,7 +349,7 @@ const buildLoginActivityHTML = (dailySummary = []) => {
                 <table class="table">
                     <thead>
                         <tr>
-                            <th>Employee ID</th>
+                            <th>Employee</th>
                             <th>Date</th>
                             <th>Check-in Time</th>
                             <th>Check-in Location</th>
