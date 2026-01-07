@@ -539,6 +539,23 @@ LEAVE_BALANCE_ENTITY_RESOLVED = None
 ENTITY_NAME = os.getenv("ASSET_ENTITY", "crc6f_hr_assetdetailses")
 API_BASE = f"{RESOURCE}/api/data/v9.2" if RESOURCE else None
 
+# RPT mirror map for assets
+ASSET_RPT_MAP = {
+    "createdon": "crc6f_RPT_createdon",
+    "modifiedon": "crc6f_RPT_modifiedon",
+    "statecode": "crc6f_RPT_statecode",
+    "statuscode": "crc6f_RPT_statuscode",
+}
+
+def _apply_asset_rpt(payload: dict) -> dict:
+    """Apply asset RPT mirroring to payload."""
+    if not isinstance(payload, dict):
+        return {}
+    for base_key, rpt_key in ASSET_RPT_MAP.items():
+        if base_key in payload and payload[base_key] not in (None, "", []):
+            payload[rpt_key] = payload[base_key]
+    return payload
+
 # ================== INTERN MANAGEMENT CONFIGURATION ==================
 INTERN_ENTITY = "crc6f_hr_interndetailses"
 # RPT mirror map for intern details
@@ -7124,8 +7141,9 @@ def create_employee():
         doj = data.get("doj")
         contact_number = data.get("contact_number", "")
         employee_flag = (data.get("employee_flag") or "Employee").strip() or "Employee"
-        profile_picture_raw = data.get("profile_picture")
-        profile_picture = sanitize_profile_picture(profile_picture_raw) if field_map.get("profile_picture") else None
+        has_profile_picture_field = "profile_picture" in data
+        profile_picture_raw = data.get("profile_picture") if has_profile_picture_field else None
+        profile_picture = sanitize_profile_picture(profile_picture_raw) if has_profile_picture_field and field_map.get("profile_picture") else None
 
         # ==================== EXTERNAL DATA UPLOAD CATCH ====================
         # Let Dataverse auto-number when no employee_id supplied
