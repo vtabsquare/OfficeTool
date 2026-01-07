@@ -508,6 +508,20 @@ CLIENTS_ENTITY_CANDIDATES = [
 ]
 CLIENTS_ENTITY_RESOLVED = None
 
+# ================== LEAVE BALANCE CONFIGURATION ==================
+LEAVE_BALANCE_ENTITY = os.getenv("LEAVE_BALANCE_ENTITY", "crc6f_hr_leavemangements")
+LEAVE_BALANCE_ENTITY_CANDIDATES = [
+    "crc6f_hr_leavemangements",
+    "crc6f_hr_leavemangement",
+    "crc6f_leave_mangement",
+    "crc6f_leave_mangements"
+]
+LEAVE_BALANCE_ENTITY_RESOLVED = None
+
+# ================== ASSET MANAGEMENT CONFIGURATION ==================
+ENTITY_NAME = os.getenv("ASSET_ENTITY", "crc6f_hr_assetdetailses")
+API_BASE = f"{RESOURCE}/api/data/v9.2" if RESOURCE else None
+
 # ================== INTERN MANAGEMENT CONFIGURATION ==================
 INTERN_ENTITY = "crc6f_hr_interndetailses"
 # RPT mirror map for intern details
