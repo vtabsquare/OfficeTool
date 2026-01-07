@@ -319,16 +319,15 @@ const buildLoginActivityHTML = (dailySummary = []) => {
 
     const rows = dailySummary.map((item) => {
         const employeeName = resolveEmployeeName(item.employee_id);
-        const hasDistinctName = employeeName && employeeName !== item.employee_id;
         return `
         <tr>
             <td>
                 <div style="display:flex; flex-direction:column; line-height:1.35;">
                     <span style="font-weight:600; color:#0f172a; font-size:15px;">
-                        ${hasDistinctName ? employeeName : (item.employee_id || '')}
+                        ${item.employee_id || ''}
                     </span>
                     <span style="font-size:12px; color:#6b7280; letter-spacing:0.3px;">
-                        ${hasDistinctName ? (item.employee_id || '') : ''}
+                        ${employeeName && employeeName !== item.employee_id ? employeeName : ''}
                     </span>
                 </div>
             </td>
