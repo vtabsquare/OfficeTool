@@ -512,7 +512,9 @@ def create_task_log():
             payload = {
                 "crc6f_employeeid": employee_id,
                 "crc6f_projectid": project_id,
+                "crc6f_taskguid": task_guid,
                 "crc6f_taskid": task_id,
+                "crc6f_taskname": b.get("task_name") or "",
                 "crc6f_hoursworked": hours_worked,
                 "crc6f_workdescription": b.get("description") or b.get("task_name") or "",
                 "crc6f_approvalstatus": "Pending",
