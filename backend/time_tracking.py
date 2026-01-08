@@ -671,17 +671,17 @@ def list_logs():
             # For team timesheet, fetch all employees within date range
             filter_parts = []
             if start_date:
-                filter_parts.append(f"crc6f_workdate ge {start_date}")
+                filter_parts.append(f"crc6f_workdate ge '{start_date}'")
             if end_date:
-                filter_parts.append(f"crc6f_workdate le {end_date}")
+                filter_parts.append(f"crc6f_workdate le '{end_date}'")
         else:
             # For individual timesheet
             safe_emp = employee_id.replace("'", "''")
             filter_parts = [f"crc6f_employeeid eq '{safe_emp}'"]
             if start_date:
-                filter_parts.append(f"crc6f_workdate ge {start_date}")
+                filter_parts.append(f"crc6f_workdate ge '{start_date}'")
             if end_date:
-                filter_parts.append(f"crc6f_workdate le {end_date}")
+                filter_parts.append(f"crc6f_workdate le '{end_date}'")
         
         filter_query = " and ".join(filter_parts) if filter_parts else ""
         url = f"{RESOURCE}{DV_API}/crc6f_hr_timesheetlogs"
