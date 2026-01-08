@@ -691,7 +691,11 @@ def list_logs():
             url += f"?$filter={filter_query}"
         url += "&$top=5000&$orderby=crc6f_workdate desc"
         
+        print(f"[TIME_TRACKER] Fetching from Dataverse URL: {url}")
+        print(f"[TIME_TRACKER] Filter query: {filter_query}")
+        
         resp = requests.get(url, headers=headers, timeout=30)
+        print(f"[TIME_TRACKER] Dataverse response status: {resp.status_code}")
         
         if resp.status_code == 200:
             data = resp.json()
