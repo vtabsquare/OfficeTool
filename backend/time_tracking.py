@@ -513,7 +513,6 @@ def create_task_log():
                 "crc6f_employeeid": employee_id,
                 "crc6f_projectid": project_id,
                 "crc6f_taskid": task_id,
-                "crc6f_taskname": b.get("task_name") or "",
                 "crc6f_hoursworked": str(hours_worked),
                 "crc6f_workdescription": b.get("description") or b.get("task_name") or "",
                 "crc6f_approvalstatus": "Pending",
