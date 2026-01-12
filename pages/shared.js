@@ -901,7 +901,7 @@ export const renderMyTimesheetPage = async () => {
         console.log('Fetch response status:', res.status);
         const data = await res.json().catch(() => ({ success: false }));
         console.log('Fetch response data:', data);
-        return res.ok ? (data.logs || []) : [];
+        return (res.ok && data.success) ? (data.logs || []) : [];
     };
 
     const GLOBAL_MANUAL_LOG_KEY = 'tt_manual_logs_v1';

@@ -1054,6 +1054,8 @@ body.dark-theme #app-container.sidebar-hidden .nav-link.active i {
   cursor: pointer;
   transition: all var(--transition-normal);
   font-size: 0.875rem;
+  position: relative;
+  z-index: 1;
 }
 
 .month-nav-btn:hover {
@@ -1078,6 +1080,8 @@ body.dark-theme #app-container.sidebar-hidden .nav-link.active i {
   display: flex;
   gap: 0.875rem;
   align-items: center;
+  position: relative;
+  z-index: 2;
 }
 
 .page-header-actions .btn {
