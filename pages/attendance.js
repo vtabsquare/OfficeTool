@@ -243,6 +243,13 @@ const renderAttendanceTrackerPage = async (mode) => {
         const month = date.getMonth();
         const firstDayIndex = new Date(year, month, 1).getDay(); // Sunday = 0
 
+        // Debug: Log the structure of attendance data
+        console.log('📊 My Attendance Data Structure:');
+        console.log('  User ID:', state.user.id);
+        console.log('  Month/Year:', month + 1, year);
+        console.log('  Attendance keys:', Object.keys(myAttendance));
+        console.log('  Sample attendance record:', Object.values(myAttendance)[0]);
+
         const calendarCells = [];
 
         for (let i = 0; i < firstDayIndex; i++) {
@@ -298,18 +305,35 @@ const renderAttendanceTrackerPage = async (mode) => {
         let filteredAttendanceData = [];
 
         if (currentFilter === 'week') {
-            // Get current week data
+            // Get current week data based on the DISPLAYED month/year, not current date
             const today = new Date();
-            const startOfWeek = new Date(today);
-            startOfWeek.setDate(today.getDate() - today.getDay());
+            
+            // Create a date object for the displayed month/year
+            const displayedDate = new Date(year, month, 1); // month is 0-indexed in JS Date
+            
+            // Find the current week in the displayed month
+            // First, get the first day of the displayed month
+            const firstDayOfMonth = new Date(year, month, 1);
+            
+            // Calculate which week of the month we're currently in
+            // If viewing current month, use current date, otherwise use middle of month
+            const referenceDate = (today.getFullYear() === year && today.getMonth() === month) 
+                ? today 
+                : new Date(year, month, 15); // Use middle of month as reference for non-current months
+            
+            // Calculate start of week (Sunday) for the reference date
+            const startOfWeek = new Date(referenceDate);
+            startOfWeek.setDate(referenceDate.getDate() - referenceDate.getDay());
+            
+            // Calculate end of week (Saturday)
             const endOfWeek = new Date(startOfWeek);
             endOfWeek.setDate(startOfWeek.getDate() + 6);
             
             console.log('🗓️ Week filter debug:');
-            console.log('  Today:', today.toDateString());
+            console.log('  Reference date:', referenceDate.toDateString());
+            console.log('  Displayed month/year:', month + 1, year);
             console.log('  Start of week:', startOfWeek.toDateString());
             console.log('  End of week:', endOfWeek.toDateString());
-            console.log('  Displayed month/year:', month, year);
 
             const allAttendanceData = Object.values(myAttendance)
                 .filter(d => d && (d.checkIn && d.checkOut || d.leaveType));
@@ -324,7 +348,7 @@ const renderAttendanceTrackerPage = async (mode) => {
             
             // Also show all days with attendance in the month
             const allDaysWithAttendance = Object.values(myAttendance).filter(d => d && d.day);
-            console.log('  All days in January with any attendance:', allDaysWithAttendance.map(d => ({
+            console.log('  All days with any attendance:', allDaysWithAttendance.map(d => ({
                 day: d.day,
                 status: d.status,
                 hasCheckIn: !!d.checkIn,
@@ -333,6 +357,7 @@ const renderAttendanceTrackerPage = async (mode) => {
             })));
 
             filteredAttendanceData = allAttendanceData.filter(d => {
+                    // Create date for the attendance day using the DISPLAYED year/month
                     const dayDate = new Date(year, month, d.day);
                     const inRange = dayDate >= startOfWeek && dayDate <= endOfWeek;
                     console.log(`    Day ${d.day} (${dayDate.toDateString()}) in range:`, inRange);
@@ -342,33 +367,61 @@ const renderAttendanceTrackerPage = async (mode) => {
                 
             console.log('  Filtered result count:', filteredAttendanceData.length);
         } else if (currentFilter === 'month') {
-            // Get current month data
+            // Get all attendance data for the DISPLAYED month
             filteredAttendanceData = Object.values(myAttendance)
                 .filter(d => d && (d.checkIn && d.checkOut || d.leaveType))
                 .sort((a, b) => (b.day || 0) - (a.day || 0));
+            
+            console.log('📅 Month filter debug:');
+            console.log('  Displayed month/year:', month + 1, year);
+            console.log('  Filtered result count:', filteredAttendanceData.length);
         }
 
         // Generate table rows for filtered week/month data
         let entryExitDetailsHTML = '';
         if (filteredAttendanceData.length > 0) {
             entryExitDetailsHTML = filteredAttendanceData.map(d => {
-                const dayStr = String(d.day || 1).padStart(2, '0');
-                const start = new Date(`${yearMonth}-${dayStr}T${d.checkIn}`);
-                const end = new Date(`${yearMonth}-${dayStr}T${d.checkOut}`);
-                const totalMs = end.getTime() - start.getTime();
-                const totalHours = isNaN(totalMs) ? '00' : String(Math.floor(totalMs / 3600000)).padStart(2, '0');
-                const totalMins = isNaN(totalMs) ? '00' : String(Math.floor((totalMs % 3600000) / 60000)).padStart(2, '0');
+                // Validate the day property
+                const day = d.day || 1;
+                const dayStr = String(day).padStart(2, '0');
+                
+                // Validate check-in and check-out times
+                const checkInTime = d.checkIn || '00:00:00';
+                const checkOutTime = d.checkOut || '00:00:00';
+                
+                // Calculate total time only if both times are present
+                let totalTimeHTML = '0h 0m';
+                if (d.checkIn && d.checkOut) {
+                    try {
+                        const start = new Date(`${yearMonth}-${dayStr}T${checkInTime}`);
+                        const end = new Date(`${yearMonth}-${dayStr}T${checkOutTime}`);
+                        const totalMs = end.getTime() - start.getTime();
+                        
+                        if (!isNaN(totalMs) && totalMs > 0) {
+                            const totalHours = Math.floor(totalMs / 3600000);
+                            const totalMins = Math.floor((totalMs % 3600000) / 60000);
+                            totalTimeHTML = `${totalHours}h ${totalMins}m`;
+                        }
+                    } catch (err) {
+                        console.warn('Error calculating time for day', day, ':', err);
+                        totalTimeHTML = 'Invalid time';
+                    }
+                } else if (d.leaveType) {
+                    totalTimeHTML = 'Leave';
+                }
 
                 return `
                 <tr>
-                    <td>${d.day} ${date.toLocaleString('default', { month: 'short' })} ${year}</td>
-                    <td>${d.checkIn}</td>
-                    <td>${d.checkOut}</td>
-                    <td>${totalHours}h ${totalMins}m</td>
+                    <td>${day} ${date.toLocaleString('default', { month: 'short' })} ${year}</td>
+                    <td>${checkInTime}</td>
+                    <td>${checkOutTime}</td>
+                    <td>${totalTimeHTML}</td>
                 </tr>`;
             }).join('');
         } else {
-            entryExitDetailsHTML = `<tr><td colspan="4" class="placeholder-text">No attendance data for selected ${currentFilter}</td></tr>`;
+            // Provide more informative message based on filter
+            const filterText = currentFilter === 'week' ? 'this week' : 'this month';
+            entryExitDetailsHTML = `<tr><td colspan="4" class="placeholder-text">No attendance data found for ${filterText}</td></tr>`;
         }
 
         const recentLogDays = todayLogData;
@@ -1044,6 +1097,7 @@ export const renderTeamAttendancePage = async () => {
             records.forEach(rec => {
                 if (rec.day) {
                     attendanceMap[rec.day] = {
+                        day: rec.day, // Explicitly include the day property
                         status: rec.status,
                         checkIn: rec.checkIn,
                         checkOut: rec.checkOut,
