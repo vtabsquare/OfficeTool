@@ -38,7 +38,7 @@ const renderAttendanceTrackerPage = async (mode) => {
             // If it's a holiday but no attendance data, show INL
             if (isHoliday) {
                 return `
-                    <div class="status-cell status-inl" style="display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 11px; font-weight: bold; text-align: center; min-width: 20px; background: #6c757d; color: white;">INL</div>
+                    <div class="status-cell status-inl">INL</div>
                 `;
             }
             return '';
@@ -101,7 +101,7 @@ const renderAttendanceTrackerPage = async (mode) => {
             : '';
 
         return `
-            <div class="status-cell status-${normalizedStatus.toLowerCase()}" style="display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 11px; font-weight: bold; text-align: center; min-width: 20px;">
+            <div class="status-cell status-${normalizedStatus.toLowerCase()}">
                 ${content}
                 ${isLate ? '<i class="fa-solid fa-clock-rotate-left late-icon" title="Late entry"></i>' : ''}
                 ${isManual ? '<i class="fa-solid fa-hand manual-icon" title="Manual entry"></i>' : ''}
@@ -243,13 +243,6 @@ const renderAttendanceTrackerPage = async (mode) => {
         const month = date.getMonth();
         const firstDayIndex = new Date(year, month, 1).getDay(); // Sunday = 0
 
-        // Debug: Check what data we have
-        console.log('🗓️ Calendar rendering debug:');
-        console.log('  User ID:', state.user.id);
-        console.log('  Has attendance data:', !!state.attendanceData[state.user.id]);
-        console.log('  Attendance data keys:', Object.keys(myAttendance));
-        console.log('  Month/Year rendering:', month + 1, year);
-
         const calendarCells = [];
 
         for (let i = 0; i < firstDayIndex; i++) {
@@ -261,15 +254,6 @@ const renderAttendanceTrackerPage = async (mode) => {
             const isSelected = i === state.selectedAttendanceDay;
             const isHoliday = isHolidayDate(year, month, i);
             const statusHTML = getStatusCellHTML(dayData, isHoliday);
-            
-            // Debug: Check first few days and days with data
-            if (i <= 5 || dayData) {
-                console.log(`📅 Day ${i}:`, {
-                    hasData: !!dayData,
-                    isHoliday,
-                    statusHTML: statusHTML ? statusHTML.substring(0, 50) + '...' : 'empty'
-                });
-            }
 
             calendarCells.push(`
                 <div class="calendar-day ${isSelected ? 'selected' : ''}" data-day="${i}">
@@ -339,7 +323,7 @@ const renderAttendanceTrackerPage = async (mode) => {
             endOfWeek.setDate(startOfWeek.getDate() + 6);
 
             const allAttendanceData = Object.values(myAttendance)
-                .filter(d => d && (d.checkIn && d.checkOut || d.leaveType));
+                .filter(d => d && ((d.checkIn || d.checkOut) || d.leaveType));
             
             // Also show all days with attendance in the month
             const allDaysWithAttendance = Object.values(myAttendance).filter(d => d && d.day);
@@ -354,7 +338,7 @@ const renderAttendanceTrackerPage = async (mode) => {
         } else if (currentFilter === 'month') {
             // Get all attendance data for the DISPLAYED month
             filteredAttendanceData = Object.values(myAttendance)
-                .filter(d => d && (d.checkIn && d.checkOut || d.leaveType))
+                .filter(d => d && ((d.checkIn || d.checkOut) || d.leaveType))
                 .sort((a, b) => (b.day || 0) - (a.day || 0));
         }
 
@@ -367,21 +351,30 @@ const renderAttendanceTrackerPage = async (mode) => {
                 const dayStr = String(day).padStart(2, '0');
                 
                 // Validate check-in and check-out times
-                const checkInTime = d.checkIn || '00:00:00';
-                const checkOutTime = d.checkOut || '00:00:00';
+                const checkInTime = d.checkIn || '--:--:--';
+                const checkOutTime = d.checkOut || '--:--:--';
                 
-                // Calculate total time only if both times are present
-                let totalTimeHTML = '0h 0m';
-                if (d.checkIn && d.checkOut) {
+                // Calculate total time:
+                // 1) Prefer duration (backend-provided) when numeric
+                // 2) Else compute from checkIn/checkOut when both exist
+                let totalTimeHTML = '--';
+
+                const dur = d.duration;
+                if (typeof dur === 'number' && isFinite(dur) && dur >= 0) {
+                    const totalMins = Math.round(dur * 60);
+                    const hrs = Math.floor(totalMins / 60);
+                    const mins = totalMins % 60;
+                    totalTimeHTML = `${String(hrs).padStart(2, '0')}h ${String(mins).padStart(2, '0')}m`;
+                } else if (d.checkIn && d.checkOut) {
                     try {
-                        const start = new Date(`${yearMonth}-${dayStr}T${checkInTime}`);
-                        const end = new Date(`${yearMonth}-${dayStr}T${checkOutTime}`);
+                        const start = new Date(`${yearMonth}-${dayStr}T${d.checkIn}`);
+                        const end = new Date(`${yearMonth}-${dayStr}T${d.checkOut}`);
                         const totalMs = end.getTime() - start.getTime();
                         
                         if (!isNaN(totalMs) && totalMs > 0) {
                             const totalHours = Math.floor(totalMs / 3600000);
                             const totalMins = Math.floor((totalMs % 3600000) / 60000);
-                            totalTimeHTML = `${totalHours}h ${totalMins}m`;
+                            totalTimeHTML = `${String(totalHours).padStart(2, '0')}h ${String(totalMins).padStart(2, '0')}m`;
                         }
                     } catch (err) {
                         console.warn('Error calculating time for day', day, ':', err);
@@ -963,14 +956,7 @@ export const renderMyAttendancePage = async () => {
 
         const uid = String(state.user.id || '').toUpperCase();
         const records = await fetchMonthlyAttendance(uid, year, month);
-        
-        // Debug: Log the raw API response
-        console.log('🔍 Raw API response for attendance:');
-        console.log('  User:', uid);
-        console.log('  Year/Month:', year, month);
-        console.log('  Records:', records);
-        console.log('  First record structure:', records[0]);
-        
+
         const attendanceMap = {};
         records.forEach(rec => {
             if (rec.day) {
@@ -991,13 +977,6 @@ export const renderMyAttendancePage = async () => {
         });
         attendanceMap.employeeName = state.user?.name || state.user?.full_name || state.user?.id || '';
         state.attendanceData[state.user.id] = attendanceMap;
-        
-        // Debug: Log the final attendance data structure
-        console.log('📊 Attendance data stored:');
-        console.log('  Records received:', records.length);
-        console.log('  Mapped days:', Object.keys(attendanceMap).filter(k => k !== 'employeeName'));
-        console.log('  Sample mapped data:', Object.entries(attendanceMap).slice(0, 3));
-        console.log('  Day numbers in data:', Object.keys(attendanceMap).filter(k => k !== 'employeeName').map(Number));
     } catch (err) {
         console.error('Failed to fetch attendance:', err);
     }
