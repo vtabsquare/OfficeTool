@@ -3456,8 +3456,16 @@ def create_login_account():
         user_id_value = data.get("user_id")
         if user_id_value:
             payload["crc6f_userid"] = str(user_id_value)
-        _apply_login_rpt(payload)
-        created = create_record(login_table, payload)
+        
+        # Try with RPT fields first, fallback to base payload if RPT fields cause error
+        try:
+            _apply_login_rpt(payload)
+            created = create_record(login_table, payload)
+        except Exception as rpt_err:
+            print(f"[LOGIN] RPT create failed in login account endpoint, trying without RPT fields: {rpt_err}")
+            # Remove RPT fields and try again
+            base_payload = {k: v for k, v in payload.items() if not k.startswith("crc6f_RPT_")}
+            created = create_record(login_table, base_payload)
         record_id = created.get("crc6f_hr_login_detailsid") or created.get("id")
         item = {
             "id": record_id,
@@ -3506,8 +3514,16 @@ def update_login_account(login_id):
             payload["crc6f_userid"] = str(data.get("user_id") or "")
         if not payload:
             return jsonify({"success": False, "error": "No fields to update"}), 400
-        _apply_login_rpt(payload)
-        update_record(login_table, record_id, payload)
+        
+        # Try with RPT fields first, fallback to base payload if RPT fields cause error
+        try:
+            _apply_login_rpt(payload)
+            update_record(login_table, record_id, payload)
+        except Exception as rpt_err:
+            print(f"[LOGIN] RPT update failed in login account endpoint, trying without RPT fields: {rpt_err}")
+            # Remove RPT fields and try again
+            base_payload = {k: v for k, v in payload.items() if not k.startswith("crc6f_RPT_")}
+            update_record(login_table, record_id, base_payload)
         return jsonify({"success": True})
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
