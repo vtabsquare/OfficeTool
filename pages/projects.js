@@ -3052,9 +3052,9 @@ const taskCardHtml = (t, index) => {
     : "—";
 
   return `
-    <div class="kan-card modern" draggable="true" data-id="${t.guid}" style="background:rgba(255,255,255,0.95); border-radius:8px; margin-bottom:8px; box-shadow:0 1px 3px rgba(0,0,0,0.1);">
+    <div class="kan-card modern" draggable="true" data-id="${t.guid}" style="background:#ffffff !important; border-radius:8px; margin-bottom:8px; box-shadow:0 1px 3px rgba(0,0,0,0.1); border:1px solid rgba(0,0,0,0.1);">
       <div class="card-top" style="padding:12px;">
-        <span class="card-title" style="color:#1f2937; font-size:14px; line-height:1.4;"><strong>${taskNumber ? taskNumber + ". " : ""
+        <span class="card-title" style="color:#1f2937 !important; font-size:14px; line-height:1.4;"><strong>${taskNumber ? taskNumber + ". " : ""
     }${taskTitle}</strong></span>
       </div>
 
