@@ -3413,61 +3413,70 @@ function renderTaskFormPage(projectId, boardName, defaultStatus = "New") {
         <button id="task-back" class="btn btn-light" style="border-radius:999px; padding:0.45rem 1.1rem;">← Back</button>
       </div>
       <hr style="margin:12px 0;">
-      <form id="task-form" class="form-grid two-col">
-        <div class="form-field" style="grid-column:1 / -1;">
-          <label class="form-label" for="tk-name">Title *</label>
-          <input class="input-control" id="tk-name" type="text" placeholder="Enter task title" required />
-        </div>
+      <div class="modal-form modern-form task-form">
+        <div class="form-section">
+          <div class="form-section-header">
+            <div>
+              <p class="form-eyebrow">Task</p>
+              <h3>Task Details</h3>
+            </div>
+          </div>
+          <div class="form-grid two-col">
+            <div class="form-field" style="grid-column:1 / -1;">
+              <label class="form-label" for="tk-name">Title *</label>
+              <input class="input-control" id="tk-name" type="text" placeholder="Enter task title" required />
+            </div>
 
-        <div class="form-field" style="grid-column:1 / -1;">
-          <label class="form-label" for="tk-desc">Description</label>
-          <textarea class="input-control" id="tk-desc" rows="3" placeholder="Task description"></textarea>
-        </div>
+            <div class="form-field" style="grid-column:1 / -1;">
+              <label class="form-label" for="tk-desc">Description</label>
+              <textarea class="input-control" id="tk-desc" rows="3" placeholder="Task description"></textarea>
+            </div>
 
-        <div class="form-field" style="grid-column:1 / -1;">
-          <label class="form-label" for="assignedTo">Assigned To</label>
-          <div class="multi-select" id="assignedTo">
-            <div class="selected-items"></div>
-            <input 
-              type="text" 
-              placeholder="Touch to select users…" 
-              class="search-input" 
-            />
-            <div class="dropdown"></div>
+            <div class="form-field" style="grid-column:1 / -1;">
+              <label class="form-label" for="assignedTo">Assigned To</label>
+              <div class="multi-select" id="assignedTo">
+                <div class="selected-items"></div>
+                <input 
+                  type="text" 
+                  placeholder="Touch to select users…" 
+                  class="search-input" 
+                />
+                <div class="dropdown"></div>
+              </div>
+            </div>
+
+            <div class="form-field">
+              <label class="form-label" for="tk-priority">Priority</label>
+              <select class="input-control" id="tk-priority">
+                <option>Low</option>
+                <option selected>Medium</option>
+                <option>High</option>
+              </select>
+            </div>
+
+            <div class="form-field">
+              <label class="form-label" for="tk-status">Status</label>
+              <select class="input-control" id="tk-status" disabled>
+                <option>${defaultStatus}</option>
+              </select>
+            </div>
+
+            <div class="form-field">
+              <label class="form-label" for="tk-assigneddate">Assigned Date</label>
+              <input class="input-control" type="date" id="tk-assigneddate" />
+            </div>
+
+            <div class="form-field">
+              <label class="form-label" for="tk-due">Due Date</label>
+              <input class="input-control" type="date" id="tk-due" />
+            </div>
           </div>
         </div>
-
-        <div class="form-field">
-          <label class="form-label" for="tk-priority">Priority</label>
-          <select class="input-control" id="tk-priority">
-            <option>Low</option>
-            <option selected>Medium</option>
-            <option>High</option>
-          </select>
-        </div>
-
-        <div class="form-field">
-          <label class="form-label" for="tk-status">Status</label>
-          <select class="input-control" id="tk-status" disabled>
-            <option>${defaultStatus}</option>
-          </select>
-        </div>
-
-        <div class="form-field">
-          <label class="form-label" for="tk-assigneddate">Assigned Date</label>
-          <input class="input-control" type="date" id="tk-assigneddate" />
-        </div>
-
-        <div class="form-field">
-          <label class="form-label" for="tk-due">Due Date</label>
-          <input class="input-control" type="date" id="tk-due" />
-        </div>
-
-        <div style="grid-column:1 / -1; display:flex; justify-content:flex-end; gap:12px; margin-top:0.5rem;">
+        <div style="display:flex; justify-content:flex-end; gap:12px; margin-top:24px;">
           <button type="button" id="tk-cancel" class="btn btn-secondary">Cancel</button>
-          <button type="submit" class="btn btn-primary">Save Task</button>
+          <button type="submit" form="task-form" class="btn btn-primary">Save Task</button>
         </div>
-      </form>
+      </div>
     </div>
   `;
 
@@ -3529,7 +3538,12 @@ function renderTaskFormPage(projectId, boardName, defaultStatus = "New") {
   // =========================
   // SAVE TASK (with date rules)
   // =========================
-  document.getElementById("task-form").onsubmit = async (e) => {
+  const taskForm = document.createElement("form");
+  taskForm.id = "task-form";
+  taskForm.style.display = "none";
+  document.body.appendChild(taskForm);
+  
+  taskForm.onsubmit = async (e) => {
     e.preventDefault();
 
     const startDate = document.getElementById("tk-assigneddate").value;
