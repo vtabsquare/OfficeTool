@@ -323,9 +323,9 @@ def get_columns(project_id):
 def create_column(project_id):
     try:
         body = request.get_json(force=True) or {}
-        name = (body.get("name") or "").strip()
-        board = body.get("board")
-        color = body.get("color")  # user-typed color
+        name = (body.get("column_name") or body.get("name") or "").strip()
+        board = body.get("board_id") or body.get("board")
+        color = body.get("column_color") or body.get("color") or "#e5e7eb"
 
         if not name:
             return jsonify({"success": False, "error": "Column name required"}), 400
@@ -338,6 +338,7 @@ def create_column(project_id):
             dup_filter += f" and crc6f_boardid eq '{board}'"
 
         dup_url = f"{DATAVERSE_BASE}{DATAVERSE_API}/{ENTITY_SET}?$filter={urllib.parse.quote(dup_filter, safe='')}"
+
         dup_res = requests.get(dup_url, headers=hdrs, timeout=20)
 
         if dup_res.ok and dup_res.json().get("value"):
@@ -354,7 +355,7 @@ def create_column(project_id):
         if board:
             payload["crc6f_boardid"] = board
 
-        # ✅ Updated line — correctly saves text color
+        # Save color
         if color:
             payload["crc6f_colorcode"] = color.strip()
 
@@ -369,7 +370,14 @@ def create_column(project_id):
         if res.status_code not in (200, 201, 204):
             return jsonify({"success": False, "error": res.text}), 500
 
-        return jsonify({"success": True, "message": "Column added"}), 201
+        return jsonify({
+            "success": True, 
+            "message": "Column added successfully",
+            "column": {
+                "name": name,
+                "color": color
+            }
+        }), 201
 
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500

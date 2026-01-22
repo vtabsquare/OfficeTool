@@ -2709,19 +2709,34 @@ const crmTab = async (project) => {
   }
   const tasks = Array.isArray(tasksResult) ? tasksResult : [];
 
-  // Get columns from localStorage or use defaults
-  const storageKey = `crm_cols_${project.id}`;
-  let cols = JSON.parse(localStorage.getItem(storageKey) || "[]");
+  // Fetch columns from database
+  let cols = [];
+  let colColors = {};
   
-  // Get column colors from localStorage
-  const colorsKey = `crm_cols_colors_${project.id}`;
-  let colColors = JSON.parse(localStorage.getItem(colorsKey) || "{}");
+  try {
+    const res = await fetch(`${API_BASE}/api/projects/${project.id}/columns?board_id=${boardParam}`);
+    if (res.ok) {
+      const data = await res.json();
+      if (data.success && data.columns) {
+        // Extract column names and colors from database
+        cols = data.columns.map(col => col.name);
+        colColors = {};
+        data.columns.forEach(col => {
+          colColors[col.name] = col.color || "#e5e7eb";
+        });
+      }
+    }
+  } catch (error) {
+    console.error("Failed to fetch columns from database:", error);
+  }
   
-  // If no custom columns exist, use defaults
+  // If no columns from database, use defaults
   if (cols.length === 0) {
     cols = [...DEFAULT_COLS];
-    // Save defaults to localStorage for consistency
-    localStorage.setItem(storageKey, JSON.stringify(cols));
+    // Set default colors
+    cols.forEach(col => {
+      colColors[col] = getDefaultColor(col);
+    });
   }
   
   // Update global columns reference
@@ -2873,51 +2888,47 @@ async function handleAddColumn(e) {
   const currentHash = window.location.hash;
   const params = new URLSearchParams(currentHash.split("?")[1]);
   const projectId = params.get("id");
+  const boardId = params.get("board") || "";
   
-  // Get existing columns from localStorage or use defaults
-  const storageKey = `crm_cols_${projectId}`;
-  let existingCols = JSON.parse(localStorage.getItem(storageKey) || "[]");
-  
-  // Merge with default columns if not already done
-  if (existingCols.length === 0) {
-    existingCols = [...DEFAULT_COLS];
-  }
-  
-  // Check for duplicates (case-insensitive)
-  if (existingCols.some(col => col.toLowerCase() === columnName.toLowerCase())) {
-    alert("A column with this name already exists");
-    return;
-  }
-  
-  // Add new column
-  existingCols.push(columnName);
-  localStorage.setItem(storageKey, JSON.stringify(existingCols));
-  
-  // Store column color
-  const colorsKey = `crm_cols_colors_${projectId}`;
-  let colColors = JSON.parse(localStorage.getItem(colorsKey) || "{}");
-  colColors[columnName] = columnColor;
-  localStorage.setItem(colorsKey, JSON.stringify(colColors));
-  
-  // Update global columns
-  if (typeof window !== "undefined") {
-    window.GLOBAL_CRM_COLS = existingCols;
-  }
-  
-  closeModal();
-  
-  // Refresh the CRM tab
-  const project = { id: projectId };
-  crmTab(project).then(html => {
-    const crmContainer = document.getElementById("crm-container");
-    if (crmContainer) {
-      crmContainer.innerHTML = html;
-      enableDragDrop(projectId);
-      
-      // Reattach event handlers
-      attachCRMEventHandlers(projectId);
+  try {
+    // Save to database
+    const res = await fetch(`${API_BASE}/api/projects/${projectId}/columns`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        column_name: columnName,
+        column_color: columnColor,
+        board_id: boardId
+      })
+    });
+    
+    const data = await res.json();
+    
+    if (!res.ok || !data.success) {
+      throw new Error(data.error || "Failed to add column");
     }
-  });
+    
+    closeModal();
+    
+    // Refresh the CRM tab
+    const project = { id: projectId };
+    crmTab(project).then(html => {
+      const crmContainer = document.getElementById("crm-container");
+      if (crmContainer) {
+        crmContainer.innerHTML = html;
+        enableDragDrop(projectId);
+        
+        // Reattach event handlers
+        attachCRMEventHandlers(projectId);
+      }
+    });
+    
+  } catch (error) {
+    console.error("Error adding column:", error);
+    alert("Failed to add column: " + error.message);
+  }
 }
 
 // Make showAddColumnModal globally accessible
@@ -2933,46 +2944,43 @@ function deleteColumn(projectId, columnName) {
     return;
   }
   
-  // Get existing columns
-  const storageKey = `crm_cols_${projectId}`;
-  let existingCols = JSON.parse(localStorage.getItem(storageKey) || "[]");
+  const currentHash = window.location.hash;
+  const params = new URLSearchParams(currentHash.split("?")[1]);
+  const boardId = params.get("board") || "";
   
-  // If this is a default column, we need to save the custom columns separately
-  if (DEFAULT_COLS.includes(columnName)) {
-    // Save current state as custom columns if not already done
-    if (existingCols.length === DEFAULT_COLS.length && 
-        existingCols.every(col => DEFAULT_COLS.includes(col))) {
-      // First time deleting a default column, save all as custom
-      localStorage.setItem(storageKey, JSON.stringify(existingCols));
+  // Delete from database
+  fetch(`${API_BASE}/api/projects/${projectId}/columns`, {
+    method: "DELETE",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      name: columnName,
+      board: boardId
+    })
+  })
+  .then(res => res.json())
+  .then(data => {
+    if (!data.success) {
+      throw new Error(data.error || "Failed to delete column");
     }
-  }
-  
-  // Remove the column
-  existingCols = existingCols.filter(col => col !== columnName);
-  localStorage.setItem(storageKey, JSON.stringify(existingCols));
-  
-  // Remove column color
-  const colorsKey = `crm_cols_colors_${projectId}`;
-  let colColors = JSON.parse(localStorage.getItem(colorsKey) || "{}");
-  delete colColors[columnName];
-  localStorage.setItem(colorsKey, JSON.stringify(colColors));
-  
-  // Update global columns
-  if (typeof window !== "undefined") {
-    window.GLOBAL_CRM_COLS = existingCols;
-  }
-  
-  // Refresh the CRM tab
-  const project = { id: projectId };
-  crmTab(project).then(html => {
-    const crmContainer = document.getElementById("crm-container");
-    if (crmContainer) {
-      crmContainer.innerHTML = html;
-      enableDragDrop(projectId);
-      
-      // Reattach event handlers
-      attachCRMEventHandlers(projectId);
-    }
+    
+    // Refresh the CRM tab
+    const project = { id: projectId };
+    crmTab(project).then(html => {
+      const crmContainer = document.getElementById("crm-container");
+      if (crmContainer) {
+        crmContainer.innerHTML = html;
+        enableDragDrop(projectId);
+        
+        // Reattach event handlers
+        attachCRMEventHandlers(projectId);
+      }
+    });
+  })
+  .catch(error => {
+    console.error("Error deleting column:", error);
+    alert("Failed to delete column: " + error.message);
   });
 }
 
