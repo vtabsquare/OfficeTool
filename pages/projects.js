@@ -3080,8 +3080,9 @@ async function moveTask(projectId, taskId, newCol) {
 // ==========================
 function showTaskModal(projectId, defaultStatus = "New") {
   const currentHash = window.location.hash;
-  const boardParam =
-    new URLSearchParams(currentHash.split("?")[1]).get("board") || "General";
+  const params = new URLSearchParams(currentHash.split("?")[1]);
+  const boardParam = params.get("board") || "General";
+  const boardName = params.get("boardName") || boardParam;
 
   // ✅ Redirect to full page form instead of modal
   renderTaskFormPage(projectId, boardParam, defaultStatus);
@@ -3277,7 +3278,7 @@ function renderTaskFormPage(projectId, boardName, defaultStatus = "New") {
   document.getElementById("task-back").onclick = () => {
     window.location.hash = `#/time-projects?id=${encodeURIComponent(
       projectId
-    )}&tab=crm&board=${encodeURIComponent(boardName)}`;
+    )}&tab=crm&board=${encodeURIComponent(boardParam)}&boardName=${encodeURIComponent(boardName)}`;
     renderProjectDetails(projectId, "crm");
   };
   document.getElementById("tk-cancel").onclick = () =>
@@ -3331,7 +3332,7 @@ function renderTaskFormPage(projectId, boardName, defaultStatus = "New") {
       alert("✅ Task created successfully!");
       window.location.hash = `#/time-projects?id=${encodeURIComponent(
         projectId
-      )}&tab=crm&board=${encodeURIComponent(boardName)}`;
+      )}&tab=crm&board=${encodeURIComponent(boardParam)}&boardName=${encodeURIComponent(boardName)}`;
       renderProjectDetails(projectId, "crm");
     } else {
       alert("❌ Failed: " + (data.error || "Unknown error"));
@@ -3594,9 +3595,15 @@ export const renderProjectsRoute = async () => {
     renderProjectDetails(id, tab);
     // If board param present, pass through hash for CRM tab
     if (tab === "crm" && board) {
+      // Try to get board name from URL parameters if it exists
+      const hash = window.location.hash || "";
+      const qs = hash.split("?")[1] || "";
+      const params = new URLSearchParams(qs);
+      const boardName = params.get("boardName") || board;
+      
       window.location.hash = `#/time-projects?id=${encodeURIComponent(
         id
-      )}&tab=crm&board=${encodeURIComponent(board)}`;
+      )}&tab=crm&board=${encodeURIComponent(board)}&boardName=${encodeURIComponent(boardName)}`;
     }
   } else {
     renderList();
