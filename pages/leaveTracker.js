@@ -164,7 +164,7 @@ const fetchTeamLeavesByDepartment = async (currentEmpId) => {
     if (batchFailed || leaves.length === 0) {
       await runWithConcurrency(teammates, 8, async (tm) => {
         try {
-          const tmLeaves = await fetchEmployeeLeaves(tm.employee_id);
+          const tmLeaves = await fetchEmployeeLeaves(tm.employee_id, false);
           (tmLeaves || []).forEach((l) =>
             leaves.push({
               ...l,
@@ -286,7 +286,7 @@ export const renderLeaveTrackerPage = async (
       console.log("🔍 Using employee ID:", empId);
 
       // Use the imported fetchEmployeeLeaves function
-      let leaves = await fetchEmployeeLeaves(empId);
+      let leaves = await fetchEmployeeLeaves(empId, forceRefresh);
       console.log("📊 Fetched leaves from API:", leaves?.length || 0);
 
       // Sort leaves by start_date descending (latest first)
@@ -331,7 +331,7 @@ export const renderLeaveTrackerPage = async (
               );
             } catch { }
             console.log("✅ Resolved employee ID from email:", empId);
-            leaves = await fetchEmployeeLeaves(empId);
+            leaves = await fetchEmployeeLeaves(empId, forceRefresh);
             console.log(
               "📊 Fetched leaves after email resolution:",
               leaves?.length || 0

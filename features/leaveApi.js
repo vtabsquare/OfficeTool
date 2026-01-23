@@ -7,12 +7,14 @@ const BASE_URL = API_BASE_URL.replace(/\/$/, '');
 const CACHE_TTL_MS = 2 * 60 * 1000; // 2 minutes
 const toKey = (id) => String(id || '').toUpperCase();
 
-export async function fetchEmployeeLeaves(employeeId) {
+export async function fetchEmployeeLeaves(employeeId, forceRefresh = false) {
   try {
     const key = toKey(employeeId);
     const now = Date.now();
     const cached = state?.cache?.leaves?.[key];
-    if (cached && now - cached.fetchedAt < CACHE_TTL_MS) {
+    
+    // Bypass cache if forceRefresh is true
+    if (!forceRefresh && cached && now - cached.fetchedAt < CACHE_TTL_MS) {
       return cached.data;
     }
 
