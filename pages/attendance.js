@@ -1,8 +1,8 @@
+import { API_BASE_URL } from '../config.js';
 import { state } from '../state.js';
 import { fetchMonthlyAttendance } from '../features/attendanceApi.js';
 import { getHolidays } from '../features/holidaysApi.js';
 import { renderModal, closeModal } from '../components/modal.js';
-import { API_BASE_URL } from '../config.js';
 import { clearCacheByPrefix } from '../features/cache.js';
 import { isAdminUser, isManagerOrAdmin } from '../utils/accessControl.js';
 import { fetchLoginEvents } from '../features/loginSettingsApi.js';
@@ -1136,7 +1136,7 @@ async function handleSubmitAttendance() {
     try {
         console.log(`📤 Submitting attendance for ${employeeId} - ${year}/${month}`);
 
-        const response = await fetch('http://localhost:5000/api/attendance/submit', {
+        const response = await fetch(`${API_BASE_URL}/api/attendance/submit`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({

@@ -10021,10 +10021,19 @@ def list_attendance_submissions():
                         f"startswith({FIELD_ATTENDANCE_ID_CUSTOM},'ATD-')"
                     )
                     att_url = f"{RESOURCE}/api/data/v9.2/{ATTENDANCE_ENTITY}{att_filter}"
+                    print(f"[DEBUG] Querying attendance for {emp_for_q} from {first_day} to {last_day}")
+                    print(f"[DEBUG] URL: {att_url}")
                     att_resp = requests.get(att_url, headers=headers)
                     days_checked_in = 0
                     if att_resp.status_code == 200:
-                        days_checked_in = len(att_resp.json().get('value', []))
+                        attendance_records = att_resp.json().get('value', [])
+                        days_checked_in = len(attendance_records)
+                        print(f"[DEBUG] Found {days_checked_in} attendance records")
+                        # Debug: print the dates found
+                        for record in attendance_records[:3]:  # Print first 3 records
+                            print(f"[DEBUG] Record: date={record.get(FIELD_DATE)}, id={record.get(FIELD_ATTENDANCE_ID_CUSTOM)}")
+                    else:
+                        print(f"[ERROR] Failed to query attendance: {att_resp.status_code}")
 
                     # Leaves: list overlapping this month and aggregate by type
                     # Overlap condition: startdate <= last_day AND enddate >= first_day
