@@ -497,6 +497,7 @@ const renderAttendanceTrackerPage = async (mode) => {
 
     const myControls = `
         <div class="page-header-actions">
+            <button class="btn btn-outline" id="refresh-attendance-btn"><i class="fa-solid fa-refresh"></i> Refresh</button>
             <button class="btn btn-success" id="submit-attendance-btn"><i class="fa-solid fa-paper-plane"></i> Submit Attendance</button>
         </div>
     `;
@@ -513,6 +514,7 @@ const renderAttendanceTrackerPage = async (mode) => {
             </div>
             ${mode === 'my' ? myControls : `
                 <div class="page-header-actions">
+                    <button class="btn btn-outline" id="refresh-attendance-btn"><i class="fa-solid fa-refresh"></i> Refresh</button>
                     <button class="btn btn-secondary" id="export-attendance-btn">
                         <i class="fa-solid fa-file-export"></i> Export CSV
                     </button>
@@ -549,6 +551,30 @@ const renderAttendanceTrackerPage = async (mode) => {
 
         // Check if attendance already submitted for this month
         checkAttendanceSubmissionStatus(submitBtn, year, date.getMonth() + 1);
+    }
+
+    // Set up refresh attendance button listener
+    const refreshBtn = document.getElementById('refresh-attendance-btn');
+    if (refreshBtn) {
+        refreshBtn.addEventListener('click', async () => {
+            const originalHTML = refreshBtn.innerHTML;
+            refreshBtn.disabled = true;
+            refreshBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Refreshing...';
+            
+            try {
+                // Clear cache for current month
+                const uid = String(state.user.id || '').toUpperCase();
+                clearCacheByPrefix(`attendance_${uid}_${year}_${date.getMonth() + 1}`);
+                
+                // Re-render the page
+                await renderAttendanceTrackerPage(mode);
+            } catch (error) {
+                console.error('Failed to refresh attendance:', error);
+            } finally {
+                refreshBtn.disabled = false;
+                refreshBtn.innerHTML = originalHTML;
+            }
+        });
     }
 
     // Load and display holidays for current month
@@ -955,7 +981,15 @@ export const renderMyAttendancePage = async () => {
         console.log(`📅 Loaded ${currentMonthHolidays.length} holidays for ${year}-${month}`);
 
         const uid = String(state.user.id || '').toUpperCase();
-        const records = await fetchMonthlyAttendance(uid, year, month);
+        // Force refresh for current month to get accurate first in/last out times
+        const isCurrentMonth = year === todayDate.getFullYear() && month === todayDate.getMonth();
+        
+        // Clear cache for current month to ensure fresh data with accurate first in/last out times
+        if (isCurrentMonth) {
+            clearCacheByPrefix(`attendance_${uid}_${year}_${month}`);
+        }
+        
+        const records = await fetchMonthlyAttendance(uid, year, month, isCurrentMonth);
 
         const attendanceMap = {};
         records.forEach(rec => {
@@ -1065,7 +1099,9 @@ export const renderTeamAttendancePage = async () => {
         // Fetch attendance for each employee
         await Promise.all(employeesToFetch.map(async (empId) => {
             console.log(`🔄 Fetching attendance for employee: ${empId}`);
-            const records = await fetchMonthlyAttendance(empId, year, month);
+            // Force refresh for current month to get accurate first in/last out times
+            const isCurrentMonth = year === todayDate.getFullYear() && month === todayDate.getMonth();
+            const records = await fetchMonthlyAttendance(empId, year, month, isCurrentMonth);
             console.log(`📊 Fetched ${records.length} attendance records for ${empId}`);
 
             const attendanceMap = {};
