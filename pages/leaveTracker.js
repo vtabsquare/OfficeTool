@@ -835,25 +835,25 @@ window.cancelLeave = async (leaveId, leaveType, startDate) => {
   
   // Show confirmation modal
   const confirmBody = `
-    <div style="padding: 20px 0;">
+    <div class="cancel-leave-modal-content" style="padding: 20px 0;">
       <p style="margin-bottom: 16px; color: #475569;">
         Are you sure you want to cancel this leave request?
       </p>
-      <div style="background: #f8fafc; padding: 16px; border-radius: 8px; margin-bottom: 20px;">
+      <div class="cancel-leave-details" style="background: #f8fafc; padding: 16px; border-radius: 8px; margin-bottom: 20px;">
         <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
-          <span style="color: #64748b;">Leave ID:</span>
-          <span style="font-weight: 600;">${leaveId}</span>
+          <span class="cancel-leave-label">Leave ID:</span>
+          <span class="cancel-leave-value">${leaveId}</span>
         </div>
         <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
-          <span style="color: #64748b;">Leave Type:</span>
-          <span style="font-weight: 600;">${leaveType}</span>
+          <span class="cancel-leave-label">Leave Type:</span>
+          <span class="cancel-leave-value">${leaveType}</span>
         </div>
         <div style="display: flex; justify-content: space-between;">
-          <span style="color: #64748b;">Start Date:</span>
-          <span style="font-weight: 600;">${startDate}</span>
+          <span class="cancel-leave-label">Start Date:</span>
+          <span class="cancel-leave-value">${startDate}</span>
         </div>
       </div>
-      <p style="color: #dc2626; font-size: 14px;">
+      <p class="cancel-leave-warning" style="color: #dc2626; font-size: 14px;">
         <i class="fa-solid fa-exclamation-triangle" style="margin-right: 8px;"></i>
         This action cannot be undone.
       </p>

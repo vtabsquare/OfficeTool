@@ -11149,7 +11149,29 @@ body.dark-theme .modal-close-btn {
 
 body.dark-theme .modal-close-btn:hover {
   background: rgba(255, 255, 255, 0.1);
-  color: #f1f5f9;
+}
+
+/* Cancel leave modal dark mode styling */
+body.dark-theme .cancel-leave-modal-content p {
+  color: #cbd5e1 !important;
+}
+
+body.dark-theme .cancel-leave-details {
+  background: #334155 !important;
+  border: 1px solid #475569;
+}
+
+body.dark-theme .cancel-leave-label {
+  color: #94a3b8 !important;
+}
+
+body.dark-theme .cancel-leave-value {
+  color: #f1f5f9 !important;
+  font-weight: 600;
+}
+
+body.dark-theme .cancel-leave-warning {
+  color: #f87171 !important;
 }
 
 /* Dropdown/Select in dark mode */
