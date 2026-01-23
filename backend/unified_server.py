@@ -4699,11 +4699,64 @@ def get_monthly_attendance(employee_id, year, month):
         
         formatted_records = []
         
+        # First, fetch all login activity records for the month in one query
+        login_activity_by_date = {}
+        try:
+            login_filter = f"?$filter={LA_FIELD_EMPLOYEE_ID} eq '{normalized_emp_id}' and {LA_FIELD_DATE} ge '{start_date}' and {LA_FIELD_DATE} le '{end_date}'&$orderby={LA_FIELD_DATE},{LA_FIELD_CHECKIN_TIME}"
+            login_url = f"{RESOURCE}/api/data/v9.2/{LOGIN_ACTIVITY_ENTITY}{login_filter}"
+            login_resp = requests.get(login_url, headers=headers)
+            
+            if login_resp.status_code == 200:
+                login_records = login_resp.json().get("value", [])
+                for record in login_records:
+                    date = record.get(LA_FIELD_DATE)
+                    if date:
+                        if date not in login_activity_by_date:
+                            login_activity_by_date[date] = []
+                        login_activity_by_date[date].append(record)
+                print(f"[DEBUG] Fetched {len(login_records)} login activity records for the month")
+        except Exception as e:
+            print(f"[WARN] Failed to fetch login activity: {e}")
+        
         for r in records:
             date_str = r.get(FIELD_DATE)
             checkin = r.get(FIELD_CHECKIN)
             checkout = r.get(FIELD_CHECKOUT)
             duration_str = r.get(FIELD_DURATION) or "0"
+            
+            # Get actual first check-in and last check-out from login activity
+            actual_checkin = checkin
+            actual_checkout = checkout
+            
+            if date_str and date_str in login_activity_by_date:
+                try:
+                    day_records = login_activity_by_date[date_str]
+                    if day_records:
+                        # Get first check-in time
+                        first_checkin = day_records[0].get(LA_FIELD_CHECKIN_TIME)
+                        if first_checkin:
+                            # Parse and format time
+                            if 'T' in first_checkin:
+                                # ISO format
+                                actual_checkin = datetime.fromisoformat(first_checkin.replace('Z', '+00:00')).strftime('%H:%M:%S')
+                            else:
+                                # Time only format
+                                actual_checkin = first_checkin[:8] if len(first_checkin) > 8 else first_checkin
+                        
+                        # Get last check-out time
+                        last_checkout = day_records[-1].get(LA_FIELD_CHECKOUT_TIME)
+                        if last_checkout:
+                            # Parse and format time
+                            if 'T' in last_checkout:
+                                # ISO format
+                                actual_checkout = datetime.fromisoformat(last_checkout.replace('Z', '+00:00')).strftime('%H:%M:%S')
+                            else:
+                                # Time only format
+                                actual_checkout = last_checkout[:8] if len(last_checkout) > 8 else last_checkout
+                        
+                        print(f"[DEBUG] {date_str}: First in={actual_checkin}, Last out={actual_checkout}")
+                except Exception as e:
+                    print(f"[WARN] Failed to process login activity for {date_str}: {e}")
             
             try:
                 duration_hours = float(duration_str)
@@ -4741,8 +4794,8 @@ def get_monthly_attendance(employee_id, year, month):
                 "date": date_str,
                 "day": day_num,
                 "attendance_id": r.get(FIELD_ATTENDANCE_ID_CUSTOM),
-                "checkIn": checkin,
-                "checkOut": checkout,
+                "checkIn": actual_checkin,
+                "checkOut": actual_checkout,
                 "duration": effective_hours,
                 "duration_text": duration_text,
                 "status": status,
