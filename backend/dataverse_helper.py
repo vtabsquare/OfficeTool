@@ -63,6 +63,26 @@ def get_record(entity_name, record_id):
         raise Exception(f"Error getting record: {response.status_code} - {response.text}")
 
 
+def fetch_record_by_id(entity_name, leave_id, id_field="crc6f_leaveid"):
+    """Fetch a record by alternate key (e.g., leave ID)"""
+    token = get_access_token()
+    # Use OData query to filter by the alternate key
+    url = f"{RESOURCE}/api/data/v9.2/{entity_name}?$filter={id_field} eq '{leave_id}'"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/json"
+    }
+    response = requests.get(url, headers=headers)
+    if response.status_code == 200:
+        data = response.json()
+        # Return the first record if found
+        if data.get('value') and len(data['value']) > 0:
+            return data['value'][0]
+        return None
+    else:
+        raise Exception(f"Error fetching record by {id_field}: {response.status_code} - {response.text}")
+
+
 def update_record(entity_name, record_id, data):
     """Update a record"""
     token = get_access_token()
@@ -77,6 +97,23 @@ def update_record(entity_name, record_id, data):
         return True
     else:
         raise Exception(f"Error updating record: {response.status_code} - {response.text}")
+
+
+def update_record_by_alt_key(entity_name, alt_key_value, data, alt_key_field="crc6f_leaveid"):
+    """Update a record using alternate key"""
+    token = get_access_token()
+    # Use alternate key syntax for update
+    url = f"{RESOURCE}/api/data/v9.2/{entity_name}({alt_key_field}='{alt_key_value}')"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+        "If-Match": "*"
+    }
+    response = requests.patch(url, headers=headers, json=data)
+    if response.status_code in (204, 1223):
+        return True
+    else:
+        raise Exception(f"Error updating record by alt key: {response.status_code} - {response.text}")
 
 
 def delete_record(entity_name, record_id):

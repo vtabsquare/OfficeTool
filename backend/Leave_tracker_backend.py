@@ -252,6 +252,80 @@ def api_leave_balance(employee_id, leave_type):
         return jsonify({"success": False, "error": str(e)}), 500
 
 
+@app.route('/cancel_leave/<leave_id>', methods=['POST'])
+def cancel_leave(leave_id):
+    print("\n" + "=" * 70)
+    print("🚫 LEAVE CANCELLATION REQUEST RECEIVED")
+    print("=" * 70)
+    
+    try:
+        print(f"\n📥 Step 1: Processing cancellation for leave ID: {leave_id}")
+        
+        # Validate leave ID
+        if not leave_id:
+            print("   ❌ Leave ID is required!")
+            return jsonify({"success": False, "error": "Leave ID is required"}), 400
+        
+        # First, fetch the leave record to check its current status
+        print(f"\n🔍 Step 2: Fetching leave record for ID: {leave_id}")
+        
+        # Query the leave record from Dataverse
+        # Note: Adjust the table name and field names based on your Dataverse schema
+        from dataverse_helper import fetch_record_by_id
+        
+        leave_record = fetch_record_by_id("crc6f_table14s", leave_id, "crc6f_leaveid")
+        
+        if not leave_record:
+            print(f"   ❌ Leave record not found: {leave_id}")
+            return jsonify({"success": False, "error": "Leave record not found"}), 404
+        
+        print(f"   ✅ Leave record found: {leave_record}")
+        
+        # Check current status
+        current_status = leave_record.get("crc6f_status", "").lower()
+        print(f"   📋 Current status: {current_status}")
+        
+        if current_status != "pending":
+            print(f"   ❌ Cannot cancel leave with status: {current_status}")
+            return jsonify({
+                "success": False, 
+                "error": "Only pending leave requests can be cancelled"
+            }), 400
+        
+        # Update the status to "Cancelled"
+        print(f"\n📝 Step 3: Updating leave status to 'Cancelled'")
+        
+        update_data = {
+            "crc6f_status": "Cancelled"
+        }
+        
+        from dataverse_helper import update_record_by_alt_key
+        update_result = update_record_by_alt_key("crc6f_table14s", leave_id, update_data, "crc6f_leaveid")
+        
+        if update_result:
+            print(f"   ✅ Leave status updated successfully to 'Cancelled'")
+            return jsonify({
+                "success": True,
+                "message": "Leave request cancelled successfully",
+                "leave_id": leave_id,
+                "status": "Cancelled"
+            }), 200
+        else:
+            print(f"   ❌ Failed to update leave status")
+            return jsonify({
+                "success": False,
+                "error": "Failed to cancel leave request"
+            }), 500
+            
+    except Exception as e:
+        print(f"\n❌ Error in cancel_leave: {str(e)}")
+        traceback.print_exc()
+        return jsonify({
+            "success": False,
+            "error": "An error occurred while cancelling the leave request"
+        }), 500
+
+
 @app.route('/test_connection', methods=['GET'])
 def test_connection():
     try:

@@ -550,7 +550,9 @@ export const renderLeaveTrackerPage = async (
     // My leaves: Show leave history
     tableRows = paginatedLeaves
       .map(
-        (l) => `
+        (l) => {
+          const isPending = (l.approvalStatus || "pending").toLowerCase() === "pending";
+          return `
             <tr>
                 <td>${l.appliedBy || "-"}</td>
                 <td>${l.leaveType}</td>
@@ -561,8 +563,14 @@ export const renderLeaveTrackerPage = async (
                 <td><span class="status-badge ${(
             l.approvalStatus || "pending"
           ).toLowerCase()}">${l.approvalStatus || "Pending"}</span></td>
+                <td>
+                    ${isPending ? `<button class="btn btn-sm btn-danger" onclick="cancelLeave('${l.id}', '${l.leaveType}', '${l.startDate}')" title="Cancel this leave request">
+                        <i class="fa-solid fa-times"></i> Cancel
+                    </button>` : '-'}
+                </td>
             </tr>
-        `
+        `;
+        }
       )
       .join("");
   }
@@ -583,6 +591,7 @@ export const renderLeaveTrackerPage = async (
     { key: "leaveCount", label: "Days", sorted: false },
     { key: "compensationType", label: "Type", sorted: false },
     { key: "approvalStatus", label: "Status", sorted: false },
+    { key: "action", label: "Action", sorted: false },
   ];
 
   const teamLeaveColumns = [
@@ -630,7 +639,7 @@ export const renderLeaveTrackerPage = async (
     .join("");
 
   let emptyMessage = "";
-  const extraCols = leaveViewMode === "team" ? 6 : 7;
+  const extraCols = leaveViewMode === "team" ? 6 : 8;
   if (fetchError) {
     emptyMessage = `<tr><td colspan="${extraCols}" class="placeholder-text error-message">❌ Error: ${fetchError}. Please check if the backend server is running.</td></tr>`;
   } else if (
@@ -818,6 +827,85 @@ export const renderLeaveTrackerPage = async (
       });
     }
   }, 0);
+};
+
+// Cancel leave function
+window.cancelLeave = async (leaveId, leaveType, startDate) => {
+  console.log(`Attempting to cancel leave: ${leaveId}`);
+  
+  // Show confirmation modal
+  const confirmBody = `
+    <div style="padding: 20px 0;">
+      <p style="margin-bottom: 16px; color: #475569;">
+        Are you sure you want to cancel this leave request?
+      </p>
+      <div style="background: #f8fafc; padding: 16px; border-radius: 8px; margin-bottom: 20px;">
+        <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+          <span style="color: #64748b;">Leave ID:</span>
+          <span style="font-weight: 600;">${leaveId}</span>
+        </div>
+        <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+          <span style="color: #64748b;">Leave Type:</span>
+          <span style="font-weight: 600;">${leaveType}</span>
+        </div>
+        <div style="display: flex; justify-content: space-between;">
+          <span style="color: #64748b;">Start Date:</span>
+          <span style="font-weight: 600;">${startDate}</span>
+        </div>
+      </div>
+      <p style="color: #dc2626; font-size: 14px;">
+        <i class="fa-solid fa-exclamation-triangle" style="margin-right: 8px;"></i>
+        This action cannot be undone.
+      </p>
+    </div>
+  `;
+  
+  renderModal('Cancel Leave Request', confirmBody, [
+    { id: 'cancel-confirm-no', text: 'No, Keep it', className: 'btn btn-secondary', type: 'button' },
+    { id: 'cancel-confirm-yes', text: 'Yes, Cancel Leave', className: 'btn btn-danger', type: 'button' }
+  ]);
+  
+  // Add event listeners
+  setTimeout(() => {
+    document.getElementById('cancel-confirm-no')?.addEventListener('click', () => {
+      closeModal();
+    });
+    
+    document.getElementById('cancel-confirm-yes')?.addEventListener('click', async () => {
+      closeModal();
+      try {
+        // Show loading state
+        const loadingToast = showLeaveApplicationToast('Cancelling leave request...', 'info');
+        
+        // Call cancel leave API
+        const response = await fetch(`${API_BASE_URL}/cancel_leave/${leaveId}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          }
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+          // Show success message
+          showLeaveApplicationToast('Leave request cancelled successfully!', 'success');
+          
+          // Refresh the leave tracker page
+          await renderLeaveTrackerPage(leaveCurrentPage, true);
+          
+          // Update notification badge
+          await updateNotificationBadge();
+        } else {
+          // Show error message
+          showLeaveApplicationToast(data.error || 'Failed to cancel leave request', 'error');
+        }
+      } catch (error) {
+        console.error('Error cancelling leave:', error);
+        showLeaveApplicationToast('Failed to cancel leave request. Please try again.', 'error');
+      }
+    });
+  }, 100);
 };
 
 export const showApplyLeaveModal = () => {

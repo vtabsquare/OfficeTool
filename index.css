@@ -2044,6 +2044,11 @@ body.dark-theme #app-container.sidebar-hidden .nav-link.active i {
   color: #475569;
 }
 
+.status-badge.cancelled {
+  background: rgba(239, 68, 68, 0.1);
+  color: #dc2626;
+}
+
 .status-pill.status-completed {
   background: rgba(34, 197, 94, 0.28);
   color: #16a34a;
