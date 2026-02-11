@@ -766,7 +766,7 @@ import { deriveRoleInfo } from '../utils/accessHelpers.js';
 //         loader.classList.remove('hidden');
 
 //         try {
-//           const base = (API_BASE_URL || 'http://localhost:5000').replace(/\/$/, '');
+//           const base = API_BASE_URL.replace(/\/$/, '');
 //           const res = await fetch(`${base}/api/login`, {
 //             method: "POST",
 //             headers: { "Content-Type": "application/json" },
@@ -1546,7 +1546,7 @@ export const renderLoginPage = () => {
     loader.classList.remove("hidden");
 
     try {
-      const base = (API_BASE_URL || 'http://localhost:5000').replace(/\/$/, '');
+      const base = API_BASE_URL.replace(/\/$/, '');
       const res = await fetch(`${base}/api/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1746,7 +1746,7 @@ export const renderLoginPage = () => {
     }
 
     try {
-      const base = (API_BASE_URL || 'http://localhost:5000').replace(/\/$/, '');
+      const base = API_BASE_URL.replace(/\/$/, '');
       const res = await fetch(`${base}/api/reset-password`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1777,7 +1777,7 @@ export const renderLoginPage = () => {
 
         // Try auto-login with new password (optional). If it works, proceed to app; otherwise instruct user.
         try {
-          const base = (API_BASE_URL || 'http://localhost:5000').replace(/\/$/, '');
+          const base = API_BASE_URL.replace(/\/$/, '');
           const loginResp = await fetch(`${base}/api/login`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },

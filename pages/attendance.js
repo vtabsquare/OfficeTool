@@ -625,7 +625,7 @@ const openTeamAttendanceEditModal = (employeeId, day, year, monthIndex) => {
                 if (!selectEl) return;
                 const code = selectEl.value;
                 try {
-                    const baseUrl = (API_BASE_URL || 'http://localhost:5000').replace(/\/$/, '');
+                    const baseUrl = API_BASE_URL.replace(/\/$/, '');
                     const res = await fetch(`${baseUrl}/api/attendance/manual-edit`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
@@ -1107,7 +1107,7 @@ export const renderTeamAttendancePage = async () => {
 async function checkAttendanceSubmissionStatus(submitBtn, year, month) {
     try {
         const employeeId = String(state.user.id || '').toUpperCase();
-        const response = await fetch(`http://localhost:5000/api/attendance/submission-status/${employeeId}/${year}/${month}`);
+        const response = await fetch(`${API_BASE_URL}/api/attendance/submission-status/${employeeId}/${year}/${month}`);
         const data = await response.json();
 
         if (data.success && data.submitted) {

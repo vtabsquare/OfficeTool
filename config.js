@@ -15,7 +15,7 @@ const runtimeApi = (typeof window !== 'undefined' && window.API_BASE_URL)
   ? window.API_BASE_URL
   : null;
 
-const fallbackHosted = 'https://vtab-office-tool.onrender.com';
+const fallbackHosted = '';
 
 export const API_BASE_URL = (envApi || runtimeApi || fallbackHosted || 'http://localhost:5000').replace(/\/$/, '');
 

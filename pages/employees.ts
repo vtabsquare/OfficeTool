@@ -3,6 +3,7 @@ import { state } from '../state.js';
 import { getPageContentHTML } from '../utils.js';
 import { renderModal, closeModal } from '../components/modal.js';
 import { listEmployees, createEmployee } from '../features/employeeApi.js';
+import { API_BASE_URL } from '../config.js';
 
 export const renderEmployeesPage = async (filter: string = '') => {
     const controls = `<button id="add-employee-btn" class="btn btn-primary"><i class="fa-solid fa-plus"></i> ADD NEW</button>`;
@@ -79,7 +80,7 @@ export const handleAddEmployee = async (e: SubmitEvent) => {
     
     try {
         // Fetch the next employee ID from backend
-        const response = await fetch('http://localhost:5000/api/employees/last-id');
+        const response = await fetch(`${API_BASE_URL}/api/employees/last-id`);
         const data = await response.json();
         
         if (!data.success) {

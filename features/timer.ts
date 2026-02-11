@@ -123,7 +123,7 @@ export const loadTimerState = async () => {
             // Check with backend if user is actually checked in
             try {
                 const uid = String(state.user.id || '').toUpperCase();
-                const base = (API_BASE_URL || 'http://localhost:5000').replace(/\/$/, '');
+                const base = API_BASE_URL.replace(/\/$/, '');
                 const response = await fetch(`${base}/api/status/${uid}`);
                 const statusData = await response.json();
                 

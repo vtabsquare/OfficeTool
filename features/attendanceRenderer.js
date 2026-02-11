@@ -5,7 +5,7 @@
 import { state } from '../state.js';
 import { API_BASE_URL } from '../config.js';
 
-const BASE_URL = (API_BASE_URL || 'http://localhost:5000').replace(/\/$/, '');
+const BASE_URL = API_BASE_URL.replace(/\/$/, '');
 
 // ================== CONFIGURATION ==================
 const STATUS_REFRESH_INTERVAL_MS = 5000;  // Refresh status every 5 seconds during active session

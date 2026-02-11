@@ -1,8 +1,9 @@
 import { getPageContentHTML } from "../utils.js";
 import { state } from "../state.js";
 import { renderModal, closeModal } from "../components/modal.js";
+import { API_BASE_URL } from '../config.js';
 
-const API_BASE = "http://localhost:5000/assets";
+const API_BASE = `${API_BASE_URL}/assets`;
 
 // -------------------- FETCH ASSETS --------------------
 export const fetchAssets = async () => {

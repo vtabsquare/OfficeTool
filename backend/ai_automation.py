@@ -12,7 +12,7 @@ from datetime import datetime
 # Backend API base URLs
 # - BACKEND_API_URL: public URL (used by frontend or external callers)
 # - BACKEND_API_INTERNAL_URL: internal URL for server-to-server calls
-BACKEND_API_URL = os.getenv("BACKEND_API_URL", "https://vtab-office-tool.onrender.com").rstrip("/")
+BACKEND_API_URL = os.getenv("BACKEND_API_URL", "http://localhost:5000").rstrip("/")
 BACKEND_API_INTERNAL_URL = os.getenv("BACKEND_API_INTERNAL_URL") or os.getenv("BACKEND_INTERNAL_URL")
 if BACKEND_API_INTERNAL_URL:
     BACKEND_API_INTERNAL_URL = BACKEND_API_INTERNAL_URL.rstrip("/")

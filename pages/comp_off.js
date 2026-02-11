@@ -2,9 +2,10 @@ import { state } from "../state.js";
 import { getPageContentHTML } from "../utils.js";
 import { renderModal, closeModal } from "../components/modal.js";
 import { notifyAdminCompOffRequest } from "../features/notificationApi.js";
+import { API_BASE_URL } from '../config.js';
 
 
-const API_BASE = "http://localhost:5000";
+const API_BASE = API_BASE_URL;
 
 // -------------------------------------------------------------
 // 🔹 Fetch Comp Off Data from Backend

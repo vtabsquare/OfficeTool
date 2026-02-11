@@ -10,7 +10,7 @@ from dataverse_helper import get_access_token, update_record, create_record
 
 # ================== CONFIGURATION ==================
 RESOURCE = os.getenv("RESOURCE", "")
-SOCKET_SERVER_URL = os.getenv("SOCKET_SERVER_URL", "https://office-tool-socket.onrender.com")
+SOCKET_SERVER_URL = os.getenv("SOCKET_SERVER_URL", "http://localhost:4001")
 
 HALF_DAY_SECONDS = 4 * 3600
 FULL_DAY_SECONDS = 9 * 3600

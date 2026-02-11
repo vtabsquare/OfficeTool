@@ -170,7 +170,7 @@ def admin_query():
         return jsonify({'error': str(e)}), 500
 
 # Frontend base used to build reset links
-FRONTEND_BASE_URL = os.getenv("FRONTEND_BASE_URL", "https://officetool-zeta.vercel.app").rstrip("/")
+FRONTEND_BASE_URL = os.getenv("FRONTEND_BASE_URL", "http://localhost:3000").rstrip("/")
 app.config['DEBUG'] = os.getenv("FLASK_DEBUG", "false").lower() == "true"
 app.url_map.strict_slashes = False
 
@@ -316,7 +316,7 @@ GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
 GOOGLE_REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI", "http://localhost:5000/google/oauth2callback")
 GOOGLE_SCOPES = ["https://www.googleapis.com/auth/calendar.events"]
 
-SOCKET_SERVER_URL = os.getenv("SOCKET_SERVER_URL", "https://office-tool-socket.onrender.com")
+SOCKET_SERVER_URL = os.getenv("SOCKET_SERVER_URL", "http://localhost:4001")
 
 
 def _emit_attendance_event(event: str, data: dict):
@@ -12117,7 +12117,7 @@ def verify_documents_and_complete(record_id):
 
         # 3) Call existing employee creation API to reuse exact logic
         try:
-            internal_url = "http://localhost:5000/api/employees"
+            internal_url = f"http://127.0.0.1:{os.getenv('PORT', '5000')}/api/employees"
             emp_resp = requests.post(internal_url, json=employee_create_payload, timeout=20)
         except Exception as call_err:
             print(f"[ERROR] Error calling employee creation API: {call_err}")

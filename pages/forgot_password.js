@@ -62,7 +62,7 @@ fpForm.addEventListener("submit", async (e) => {
   fpBtn.classList.add("btn-loading");
 
   try {
-    const base = (API_BASE_URL || 'http://localhost:5000').replace(/\/$/, '');
+    const base = API_BASE_URL.replace(/\/$/, '');
     const res = await fetch(`${base}/api/forgot-password`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },

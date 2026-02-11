@@ -77,7 +77,7 @@ LA_FIELD_TOTAL_SECONDS = "crc6f_total_seconds"
 
 # Environment
 RESOURCE = os.getenv("RESOURCE", "")
-SOCKET_SERVER_URL = os.getenv("SOCKET_SERVER_URL", "https://office-tool-socket.onrender.com")
+SOCKET_SERVER_URL = os.getenv("SOCKET_SERVER_URL", "http://localhost:4001")
 
 
 # ================== UTILITY FUNCTIONS ==================

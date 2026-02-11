@@ -495,7 +495,7 @@ export const loadTimerState = async () => {
     const uid = String(state.user.id || '').toUpperCase();
     const primaryKey = uid ? `timerState_${uid}` : 'timerState';
     const fallbackKey = 'timerState';
-    const baseUrl = (API_BASE_URL || 'http://localhost:5000').replace(/\/$/, '');
+    const baseUrl = API_BASE_URL.replace(/\/$/, '');
     const canUseStorage = storageAvailable();
     const todayStr = getTodayDateStr();
 

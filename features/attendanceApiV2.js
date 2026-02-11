@@ -4,7 +4,7 @@
 
 import { API_BASE_URL } from '../config.js';
 
-const BASE_URL = (API_BASE_URL || 'http://localhost:5000').replace(/\/$/, '');
+const BASE_URL = API_BASE_URL.replace(/\/$/, '');
 const API_VERSION = '/api/v2/attendance';
 
 // ================== CORE ENDPOINTS ==================

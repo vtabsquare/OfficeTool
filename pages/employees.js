@@ -3,6 +3,7 @@ import { getPageContentHTML } from '../utils.js';
 import { renderModal, closeModal } from '../components/modal.js';
 import { listEmployees, createEmployee, updateEmployee, deleteEmployee } from '../features/employeeApi.js';
 import { cachedFetch, TTL, clearCacheByPrefix } from '../features/cache.js';
+import { API_BASE_URL } from '../config.js';
 
 let empCurrentPage = 1;
 const EMP_PAGE_SIZE = 10;
@@ -713,7 +714,7 @@ export const handleAddEmployee = async (e) => {
 
     try {
         // Fetch the next employee ID from backend
-        const response = await fetch('http://localhost:5000/api/employees/last-id');
+        const response = await fetch(`${API_BASE_URL}/api/employees/last-id`);
         const data = await response.json();
 
         if (!data.success) {
@@ -1051,6 +1052,12 @@ export const handleCSVPreview = (e) => {
             for (const emp of parsedEmployees) {
                 const tmp = emp.address; emp.address = emp.contact_number; emp.contact_number = tmp;
             }
+        } else {
+            for (const emp of parsedEmployees) {
+                if (looksPhone(emp.address) && looksAddress(emp.contact_number)) {
+                    const tmp = emp.address; emp.address = emp.contact_number; emp.contact_number = tmp;
+                }
+            }
         }
         const count = parsedEmployees.length;
         if (count === 0) {
@@ -1196,7 +1203,7 @@ export const handleBulkUpload = async (e) => {
 
 const submitBulkEmployees = async (employees) => {
     try {
-        const response = await fetch('http://localhost:5000/api/employees/bulk', {
+        const response = await fetch(`${API_BASE_URL}/api/employees/bulk`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ employees })
@@ -1476,7 +1483,7 @@ export const handleRestoreSingle = async (employeeId) => {
     if (!employeeId) return;
 
     try {
-        const response = await fetch('http://localhost:5000/api/deleted-employees/restore', {
+        const response = await fetch(`${API_BASE_URL}/api/deleted-employees/restore`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ employee_ids: [employeeId] })
@@ -1522,7 +1529,7 @@ export const handleRestoreSelected = async () => {
     }
 
     try {
-        const response = await fetch('http://localhost:5000/api/deleted-employees/restore', {
+        const response = await fetch(`${API_BASE_URL}/api/deleted-employees/restore`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ employee_ids: ids })
@@ -1717,7 +1724,7 @@ const appendToDeletedCSV = async (employees) => {
     if (!employees || employees.length === 0) return;
 
     try {
-        const response = await fetch('http://localhost:5000/api/deleted-employees/append', {
+        const response = await fetch(`${API_BASE_URL}/api/deleted-employees/append`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ employees })
@@ -1737,7 +1744,7 @@ const appendToDeletedCSV = async (employees) => {
 
 const fetchDeletedEmployees = async () => {
     try {
-        const response = await fetch('http://localhost:5000/api/deleted-employees');
+        const response = await fetch(`${API_BASE_URL}/api/deleted-employees`);
         const result = await response.json();
 
         if (response.ok && result.success) {
@@ -1772,7 +1779,7 @@ window.testRestoreAll = async () => {
     const allIds = allDeleted.map(emp => emp.employee_id);
 
     try {
-        const response = await fetch('http://localhost:5000/api/deleted-employees/restore', {
+        const response = await fetch(`${API_BASE_URL}/api/deleted-employees/restore`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ employee_ids: allIds })
@@ -2021,7 +2028,7 @@ const handleRestoreAll = async () => {
 
     // Clear the CSV from backend
     try {
-        await fetch('http://localhost:5000/api/deleted-employees/clear', { method: 'DELETE' });
+        await fetch(`${API_BASE_URL}/api/deleted-employees/clear`, { method: 'DELETE' });
         currentDeletedEmployees = [];
         hasDeletedEmployees = false;
     } catch (e) {
@@ -2057,7 +2064,7 @@ export const handleRestoreConfirm = async (e) => {
     console.log('✅ Proceeding with restore of', ids.length, 'employees:', ids);
 
     try {
-        const response = await fetch('http://localhost:5000/api/deleted-employees/restore', {
+        const response = await fetch(`${API_BASE_URL}/api/deleted-employees/restore`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ employee_ids: ids })

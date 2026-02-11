@@ -1,5 +1,6 @@
 
 import { getPageContentHTML } from '../utils.js';
+import { API_BASE_URL } from '../config.js';
 
 export const renderTimeTrackerPage = () => {
     const content = `<div class="card"><p class="placeholder-text">Time Tracker page is under construction.</p></div>`;
@@ -41,7 +42,7 @@ export const renderInboxPage = () => {
 
 const loadInboxItems = async (category = 'all', status = 'awaiting') => {
     try {
-        const response = await fetch('http://localhost:5000/api/inbox');
+        const response = await fetch(`${API_BASE_URL}/api/inbox`);
         const data = await response.json();
 
         if (!data.success) {
@@ -200,7 +201,7 @@ const setupActionButtons = () => {
             if (!itemId) return;
 
             try {
-                const response = await fetch(`http://localhost:5000/api/inbox/${itemId}/approve`, {
+                const response = await fetch(`${API_BASE_URL}/api/inbox/${itemId}/approve`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' }
                 });
@@ -237,7 +238,7 @@ const setupActionButtons = () => {
             const reason = prompt('Enter rejection reason (optional):');
 
             try {
-                const response = await fetch(`http://localhost:5000/api/inbox/${itemId}/reject`, {
+                const response = await fetch(`${API_BASE_URL}/api/inbox/${itemId}/reject`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ reason })

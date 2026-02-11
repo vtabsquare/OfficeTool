@@ -1,5 +1,6 @@
 import { state } from '../state.js';
 import { getPageContentHTML } from '../utils.js';
+import { API_BASE_URL } from '../config.js';
 
 const getStageStatus = (record, stageNum, currentStage) => {
     const ok = (v) => String(v || '').trim().length > 0;
@@ -246,7 +247,7 @@ const getHeaderTheme = (status) => {
     return { bg: '#fde7ea', border: '#ef4444', badge: 'danger', label: 'PENDING' };
 };
 
-const API_BASE = 'http://localhost:5000/api';
+const API_BASE = `${API_BASE_URL}/api`;
 
 // Onboarding list batching state
 const LIST_PAGE_SIZE = 12;

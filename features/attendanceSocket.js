@@ -40,7 +40,7 @@ function resolveSocketUrl() {
     }
 
     // Default to localhost:4000
-    return 'https://office-tool-socket.onrender.com';
+    return 'http://localhost:4001';
 }
 
 const SOCKET_URL = resolveSocketUrl();

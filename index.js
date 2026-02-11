@@ -29,7 +29,7 @@ import { initAiAssistant } from './components/AiAssistant.js';
 import { deriveRoleInfo } from './utils/accessHelpers.js';
 import { API_BASE_URL as CONFIG_API_BASE_URL } from './config.js';
 
-const normalizeApiBase = () => String(CONFIG_API_BASE_URL || 'http://localhost:5000').replace(/\/$/, '');
+const normalizeApiBase = () => String(CONFIG_API_BASE_URL).replace(/\/$/, '');
 
 const THEME_STORAGE_KEY = 'theme';
 const THEME_OVERRIDE_KEY = 'theme_override';
@@ -220,7 +220,7 @@ if (typeof window !== 'undefined' && typeof window.fetch === 'function') {
       }
 
       if (urlString && (urlString.startsWith('http://localhost:5000') || urlString.startsWith('http://127.0.0.1:5000'))) {
-        const normalizedBase = String(API_BASE_URL || 'http://localhost:5000').replace(/\/$/, '');
+        const normalizedBase = String(API_BASE_URL).replace(/\/$/, '');
         const path = urlString.replace(/^https?:\/\/(localhost|127\.0\.0\.1):5000/, '');
         const resolved = normalizedBase + path;
 

@@ -4,8 +4,9 @@ import { getPageContentHTML } from '../utils.js';
 import { listEmployees } from '../features/employeeApi.js';
 import { renderModal, closeModal } from '../components/modal.js';
 import { isAdminUser } from '../utils/accessControl.js';
+import { API_BASE_URL } from '../config.js';
 
-const API_BASE = 'http://localhost:5000/api';
+const API_BASE = `${API_BASE_URL}/api`;
 
 // Leave allocation types configuration (defaults)
 const LEAVE_ALLOCATION_TYPES = [

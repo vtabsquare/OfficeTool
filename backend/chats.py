@@ -628,7 +628,7 @@ def _get_oauth_token():
 SOCKET_SERVER_URL = os.getenv("SOCKET_SERVER_URL", "http://localhost:4001")
 
 
-CHAT_SOCKET_EMIT_URL = "http://localhost:4001/emit-to-room"
+CHAT_SOCKET_EMIT_URL = f"{SOCKET_SERVER_URL}/emit-to-room"
 
 
 def emit_socket_event(event, payload):

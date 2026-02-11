@@ -124,7 +124,7 @@ npForm.addEventListener("submit", async (e) => {
   npBtn.classList.add("btn-loading");
 
   try {
-    const base = (API_BASE_URL || 'http://localhost:5000').replace(/\/$/, '');
+    const base = API_BASE_URL.replace(/\/$/, '');
     const res = await fetch(`${base}/api/reset-password`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },

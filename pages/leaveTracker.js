@@ -1361,7 +1361,7 @@ export const handleApplyLeave = async (e) => {
       }
     }
 
-    const backendURL = "http://localhost:5000/api/apply-leave";
+    const backendURL = `${API_BASE_URL}/api/apply-leave`;
     console.log("🌐 Sending POST request to:", backendURL);
 
     const response = await fetch(backendURL, {
