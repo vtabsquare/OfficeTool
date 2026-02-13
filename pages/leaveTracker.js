@@ -20,7 +20,7 @@ import {
   updateNotificationBadge,
 } from "../features/notificationApi.js";
 import { showLeaveApplicationToast } from "../components/toast.js";
-import { isAdminUser } from "../utils/accessControl.js";
+import { isAdminUser, isManagerOrAdmin } from "../utils/accessControl.js";
 
 let leaveCurrentPage = 1;
 const LEAVE_PAGE_SIZE = 10;
@@ -400,26 +400,12 @@ export const renderLeaveTrackerPage = async (
       const empId = await resolveCurrentEmployeeId();
       console.log("🔍 Current employee ID for team leaves:", empId);
 
-      // Show team leaves for all users - admins see everyone, others see department teammates
-      const isAdmin = isAdminUser();
+      // Show team leave balances for all employees
       if (empId) {
-        console.log(`✅ Fetching team leave balances (isAdmin=${isAdmin})`);
-
         // Fetch all employees
         const allEmployees = await listEmployees(1, 5000);
-        const allItems = allEmployees.items || [];
-        
-        // Admins see all employees; regular users see department teammates
-        let teammates;
-        if (isAdmin) {
-          teammates = allItems;
-        } else {
-          const me = allItems.find(e => (e.employee_id || '').toUpperCase() === empId.toUpperCase());
-          const myDept = (me?.department || '').trim().toLowerCase();
-          teammates = allItems.filter(e =>
-            (e.department || '').trim().toLowerCase() === myDept
-          );
-        }
+        const teammates = allEmployees.items || [];
+        console.log(`✅ Fetching team leave balances for ${teammates.length} employees`);
 
         console.log(
           `📊 Fetching leave balances for ${teammates.length} team members (including self)...`
