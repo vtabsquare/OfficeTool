@@ -400,13 +400,26 @@ export const renderLeaveTrackerPage = async (
       const empId = await resolveCurrentEmployeeId();
       console.log("🔍 Current employee ID for team leaves:", empId);
 
-      // Only show team leaves for emp001 (case insensitive comparison)
-      if (empId && empId.toUpperCase() === "EMP001") {
-        console.log("✅ Employee is emp001, fetching team leave balances");
+      // Show team leaves for all users - admins see everyone, others see department teammates
+      const isAdmin = isAdminUser();
+      if (empId) {
+        console.log(`✅ Fetching team leave balances (isAdmin=${isAdmin})`);
 
-        // Fetch all employees (including the logged-in user)
+        // Fetch all employees
         const allEmployees = await listEmployees(1, 5000);
-        const teammates = allEmployees.items || [];
+        const allItems = allEmployees.items || [];
+        
+        // Admins see all employees; regular users see department teammates
+        let teammates;
+        if (isAdmin) {
+          teammates = allItems;
+        } else {
+          const me = allItems.find(e => (e.employee_id || '').toUpperCase() === empId.toUpperCase());
+          const myDept = (me?.department || '').trim().toLowerCase();
+          teammates = allItems.filter(e =>
+            (e.department || '').trim().toLowerCase() === myDept
+          );
+        }
 
         console.log(
           `📊 Fetching leave balances for ${teammates.length} team members (including self)...`
@@ -463,9 +476,9 @@ export const renderLeaveTrackerPage = async (
           `👥 Team balances loaded: ${teamBalances.length} employees`
         );
       } else {
-        // For other employees, show empty team leaves
+        // No employee ID resolved
         state.teamBalances = [];
-        console.log("Team leaves restricted: Only emp001 can view team leaves");
+        console.log("[WARN] Could not resolve employee ID for team leaves");
       }
     } catch (err) {
       console.error("❌ Failed to fetch team leave balances:", err);
