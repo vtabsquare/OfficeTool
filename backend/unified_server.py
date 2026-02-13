@@ -7662,7 +7662,7 @@ def get_intern_detail(intern_id):
                 entity_set = get_employee_entity_set(token)
                 field_map = get_field_map(entity_set)
                 select_extra = []
-                for key in ["email", "contact", "address", "department", "designation", "doj", "fullname", "firstname", "lastname"]:
+                for key in ["email", "contact", "address", "department", "designation", "doj", "fullname", "firstname", "lastname", "employee_flag"]:
                     logical = field_map.get(key)
                     if logical:
                         select_extra.append(logical)
@@ -7693,6 +7693,7 @@ def get_intern_detail(intern_id):
                         "designation": emp_record.get(field_map.get("designation")),
                         "department": emp_record.get(field_map.get("department")),
                         "doj": emp_record.get(field_map.get("doj")),
+                        "employee_flag": emp_record.get(field_map.get("employee_flag")),
                     }
                     formatted["employee"] = employee_details
         except Exception as emp_err:
@@ -7781,6 +7782,32 @@ def update_intern(intern_id):
 
         updated = _fetch_intern_record_by_id(token, intern_id, include_system=True)
         formatted = _format_intern_record(updated) if updated else None
+
+        # Auto-convert: if post-probation phase end date has passed, change employee flag to Employee
+        try:
+            if formatted:
+                postprob = (formatted.get("phases") or {}).get("postprob") or {}
+                postprob_end = postprob.get("end")
+                emp_id = formatted.get("employee_id")
+                if postprob_end and emp_id:
+                    from datetime import datetime as _dt
+                    end_dt = _dt.strptime(str(postprob_end).split("T")[0], "%Y-%m-%d")
+                    if _dt.utcnow() >= end_dt:
+                        entity_set = get_employee_entity_set(token)
+                        field_map = get_field_map(entity_set)
+                        flag_field = field_map.get("employee_flag")
+                        if flag_field:
+                            emp_record = _fetch_employee_by_employee_id(token, emp_id)
+                            current_flag = (emp_record.get(flag_field) or "").strip().lower() if emp_record else ""
+                            if current_flag != "employee":
+                                primary_field = field_map.get("primary")
+                                rec_id = emp_record.get(primary_field) if primary_field and emp_record else None
+                                if rec_id:
+                                    update_record(entity_set, rec_id, {flag_field: "Employee"})
+                                    print(f"[OK] Auto-converted {emp_id} from Intern to Employee (post-probation completed)")
+        except Exception as conv_err:
+            print(f"[WARN] Auto-convert intern->employee failed for {intern_id}: {conv_err}")
+
         return jsonify({"success": True, "intern": formatted}), 200
     except Exception as e:
         print(f"[ERROR] update_intern failed: {e}")

@@ -228,6 +228,24 @@ export const renderInternDetailPage = async (internId) => {
 
     state.selectedIntern = intern;
 
+    // Auto-convert: if post-probation phase is completed, update employee flag from Intern to Employee
+    const postProbPhase = (intern.phases || {}).postprob;
+    if (postProbPhase) {
+      const { completedDays, totalDays } = getPhaseProgress(postProbPhase);
+      if (totalDays > 0 && completedDays >= totalDays) {
+        const empId = intern.employee_id;
+        const currentFlag = (intern.employee?.employee_flag || '').toLowerCase();
+        if (empId && currentFlag !== 'employee') {
+          try {
+            await updateEmployee(empId, { employee_flag: 'Employee' });
+            console.log(`✅ Auto-converted ${empId} from Intern to Employee (post-probation completed)`);
+          } catch (flagErr) {
+            console.error('Failed to auto-convert intern to employee:', flagErr);
+          }
+        }
+      }
+    }
+
     const phasesByKey = intern.phases || {};
     const phasesMarkup = PHASE_ORDER
       .map((key) => [key, phasesByKey[key]])
