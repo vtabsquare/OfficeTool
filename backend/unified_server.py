@@ -12669,21 +12669,18 @@ def get_comp_off():
         )
         employees = employee_response.json().get('value', [])
 
-        # 2️⃣ Fetch comp off details
-        leave_entity = LEAVE_BALANCE_ENTITY_RESOLVED or LEAVE_BALANCE_ENTITY
-        compoff_url = f"{BASE_URL}/{leave_entity}"
-        compoff_response = requests.get(
-            compoff_url,
-            headers={"Authorization": f"Bearer {token}"}
-        )
-        compoffs = compoff_response.json().get('value', [])
-
-        # Build quick lookups - try both FK field names
-        leave_map = {}
-        for c in compoffs:
-            eid = (c.get("crc6f_employeeid") or c.get("crc6f_empid") or "").upper()
-            if eid:
-                leave_map[eid] = c
+        # 2️⃣ Fetch comp off details - use _fetch_leave_balance for each employee
+        #    to ensure we use the same resolved entity and FK field as the rest of the system
+        leave_balances_map = {}
+        for emp in employees:
+            emp_id = emp.get("crc6f_employeeid")
+            if emp_id:
+                try:
+                    bal = _fetch_leave_balance(token, emp_id)
+                    if bal:
+                        leave_balances_map[emp_id.upper()] = bal
+                except Exception:
+                    pass
         normalized_requests = []
         try:
             comp_req_url = f"{BASE_URL}/crc6f_compensatoryrequests"
@@ -12716,7 +12713,7 @@ def get_comp_off():
 
             # find comp off record for this employee
             emp_key = (emp_id or "").upper()
-            emp_compoff = leave_map.get(emp_key)
+            emp_compoff = leave_balances_map.get(emp_key)
             raw_balance = float(emp_compoff.get("crc6f_compoff", 0) or 0) if emp_compoff else 0
             pending_days = pending_by_emp.get(emp_key, 0.0)
             available_compoff = max(0.0, raw_balance - pending_days)
