@@ -39,6 +39,12 @@ export const router = async () => {
         } catch {}
     }
 
+    // Chat and Meet modules are disabled for testing — redirect to home
+    if (path === '/chat' || path === '/meet') {
+        window.location.hash = '#/';
+        return;
+    }
+
     const pageRenderer = routes[path] || renderHomePage; // Default to home
     await pageRenderer();
     updateActiveNav(path);

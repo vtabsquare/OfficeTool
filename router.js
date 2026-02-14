@@ -73,6 +73,12 @@ export const router = async () => {
     return;
   }
 
+  // Chat and Meet modules are disabled for testing — redirect to home
+  if (path === '/chat' || path === '/meet') {
+    window.location.hash = '#/';
+    return;
+  }
+
   const loadFn = loaders[path] || loaders['/'];
   const renderer = await loadFn();
 
