@@ -528,22 +528,36 @@ const renderEmployeeAllocationTable = async () => {
             // Add cache busting to ensure fresh data
             const cacheBuster = `?_t=${Date.now()}`;
             const allocResponse = await fetch(`${API_BASE}/employee-leave-allocations${cacheBuster}`, {
-                cache: 'no-store'
+                cache: 'no-store',
+                headers: {
+                    'Accept': 'application/json'
+                }
             });
+            
+            if (!allocResponse.ok) {
+                throw new Error(`HTTP ${allocResponse.status}: ${allocResponse.statusText}`);
+            }
+            
             const allocData = await allocResponse.json();
-            if (allocData.success) {
-                storedAllocations = allocData.allocations || {};
+            console.log('📥 Raw API response:', allocData);
+            
+            if (allocData.success && allocData.allocations) {
+                storedAllocations = allocData.allocations;
                 console.log('✅ Fetched stored allocations for', Object.keys(storedAllocations).length, 'employees');
                 console.log('🔍 Stored allocation keys:', Object.keys(storedAllocations));
                 console.log('🔍 Sample stored allocation:', Object.values(storedAllocations)[0]);
+            } else {
+                console.warn('⚠️ API returned success=false or no allocations:', allocData);
             }
         } catch (err) {
-            console.warn('⚠️ Failed to fetch stored allocations, will use calculated values:', err);
+            console.error('❌ Failed to fetch stored allocations:', err);
+            console.warn('⚠️ Will use calculated values as fallback');
         }
 
         // Process employees - use stored values if available, otherwise calculate
         console.log('📊 Processing employees for leave allocation:', employees.length);
         console.log('🔍 First 3 employee IDs:', employees.slice(0, 3).map(e => e.employee_id));
+        console.log('🔍 Stored allocations available:', Object.keys(storedAllocations).length);
 
         const employeeAllocations = employees.map(emp => {
             const empId = emp.employee_id;
