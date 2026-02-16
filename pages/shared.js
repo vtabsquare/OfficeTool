@@ -1492,16 +1492,18 @@ export const renderMyTimesheetPage = async () => {
             };
         });
 
-        document.getElementById('ts-submit').onclick = async () => {
-            const s = startOfWeek(anchor);
-            const e = endOfWeek(anchor);
-            const weekKey = `ts_manual_${fmt(s)}_${fmt(e)}`;
-            const overridesKey = `${weekKey}_overrides`;
-            let overridesMap = {};
-            try { overridesMap = JSON.parse(sessionStorage.getItem(overridesKey) || '{}'); } catch { overridesMap = {}; }
+        const submitBtn = document.getElementById('ts-submit');
+        if (submitBtn) {
+            submitBtn.onclick = async () => {
+                const s = startOfWeek(anchor);
+                const e = endOfWeek(anchor);
+                const weekKey = `ts_manual_${fmt(s)}_${fmt(e)}`;
+                const overridesKey = `${weekKey}_overrides`;
+                let overridesMap = {};
+                try { overridesMap = JSON.parse(sessionStorage.getItem(overridesKey) || '{}'); } catch { overridesMap = {}; }
 
-            const today = new Date();
-            const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+                const today = new Date();
+                const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
 
             const entries = [];
             const ensureSeconds = (v) => {
@@ -1589,6 +1591,7 @@ export const renderMyTimesheetPage = async () => {
                 showToast('Failed to submit timesheet. Please try again.');
             }
         };
+    };
 
         // My Timesheet is read-only: disable all hour inputs and remove manual overrides
         document.querySelectorAll('.ts-hour-input').forEach(inp => {
