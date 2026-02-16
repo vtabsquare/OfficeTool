@@ -807,7 +807,7 @@ const init = async () => {
 
   // Set default hash if not present and render immediately
   if (!window.location.hash) {
-    window.location.hash = '#/dashboard';
+    window.location.hash = '#/';
   }
   router();
 
@@ -976,7 +976,6 @@ const init = async () => {
     if (navBtn) {
       const direction = navBtn.getAttribute("data-direction");
       handleAttendanceNav(direction);
-      router(); // Re-render the page after updating the date
     }
 
     // My Attendance day selection
