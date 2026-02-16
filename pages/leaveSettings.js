@@ -488,8 +488,10 @@ const saveEditedAllocation = async () => {
         if (result.success) {
             alert(`✅ Leave allocation updated successfully for ${employeeId}`);
             closeEditModal();
+            // Add a small delay to ensure database transaction completes
+            await new Promise(resolve => setTimeout(resolve, 500));
             // Reload the page to show updated data
-            renderLeaveSettingsPage();
+            await renderLeaveSettingsPage();
         } else {
             alert(`❌ Error: ${result.error || 'Failed to update leave allocation'}`);
         }
@@ -523,7 +525,11 @@ const renderEmployeeAllocationTable = async () => {
         console.log('📊 Fetching stored leave allocations from database...');
         let storedAllocations = {};
         try {
-            const allocResponse = await fetch(`${API_BASE}/employee-leave-allocations`);
+            // Add cache busting to ensure fresh data
+            const cacheBuster = `?_t=${Date.now()}`;
+            const allocResponse = await fetch(`${API_BASE}/employee-leave-allocations${cacheBuster}`, {
+                cache: 'no-store'
+            });
             const allocData = await allocResponse.json();
             if (allocData.success) {
                 storedAllocations = allocData.allocations || {};
