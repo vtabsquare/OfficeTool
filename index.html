@@ -206,8 +206,8 @@
     <!-- Modals will be rendered here -->
     <div id="modal-container"></div>
     <script>
-        // Set API base URL for Vercel deployment
-        window.API_BASE_URL = 'https://vtab-office-tool.onrender.com';
+        // Set API base URL to current domain origin
+        window.API_BASE_URL = window.location.origin;
     </script>
     <script type="module" src="index.js"></script>
 </body>
