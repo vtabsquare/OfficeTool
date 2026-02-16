@@ -3806,6 +3806,13 @@ const loadInboxLeaves = async () => {
             <div class="placeholder-text">
                 <i class="fa-solid fa-exclamation-triangle fa-3x" style="color:#e74c3c; margin-bottom: 1rem;"></i>
                 <p>Error loading leave requests.</p>
+            </div>
+        `;
+    }
+};
+
+const loadInboxTimesheets = async () => {
+    const isAdmin = isManagerOrAdmin();
     const listContainer = document.querySelector('.inbox-list');
 
     if (!listContainer) return;
