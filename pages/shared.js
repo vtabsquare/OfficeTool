@@ -894,20 +894,33 @@ export const renderMyTimesheetPage = async () => {
         return new Date();
     })();
 
-    // Load projects and tasks for dropdowns
+    // Load projects and tasks for dropdowns (cached for speed)
     let projects = [];
     let tasks = [];
     try {
-        const projRes = await fetch(`${API}/projects`);
-        const projData = await projRes.json();
-        projects = (projData.success ? projData.projects : []) || [];
+        const cachedProj = sessionStorage.getItem('ts_projects_cache');
+        if (cachedProj) { projects = JSON.parse(cachedProj); } 
+    } catch { }
+    try {
+        const cachedTasks = sessionStorage.getItem('ts_tasks_cache');
+        if (cachedTasks) { tasks = JSON.parse(cachedTasks); }
     } catch { }
 
-    try {
-        const taskRes = await fetch(`${API}/tasks`);
-        const taskData = await taskRes.json();
-        tasks = (taskData.success ? taskData.tasks : []) || [];
-    } catch { }
+    // Fetch in parallel if not cached
+    if (!projects.length || !tasks.length) {
+        const [projRes, taskRes] = await Promise.allSettled([
+            fetch(`${API}/projects`).then(r => r.json()),
+            fetch(`${API}/tasks`).then(r => r.json())
+        ]);
+        if (projRes.status === 'fulfilled' && projRes.value?.success) {
+            projects = projRes.value.projects || [];
+            try { sessionStorage.setItem('ts_projects_cache', JSON.stringify(projects)); } catch { }
+        }
+        if (taskRes.status === 'fulfilled' && taskRes.value?.success) {
+            tasks = taskRes.value.tasks || [];
+            try { sessionStorage.setItem('ts_tasks_cache', JSON.stringify(tasks)); } catch { }
+        }
+    }
 
     // State for grid rows (derived from logs) and manual rows (user-added)
     let gridRows = [];
@@ -1505,93 +1518,99 @@ export const renderMyTimesheetPage = async () => {
                 const today = new Date();
                 const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
 
-            const entries = [];
-            const ensureSeconds = (v) => {
-                if (v === null || v === undefined) return 0;
-                const n = Number(v);
-                return Number.isFinite(n) ? n : 0;
-            };
+                const entries = [];
+                const ensureSeconds = (v) => {
+                    if (v === null || v === undefined) return 0;
+                    const n = Number(v);
+                    return Number.isFinite(n) ? n : 0;
+                };
 
-            gridRows.forEach(row => {
-                const key = rowKeyFor(row);
-                const ov = overridesMap[key] || [];
-                for (let i = 0; i < 7; i++) {
-                    const d = new Date(s);
-                    d.setDate(s.getDate() + i);
-                    const yyyy = d.getFullYear();
-                    const mm = String(d.getMonth() + 1).padStart(2, '0');
-                    const dd = String(d.getDate()).padStart(2, '0');
-                    const workDate = `${yyyy}-${mm}-${dd}`;
-                    if (workDate > todayStr) continue;
-                    const baseSecs = ensureSeconds(row.hours[i]);
-                    const overrideSecs = (ov[i] === null || ov[i] === undefined) ? null : ensureSeconds(ov[i]);
-                    const secs = overrideSecs !== null ? overrideSecs : baseSecs;
-                    if (!secs) continue;
+                gridRows.forEach(row => {
+                    const key = rowKeyFor(row);
+                    const ov = overridesMap[key] || [];
+                    for (let i = 0; i < 7; i++) {
+                        const d = new Date(s);
+                        d.setDate(s.getDate() + i);
+                        const yyyy = d.getFullYear();
+                        const mm = String(d.getMonth() + 1).padStart(2, '0');
+                        const dd = String(d.getDate()).padStart(2, '0');
+                        const workDate = `${yyyy}-${mm}-${dd}`;
+                        if (workDate > todayStr) continue;
+                        const baseSecs = ensureSeconds(row.hours[i]);
+                        const overrideSecs = (ov[i] === null || ov[i] === undefined) ? null : ensureSeconds(ov[i]);
+                        const secs = overrideSecs !== null ? overrideSecs : baseSecs;
+                        if (!secs) continue;
 
-                    const project = projects.find(p => (p.crc6f_projectid || p.id) === row.project_id) || {};
-                    const projectId = row.project_id || project.crc6f_projectid || project.id || '';
-                    const projectName = project.crc6f_projectname || project.name || row.project_name || projectId;
+                        const project = projects.find(p => (p.crc6f_projectid || p.id) === row.project_id) || {};
+                        const projectId = row.project_id || project.crc6f_projectid || project.id || '';
+                        const projectName = project.crc6f_projectname || project.name || row.project_name || projectId;
 
-                    entries.push({
-                        date: workDate,
-                        project_id: projectId,
-                        project_name: projectName || '',
-                        task_id: row.task_id || '',
-                        task_guid: row.task_guid || '',
-                        task_name: row.task_name || '',
-                        seconds: secs,
-                        hours_worked: Math.round((secs / 3600) * 100) / 100,
-                        description: ''
-                    });
-                }
-            });
-
-            if (!entries.length) {
-                showToast('No time entries to submit for this week.');
-                return;
-            }
-
-            const fullName = `${user.first_name || user.firstName || ''} ${user.last_name || user.lastName || ''}`.trim();
-            const employeeName = fullName || user.name || user.displayName || '';
-
-            const payload = {
-                employee_id: empId,
-                employee_name: employeeName,
-                entries
-            };
-
-            try {
-                const res = await fetch(`${API}/time-tracker/timesheet/submit`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
+                        entries.push({
+                            date: workDate,
+                            project_id: projectId,
+                            project_name: projectName || '',
+                            task_id: row.task_id || '',
+                            task_guid: row.task_guid || '',
+                            task_name: row.task_name || '',
+                            seconds: secs,
+                            hours_worked: Math.round((secs / 3600) * 100) / 100,
+                            description: ''
+                        });
+                    }
                 });
-                const data = await res.json().catch(() => ({}));
-                if (!res.ok || !data.success) {
-                    showToast(`Failed to submit timesheet: ${data.error || res.status}`);
+
+                if (!entries.length) {
+                    showToast('No time entries to submit for this week.');
                     return;
                 }
-                try { sessionStorage.removeItem(weekKey); } catch { }
-                try { sessionStorage.removeItem(overridesKey); } catch { }
-                if (submissionStatusTimer) {
-                    clearTimeout(submissionStatusTimer);
-                    submissionStatusTimer = null;
-                }
-                submissionStatusMsg = 'Timesheet submitted.';
-                submissionStatusTimer = setTimeout(() => {
-                    submissionStatusMsg = '';
-                    if (window.location.hash === '#/time-my-timesheet') {
-                        try { render(); } catch { }
+
+                const fullName = `${user.first_name || user.firstName || ''} ${user.last_name || user.lastName || ''}`.trim();
+                const employeeName = fullName || user.name || user.displayName || '';
+
+                const payload = {
+                    employee_id: empId,
+                    employee_name: employeeName,
+                    entries
+                };
+
+                try {
+                    const res = await fetch(`${API}/time-tracker/timesheet/submit`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+                    const data = await res.json().catch(() => ({}));
+                    if (!res.ok || !data.success) {
+                        showToast(`Failed to submit timesheet: ${data.error || res.status}`);
+                        return;
                     }
-                }, 5000);
-                showToast('Timesheet submitted.');
-                await render();
-            } catch (err) {
-                console.error('Timesheet submit failed', err);
-                showToast('Failed to submit timesheet. Please try again.');
-            }
-        };
-    };
+                    try { sessionStorage.removeItem(weekKey); } catch { }
+                    try { sessionStorage.removeItem(overridesKey); } catch { }
+                    if (submissionStatusTimer) {
+                        clearTimeout(submissionStatusTimer);
+                        submissionStatusTimer = null;
+                    }
+                    submissionStatusMsg = 'Timesheet submitted.';
+                    submissionStatusTimer = setTimeout(() => {
+                        submissionStatusMsg = '';
+                        if (window.location.hash === '#/time-my-timesheet') {
+                            try { render(); } catch { }
+                        }
+                    }, 5000);
+
+                    // Show the submission summary popup
+                    showTimesheetSubmissionSummary(entries);
+
+                    // Notify admin/manager about the new timesheet submission
+                    try { await updateNotificationBadge(); } catch (e) { console.warn('Notification badge update failed', e); }
+
+                    await render();
+                } catch (err) {
+                    console.error('Timesheet submit failed', err);
+                    showToast('Failed to submit timesheet. Please try again.');
+                }
+            };
+        }
 
         // My Timesheet is read-only: disable all hour inputs and remove manual overrides
         document.querySelectorAll('.ts-hour-input').forEach(inp => {
