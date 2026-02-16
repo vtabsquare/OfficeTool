@@ -1715,11 +1715,12 @@ export const renderTeamTimesheetPage = async () => {
             <div id="tt-month" style="font-weight:600;">${month.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}</div>
             <button id="tt-next" class="icon-btn"><i class="fa-solid fa-chevron-right"></i></button>
           </div>`;
+        const searchValue = window.__ttSearch || '';
         const controls = `
           <div class="tt-search-shell">
             <div class="inline-search" style="max-width:320px; width:100%;">
               <i class="fa-solid fa-search"></i>
-              <input id="tt-search" type="text" placeholder="Search by employee name or ID" />
+              <input id="tt-search" type="text" placeholder="Search by employee name or ID" value="${searchValue}" />
             </div>
           </div>`;
         const head = `
