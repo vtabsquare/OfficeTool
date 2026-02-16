@@ -407,7 +407,16 @@ export const renderEmployeesPage = async (filter = '', page = empCurrentPage) =>
         tableBtn.addEventListener('click', () => applyViewState('table'));
         applyViewState(employeeViewMode);
     }
-};
+
+    // Wire up search input
+    const searchInput = document.getElementById('employee-search-input');
+    if (searchInput) {
+        searchInput.addEventListener('input', (e) => {
+            const searchValue = e.target.value || '';
+            renderEmployeesPage(searchValue, 1);
+        });
+    }
+} // Added closing bracket here
 
 // Simple CSV parser that supports quoted fields, embedded commas, and newlines
 const parseCSVText = (text) => {
