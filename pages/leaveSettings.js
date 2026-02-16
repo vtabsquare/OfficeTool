@@ -534,13 +534,16 @@ const renderEmployeeAllocationTable = async () => {
             if (allocData.success) {
                 storedAllocations = allocData.allocations || {};
                 console.log('✅ Fetched stored allocations for', Object.keys(storedAllocations).length, 'employees');
+                console.log('🔍 Stored allocation keys:', Object.keys(storedAllocations));
+                console.log('🔍 Sample stored allocation:', Object.values(storedAllocations)[0]);
             }
         } catch (err) {
             console.warn('⚠️ Failed to fetch stored allocations, will use calculated values:', err);
         }
 
         // Process employees - use stored values if available, otherwise calculate
-        console.log('� Processing employees for leave allocation:', employees.length);
+        console.log('📊 Processing employees for leave allocation:', employees.length);
+        console.log('🔍 First 3 employee IDs:', employees.slice(0, 3).map(e => e.employee_id));
 
         const employeeAllocations = employees.map(emp => {
             const empId = emp.employee_id;
@@ -548,7 +551,10 @@ const renderEmployeeAllocationTable = async () => {
             const experience = calculateExperience(dateOfJoining);
             
             // Check if we have stored allocation for this employee
-            const stored = storedAllocations[empId];
+            // Try both exact match and normalized versions
+            let stored = storedAllocations[empId] || 
+                        storedAllocations[empId?.toUpperCase()] || 
+                        storedAllocations[empId?.trim()];
             
             let casualLeave, sickLeave, totalQuota, allocationType;
             
