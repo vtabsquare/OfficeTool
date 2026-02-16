@@ -2483,12 +2483,29 @@ def create_asset(data):
         "Content-Type": "application/json",
         "Prefer": "return=representation"
     }
-    payload = dict(data or {})
-    _apply_asset_rpt(payload)
-    res = requests.post(url, headers=headers, json=payload)
-    if res.status_code in (200, 201):
-        return res.json()
-    raise Exception(f"Error creating asset: {res.status_code} - {res.text}")
+    base_payload = dict(data or {})
+    
+    # Try with RPT fields first
+    try:
+        payload_with_rpt = dict(base_payload)
+        _apply_asset_rpt(payload_with_rpt)
+        res = requests.post(url, headers=headers, json=payload_with_rpt)
+        if res.status_code in (200, 201):
+            return res.json()
+        # If we get a 400 error, it might be due to RPT fields
+        if res.status_code == 400 and 'RPT' in res.text:
+            print(f"[ASSET] RPT fields caused error, retrying without RPT: {res.text}")
+            raise Exception("RPT error, will retry without RPT")
+        raise Exception(f"Error creating asset: {res.status_code} - {res.text}")
+    except Exception as e:
+        # If RPT fields caused the error, try without them
+        if 'RPT' in str(e) or res.status_code == 400:
+            print(f"[ASSET] Retrying asset creation without RPT fields")
+            res = requests.post(url, headers=headers, json=base_payload)
+            if res.status_code in (200, 201):
+                return res.json()
+            raise Exception(f"Error creating asset (without RPT): {res.status_code} - {res.text}")
+        raise
 
 def update_asset_by_assetid(asset_id, data):
 
@@ -2505,12 +2522,29 @@ def update_asset_by_assetid(asset_id, data):
         "Content-Type": "application/json",
         "If-Match": "*"
     }
-    payload = dict(data or {})
-    _apply_asset_rpt(payload)
-    res = requests.patch(url, headers=headers, json=payload)
-    if res.status_code in (204, 1223):
-        return {"message": "Asset updated successfully"}
-    raise Exception(f"Error updating asset: {res.status_code} - {res.text}")
+    base_payload = dict(data or {})
+    
+    # Try with RPT fields first
+    try:
+        payload_with_rpt = dict(base_payload)
+        _apply_asset_rpt(payload_with_rpt)
+        res = requests.patch(url, headers=headers, json=payload_with_rpt)
+        if res.status_code in (204, 1223):
+            return {"message": "Asset updated successfully"}
+        # If we get a 400 error, it might be due to RPT fields
+        if res.status_code == 400 and 'RPT' in res.text:
+            print(f"[ASSET] RPT fields caused error in update, retrying without RPT: {res.text}")
+            raise Exception("RPT error, will retry without RPT")
+        raise Exception(f"Error updating asset: {res.status_code} - {res.text}")
+    except Exception as e:
+        # If RPT fields caused the error, try without them
+        if 'RPT' in str(e) or (hasattr(res, 'status_code') and res.status_code == 400):
+            print(f"[ASSET] Retrying asset update without RPT fields")
+            res = requests.patch(url, headers=headers, json=base_payload)
+            if res.status_code in (204, 1223):
+                return {"message": "Asset updated successfully"}
+            raise Exception(f"Error updating asset (without RPT): {res.status_code} - {res.text}")
+        raise
 
 def delete_asset_by_assetid(asset_id):
     asset = get_asset_by_assetid(asset_id)
