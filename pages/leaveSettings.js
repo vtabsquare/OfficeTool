@@ -519,40 +519,71 @@ const renderEmployeeAllocationTable = async () => {
             `;
         }
 
-        // Calculate experience and allocation for each employee
-        console.log('📊 Processing employees for leave allocation:', employees.length);
-        console.log('🔍 Raw employee data sample:', employees.slice(0, 2));
+        // Fetch stored leave allocations from database
+        console.log('📊 Fetching stored leave allocations from database...');
+        let storedAllocations = {};
+        try {
+            const allocResponse = await fetch(`${API_BASE}/employee-leave-allocations`);
+            const allocData = await allocResponse.json();
+            if (allocData.success) {
+                storedAllocations = allocData.allocations || {};
+                console.log('✅ Fetched stored allocations for', Object.keys(storedAllocations).length, 'employees');
+            }
+        } catch (err) {
+            console.warn('⚠️ Failed to fetch stored allocations, will use calculated values:', err);
+        }
+
+        // Process employees - use stored values if available, otherwise calculate
+        console.log('� Processing employees for leave allocation:', employees.length);
 
         const employeeAllocations = employees.map(emp => {
-            // Use 'doj' field from Dataverse employee table
+            const empId = emp.employee_id;
             const dateOfJoining = emp.doj || emp.date_of_joining;
             const experience = calculateExperience(dateOfJoining);
-            const allocation = getAllocationType(experience);
-
-            // Debug logging for first few employees
-            if (employees.indexOf(emp) < 3) {
-                console.log(`👤 Employee ${emp.employee_id}:`, {
-                    doj: emp.doj,
-                    dojType: typeof emp.doj,
-                    date_of_joining: emp.date_of_joining,
-                    dateOfJoiningType: typeof emp.date_of_joining,
-                    finalDOJ: dateOfJoining,
-                    finalDOJType: typeof dateOfJoining,
-                    parsedDate: parseDate(dateOfJoining),
-                    experience,
-                    allocationType: allocation.type
-                });
+            
+            // Check if we have stored allocation for this employee
+            const stored = storedAllocations[empId];
+            
+            let casualLeave, sickLeave, totalQuota, allocationType;
+            
+            if (stored) {
+                // Use stored values from database
+                casualLeave = stored.casual_leave;
+                sickLeave = stored.sick_leave;
+                totalQuota = stored.total || (casualLeave + sickLeave);
+                
+                // Determine type based on stored values
+                if (casualLeave === 6 && sickLeave === 6) {
+                    allocationType = 'Type 1';
+                } else if (casualLeave === 4 && sickLeave === 4) {
+                    allocationType = 'Type 2';
+                } else if (casualLeave === 3 && sickLeave === 3) {
+                    allocationType = 'Type 3';
+                } else {
+                    allocationType = 'Custom';
+                }
+                
+                console.log(`✓ ${empId}: Using stored allocation (${allocationType})`);
+            } else {
+                // Calculate based on experience (fallback)
+                const allocation = getAllocationType(experience);
+                casualLeave = allocation.casualLeave;
+                sickLeave = allocation.sickLeave;
+                totalQuota = allocation.totalQuota;
+                allocationType = allocation.type;
+                
+                console.log(`⚠ ${empId}: No stored allocation, using calculated (${allocationType})`);
             }
 
             return {
-                employeeId: emp.employee_id,
+                employeeId: empId,
                 name: `${emp.first_name || ''} ${emp.last_name || ''}`.trim(),
                 dateOfJoining: dateOfJoining,
                 experience,
-                allocationType: allocation.type,
-                casualLeave: allocation.casualLeave,
-                sickLeave: allocation.sickLeave,
-                totalQuota: allocation.totalQuota
+                allocationType,
+                casualLeave,
+                sickLeave,
+                totalQuota
             };
         });
 

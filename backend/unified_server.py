@@ -9797,6 +9797,64 @@ def update_employee_leave_allocation(employee_id):
         return jsonify({"success": False, "error": str(e)}), 500
 
 
+@app.route('/api/employee-leave-allocations', methods=['GET'])
+def get_all_employee_leave_allocations():
+    """
+    Fetch all employee leave allocations from the database.
+    Returns stored values from crc6f_hr_leavemangements table.
+    """
+    try:
+        print(f"\n{'='*70}")
+        print(f"[FETCH] GETTING ALL EMPLOYEE LEAVE ALLOCATIONS FROM DATABASE")
+        print(f"{'='*70}")
+        
+        token = get_access_token()
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json",
+            "OData-MaxVersion": "4.0",
+            "OData-Version": "4.0"
+        }
+        
+        # Fetch all records from leave management table
+        url = f"{RESOURCE}/api/data/v9.2/crc6f_hr_leavemangements?$top=5000"
+        response = requests.get(url, headers=headers)
+        
+        if response.status_code != 200:
+            print(f"[ERROR] Failed to fetch allocations: {response.status_code}")
+            return jsonify({"success": False, "error": "Failed to fetch leave allocations"}), 500
+        
+        records = response.json().get("value", [])
+        print(f"[DATA] Found {len(records)} leave allocation records")
+        
+        # Format the response
+        allocations = {}
+        for record in records:
+            emp_id = record.get("crc6f_employeeid")
+            if emp_id:
+                allocations[emp_id] = {
+                    "employee_id": emp_id,
+                    "casual_leave": float(record.get("crc6f_cl", 0) or 0),
+                    "sick_leave": float(record.get("crc6f_sl", 0) or 0),
+                    "comp_off": float(record.get("crc6f_compoff", 0) or 0),
+                    "total": float(record.get("crc6f_total", 0) or 0)
+                }
+        
+        print(f"[OK] Returning {len(allocations)} employee allocations")
+        print(f"{'='*70}\n")
+        
+        return jsonify({
+            "success": True,
+            "allocations": allocations,
+            "count": len(allocations)
+        }), 200
+        
+    except Exception as e:
+        print(f"[ERROR] Error fetching leave allocations: {str(e)}")
+        traceback.print_exc()
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
 @app.route('/api/sync-leave-allocations', methods=['POST'])
 def sync_leave_allocations():
     """
