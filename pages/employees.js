@@ -199,8 +199,13 @@ export const renderEmployeesPage = async (filter = '', page = empCurrentPage) =>
 
     let paginator = '';
     try {
-        const { items, total, page: cur, pageSize } = await listEmployees(page, EMP_PAGE_SIZE);
-        empCurrentPage = cur || page;
+        // When searching, fetch all employees; otherwise use pagination
+        const fetchAll = filter && filter.trim().length > 0;
+        const fetchPageSize = fetchAll ? 10000 : EMP_PAGE_SIZE;
+        const fetchPage = fetchAll ? 1 : page;
+        
+        const { items, total, page: cur, pageSize } = await listEmployees(fetchPage, fetchPageSize);
+        empCurrentPage = fetchAll ? 1 : (cur || page);
         state.employees = (items || []).map(e => ({
             id: e.employee_id,
             name: `${e.first_name || ''} ${e.last_name || ''}`.trim(),
