@@ -4776,11 +4776,14 @@ def get_monthly_attendance(employee_id, year, month):
             checkout = r.get(FIELD_CHECKOUT)
             duration_str = r.get(FIELD_DURATION) or "0"
             
+            duration_text_raw = r.get(FIELD_DURATION_INTEXT) or ""
+            is_manual_override = "[MANUAL]" in str(duration_text_raw)
+
             # Get actual first check-in and last check-out from login activity
             actual_checkin = checkin
             actual_checkout = checkout
             
-            if date_str and date_str in login_activity_by_date:
+            if (not is_manual_override) and date_str and date_str in login_activity_by_date:
                 try:
                     day_records = login_activity_by_date[date_str]
                     if day_records:
@@ -4817,18 +4820,24 @@ def get_monthly_attendance(employee_id, year, month):
 
             # Overlay live timer if employee is still checked in for that date
             live_hours = 0.0
-            if date_str:
+            if date_str and (not is_manual_override):
                 live_hours = _live_session_progress_hours(normalized_emp_id, date_str)
             augmented_hours = duration_hours + max(0.0, live_hours)
             effective_hours = augmented_hours if augmented_hours > duration_hours else duration_hours
 
-            # Attendance classification based on hours (post overlay)
-            if effective_hours >= FULL_DAY_HOURS:
-                status = "P"  # Present
-            elif effective_hours >= HALF_DAY_HOURS:
-                status = "HL"  # Half Day
+            # Prefer persisted manual/status field; fallback to hour-based classification
+            persisted_status = (r.get(FIELD_STATUS) or "").strip().upper()
+            if persisted_status == "H":
+                persisted_status = "HL"
+            if persisted_status in ("P", "HL", "A", "CL", "SL", "CO", "INL"):
+                status = persisted_status
             else:
-                status = "A"  # Absent
+                if effective_hours >= FULL_DAY_HOURS:
+                    status = "P"  # Present
+                elif effective_hours >= HALF_DAY_HOURS:
+                    status = "HL"  # Half Day
+                else:
+                    status = "A"  # Absent
             
             # Extract day number for frontend mapping
             day_num = None
@@ -4839,7 +4848,7 @@ def get_monthly_attendance(employee_id, year, month):
                     pass
 
             duration_text = r.get(FIELD_DURATION_INTEXT)
-            if augmented_hours > duration_hours:
+            if (not is_manual_override) and augmented_hours > duration_hours:
                 duration_text = _format_duration_text_from_hours(effective_hours)
             
             formatted_records.append({
@@ -4982,6 +4991,7 @@ def manual_edit_attendance():
             return jsonify({"success": False, "error": "employee_id, year, month, day and valid code required"}), 400
 
         date_str = f"{year}-{str(month).zfill(2)}-{str(day).zfill(2)}"
+        canonical_code = "HL" if code == "H" else code
 
         if code == "P":
             duration_hours = 9.0
@@ -5018,24 +5028,45 @@ def manual_edit_attendance():
         print(f"[ATT_EDIT] Searching for existing record: {url}")
         resp = requests.get(url, headers=headers)
         record_id = None
+        values = []
         if resp.status_code == 200:
             values = resp.json().get("value", [])
             print(f"[ATT_EDIT] Found {len(values)} existing records for {safe_emp} on {safe_date}")
-            if values:
-                row = values[0]
-                record_id = row.get(FIELD_RECORD_ID) or row.get("crc6f_table13id") or row.get("id")
-                print(f"[ATT_EDIT] Using existing record_id: {record_id}")
         else:
             print(f"[ATT_EDIT] Dataverse search failed: {resp.status_code} - {resp.text[:200]}")
 
+        # Fallback for DateTime columns where eq 'YYYY-MM-DD' may not match
+        if not values:
+            try:
+                d0 = datetime.strptime(date_str, "%Y-%m-%d")
+                d1 = d0 + timedelta(days=1)
+                start_iso = d0.strftime("%Y-%m-%dT00:00:00Z")
+                end_iso = d1.strftime("%Y-%m-%dT00:00:00Z")
+                filter_q2 = (
+                    f"?$top=1&$filter={FIELD_EMPLOYEE_ID} eq '{safe_emp}' and "
+                    f"{FIELD_DATE} ge '{start_iso}' and {FIELD_DATE} lt '{end_iso}'"
+                )
+                url2 = f"{RESOURCE}/api/data/v9.2/{ATTENDANCE_ENTITY}{filter_q2}"
+                print(f"[ATT_EDIT] DateTime fallback search: {url2}")
+                resp2 = requests.get(url2, headers=headers)
+                if resp2.status_code == 200:
+                    values = resp2.json().get("value", [])
+                    print(f"[ATT_EDIT] DateTime fallback found {len(values)} records")
+            except Exception as dt_err:
+                print(f"[ATT_EDIT] DateTime fallback failed: {dt_err}")
+
+        if values:
+            row = values[0]
+            record_id = row.get(FIELD_RECORD_ID) or row.get("crc6f_table13id") or row.get("id")
+            print(f"[ATT_EDIT] Using existing record_id: {record_id}")
+
         payload = {
             FIELD_DURATION: str(int(duration_hours)),
-            FIELD_DURATION_INTEXT: f"{int(duration_hours)} hour(s) 0 minute(s)",
+            FIELD_DURATION_INTEXT: f"{int(duration_hours)} hour(s) 0 minute(s) [MANUAL]",
+            FIELD_STATUS: canonical_code,
+            FIELD_CHECKIN: checkin_val,
+            FIELD_CHECKOUT: checkout_val,
         }
-        if checkin_val is not None:
-            payload[FIELD_CHECKIN] = checkin_val
-        if checkout_val is not None:
-            payload[FIELD_CHECKOUT] = checkout_val
 
         if record_id:
             print(f"[ATT_EDIT] Updating record {record_id} with payload: {payload}")
@@ -5048,7 +5079,8 @@ def manual_edit_attendance():
                 FIELD_DATE: date_str,
                 FIELD_ATTENDANCE_ID_CUSTOM: new_att_id,
                 FIELD_DURATION: str(int(duration_hours)),
-                FIELD_DURATION_INTEXT: f"{int(duration_hours)} hour(s) 0 minute(s)",
+                FIELD_DURATION_INTEXT: f"{int(duration_hours)} hour(s) 0 minute(s) [MANUAL]",
+                FIELD_STATUS: canonical_code,
             }
             if checkin_val is not None:
                 create_payload[FIELD_CHECKIN] = checkin_val
@@ -5059,7 +5091,7 @@ def manual_edit_attendance():
             record_id = created.get(FIELD_RECORD_ID) or created.get("crc6f_table13id") or created.get("id")
             print(f"[ATT_EDIT] Successfully created record {record_id}")
 
-        final_status = "P" if duration_hours >= 9 else ("HL" if duration_hours > 4 else "A")
+        final_status = canonical_code
 
         return jsonify({
             "success": True,

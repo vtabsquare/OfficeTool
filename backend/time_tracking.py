@@ -328,9 +328,15 @@ def set_exact_log():
             # Use proven update_record helper from dataverse_helper.py
             update_data = {"crc6f_hoursworked": hours_worked, "crc6f_workdescription": description}
             print(f"[TEAM_TS_EDIT] Updating {dv_id} with {update_data}")
-            update_record(ENTITY, dv_id, update_data)
-            print(f"[TEAM_TS_EDIT] Updated OK")
-        else:
+            try:
+                update_record(ENTITY, dv_id, update_data)
+                print(f"[TEAM_TS_EDIT] Updated OK")
+            except Exception as update_err:
+                # Fallback to create if update fails (stale/invalid id, transient Dataverse error)
+                print(f"[TEAM_TS_EDIT] Update failed for {dv_id}, falling back to create: {update_err}")
+                dv_id = None
+
+        if not dv_id:
             # Use proven create_record helper from dataverse_helper.py
             create_data = {
                 "crc6f_employeeid": employee_id,

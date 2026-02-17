@@ -43,9 +43,13 @@ def create_record(entity_name, data):
     }
     response = requests.post(url, headers=headers, json=data)
     if response.status_code in (200, 201):
-        return response.json()
-    else:
-        raise Exception(f"Error creating record: {response.status_code} - {response.text}")
+        try:
+            return response.json()
+        except Exception:
+            return {}
+    if response.status_code == 204:
+        return {}
+    raise Exception(f"Error creating record: {response.status_code} - {response.text}")
 
 
 def get_record(entity_name, record_id):
@@ -93,7 +97,7 @@ def update_record(entity_name, record_id, data):
         "If-Match": "*"
     }
     response = requests.patch(url, headers=headers, json=data)
-    if response.status_code in (204, 1223):
+    if response.status_code in (200, 204, 1223):
         return True
     else:
         raise Exception(f"Error updating record: {response.status_code} - {response.text}")
@@ -110,7 +114,7 @@ def update_record_by_alt_key(entity_name, alt_key_value, data, alt_key_field="cr
         "If-Match": "*"
     }
     response = requests.patch(url, headers=headers, json=data)
-    if response.status_code in (204, 1223):
+    if response.status_code in (200, 204, 1223):
         return True
     else:
         raise Exception(f"Error updating record by alt key: {response.status_code} - {response.text}")
