@@ -474,6 +474,8 @@ const saveEditedAllocation = async () => {
     const casualLeave = Number(document.getElementById('edit-casual-leave-display')?.value || 0);
     const sickLeave = Number(document.getElementById('edit-sick-leave-display')?.value || 0);
 
+    console.log(`💾 Saving allocation for ${employeeId}: CL=${casualLeave}, SL=${sickLeave}`);
+
     try {
         const response = await fetch(`${API_BASE}/employee-leave-allocation/${employeeId}`, {
             method: 'PUT',
@@ -487,16 +489,22 @@ const saveEditedAllocation = async () => {
         });
 
         const result = await response.json();
+        console.log(`📥 API response for ${employeeId}:`, result);
 
         if (result.success) {
-            alert(`✅ Leave allocation updated successfully for ${employeeId}`);
+            // Close modal FIRST (before any alert or re-render)
             closeEditModal();
+
             // Invalidate employee cache so the re-render fetches fresh data
             try { if (state?.cache?.employees) state.cache.employees = {}; } catch { }
-            // Add a small delay to ensure database transaction completes
-            await new Promise(resolve => setTimeout(resolve, 1000));
-            // Re-render the page to show updated data
+
+            // Wait for Dataverse to propagate the update
+            await new Promise(resolve => setTimeout(resolve, 1500));
+
+            // Full page re-render with fresh data from API
+            console.log(`🔄 Re-rendering leave settings page after update for ${employeeId}...`);
             await renderLeaveSettingsPage();
+            console.log(`✅ Re-render complete for ${employeeId}`);
         } else {
             alert(`❌ Error: ${result.error || 'Failed to update leave allocation'}`);
         }
