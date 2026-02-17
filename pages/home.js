@@ -302,7 +302,7 @@ const fetchPeopleOnLeave = async (employees = []) => {
     const limited = sourceEmployees.slice(0, 50);
     const ids = limited
         .map(emp => String(emp.employee_id || emp.id || '').toUpperCase())
-        .filter(id => id); // Include current user's leave too
+        .filter(id => id && id !== currentEmpId);
 
     // Prefer aggregated endpoint; fallback to per-employee fetch if it fails
     try {
@@ -323,13 +323,12 @@ const fetchPeopleOnLeave = async (employees = []) => {
     const results = [];
     for (const emp of limited) {
         const empId = String(emp.employee_id || emp.id || '').toUpperCase();
-        if (!empId) continue;
+        if (!empId || empId === currentEmpId) continue;
         try {
             const leaves = await fetchEmployeeLeaves(empId);
             const activeLeave = leaves.find(leave => {
                 const status = String(leave.status || '').toLowerCase();
-                // Include both approved and pending leaves for today
-                if (status !== 'approved' && status !== 'pending') return false;
+                if (status !== 'approved') return false;
                 const start = leave.start_date || leave.crc6f_startdate;
                 const end = leave.end_date || leave.crc6f_enddate || start;
                 return start && end && start <= today && end >= today;
@@ -487,15 +486,15 @@ const buildDashboardLayout = (data) => {
                     </header>
                     <div class="user-scoreboard-body scoreboard-loading">
                         <div class="scoreboard-row">
-                            <span class="scoreboard-label">Leave balance</span>
+                            <span class="scoreboard-label">Projects completed</span>
                             <span class="scoreboard-value" data-score-id="projects-completed">--</span>
                         </div>
                         <div class="scoreboard-row">
-                            <span class="scoreboard-label">Days present</span>
+                            <span class="scoreboard-label">Projects contributed</span>
                             <span class="scoreboard-value" data-score-id="projects-contributed">--</span>
                         </div>
                         <div class="scoreboard-row">
-                            <span class="scoreboard-label">Hours worked</span>
+                            <span class="scoreboard-label">Total hours logged</span>
                             <span class="scoreboard-value" data-score-id="hours-logged">--</span>
                         </div>
                         <div class="scoreboard-row">
@@ -504,7 +503,7 @@ const buildDashboardLayout = (data) => {
                         </div>
                         <div class="scoreboard-active">
                             <div class="scoreboard-active-header">
-                                <span class="scoreboard-label">Today's status</span>
+                                <span class="scoreboard-label">Active project</span>
                                 <span class="scoreboard-active-status">
                                     <span class="scoreboard-active-dot"></span>
                                     <span data-score-id="active-status-text">Loading…</span>
@@ -655,58 +654,46 @@ const hydrateUserScoreboard = async (data) => {
         const endDate = today.toISOString().slice(0, 10);
         const startDate = `${today.getFullYear()}-01-01`;
 
-        // Fetch alternative metrics that exist in the system
-        const [leaveBalance, attendanceSummary, currentMonthAttendance] = await Promise.all([
+        const [tasks, logs, projects] = await Promise.all([
             (async () => {
-                if (!empId) return { total: 0 };
+                if (!empId) return [];
                 try {
-                    const { fetchAllLeaveBalances } = await import('../features/leaveApi.js');
-                    const balances = await fetchAllLeaveBalances(empId);
-                    return balances.reduce((acc, bal) => ({
-                        casual: acc.casual + (bal.casual_leave || 0),
-                        sick: acc.sick + (bal.sick_leave || 0),
-                        total: acc.total + (bal.total || 0)
-                    }), { casual: 0, sick: 0, total: 0 });
+                    const params = new URLSearchParams();
+                    params.set('user_id', empId);
+                    if (empName) params.set('user_name', empName);
+                    if (email) params.set('user_email', email);
+                    const res = await fetch(`${API}/my-tasks?${params.toString()}`);
+                    const json = await res.json().catch(() => ({}));
+                    return res.ok && json.success && Array.isArray(json.tasks) ? json.tasks : [];
                 } catch {
-                    return { casual: 0, sick: 0, total: 0 };
-                }
-            })(),
-            (async () => {
-                if (!empId) return { present: 0, half: 0, absent: 0 };
-                try {
-                    const { fetchMonthlyAttendance } = await import('../features/attendanceApi.js');
-                    const records = await fetchMonthlyAttendance(empId, currentYear, currentMonth);
-                    return records.reduce((acc, rec) => {
-                        const status = (rec.status || '').toLowerCase();
-                        if (status === 'present') acc.present++;
-                        else if (status === 'half') acc.half++;
-                        else acc.absent++;
-                        return acc;
-                    }, { present: 0, half: 0, absent: 0 });
-                } catch {
-                    return { present: 0, half: 0, absent: 0 };
+                    return [];
                 }
             })(),
             (async () => {
                 if (!empId) return [];
                 try {
-                    const { fetchMonthlyAttendance } = await import('../features/attendanceApi.js');
-                    return await fetchMonthlyAttendance(empId, currentYear, currentMonth);
+                    const url = `${API}/time-tracker/logs?employee_id=${encodeURIComponent(empId)}&start_date=${startDate}&end_date=${endDate}`;
+                    const res = await fetch(url);
+                    const json = await res.json().catch(() => ({}));
+                    return res.ok && json.success && Array.isArray(json.logs) ? json.logs : [];
                 } catch {
                     return [];
                 }
-            })()
+            })(),
+            (async () => {
+                if (!empId) return [];
+                try {
+                    const url = `${API}/employees/${encodeURIComponent(empId)}/projects`;
+                    const res = await fetch(url);
+                    const json = await res.json().catch(() => ({}));
+                    return res.ok && json.success && Array.isArray(json.projects) ? json.projects : [];
+                } catch {
+                    return [];
+                }
+            })(),
         ]);
 
-        // Calculate metrics from available data
-        const totalSeconds = currentMonthAttendance.reduce((sum, rec) => {
-            if (rec.checkIn && rec.checkOut) {
-                const [h1, m1] = rec.checkIn.split(':').map(Number);
-                const [h2, m2] = rec.checkOut.split(':').map(Number);
-                return sum + ((h2 * 60 + m2) - (h1 * 60 + m1)) * 60;
-            }
-            return sum;
-        }, 0);
+        const totalSeconds = (logs || []).reduce((sum, log) => sum + Number(log.seconds || 0), 0);
         const totalHours = totalSeconds / 3600;
 
         let daysEmployed = 0;
@@ -720,19 +707,40 @@ const hydrateUserScoreboard = async (data) => {
             }
         }
 
-        // Use available metrics instead of non-existent project/task data
-        const leaveBalanceTotal = leaveBalance.total || 0;
-        const attendanceDays = (attendanceSummary.present || 0) + (attendanceSummary.half || 0) * 0.5;
-        const projectsContributed = Math.floor(attendanceDays); // Days present as contributed days
-        const projectsCompleted = Math.floor(leaveBalance.casual || 0); // Leave taken as completed projects
+        const allTasks = tasks || [];
+        const completedTasks = allTasks.filter(
+            (t) => String(t.task_status || '').toLowerCase() === 'completed'
+        );
+        const projectRows = Array.isArray(projects) ? projects : [];
 
-        // Show current status based on today's attendance
-        const todayStr = today.toISOString().slice(0, 10);
-        const todayAttendance = currentMonthAttendance.find(rec => rec.date === todayStr);
-        const activeProjectName = todayAttendance 
-            ? (todayAttendance.checkIn ? 'At Work' : 'Not Checked In')
-            : 'No Data for Today';
-        const activePercent = todayAttendance?.checkIn ? 60 : 0;
+        const projectsContributed = projectRows.length || new Set(
+            (tasks || [])
+                .map((t) => t.project_id || t.project || t.project_name || '')
+                .filter(Boolean)
+        ).size;
+
+        const projectsCompleted = projectRows.filter(
+            (p) => String(p.project_status || '').toLowerCase() === 'completed'
+        ).length;
+
+        // Prefer project status for active; fallback to tasks in progress
+        const activeProject =
+            projectRows.find(
+                (p) => String(p.project_status || '').toLowerCase() === 'in progress'
+            ) || null;
+
+        const activeTask =
+            allTasks.find(
+                (t) => String(t.task_status || '').toLowerCase() === 'in progress'
+            ) || null;
+
+        const activeProjectName =
+            (activeProject && (activeProject.project_name || activeProject.project_id)) ||
+            (activeTask &&
+                (activeTask.project_name || activeTask.project_id || activeTask.task_name)) ||
+            'No active project';
+
+        const activePercent = activeProject || activeTask ? 60 : 0;
 
         const animateNumber = (el, target, opts = {}) => {
             if (!el) return;
@@ -782,11 +790,11 @@ const hydrateUserScoreboard = async (data) => {
 
         if (activeNameEl) activeNameEl.textContent = activeProjectName;
         if (activeStatusTextEl) {
-            if (todayAttendance?.checkIn) {
-                activeStatusTextEl.textContent = 'Checked In';
+            if (activeTask) {
+                activeStatusTextEl.textContent = 'In progress';
                 card.classList.add('scoreboard-has-active');
             } else {
-                activeStatusTextEl.textContent = 'Not Checked In';
+                activeStatusTextEl.textContent = 'Idle';
                 card.classList.remove('scoreboard-has-active');
             }
         }
