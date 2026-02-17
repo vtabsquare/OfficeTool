@@ -275,78 +275,105 @@ def set_exact_log():
         task_guid = (b.get("task_guid") or "").strip()
         task_id = (b.get("task_id") or "").strip()
         work_date = (b.get("work_date") or "").strip()
-        seconds = int(b.get("seconds") or 0)
         description = (b.get("description") or "").strip()
         role = (b.get("role") or "l1").lower()
         editor_id = (b.get("editor_id") or "").strip()
 
+        try:
+            seconds = int(float(b.get("seconds", 0)))
+        except (ValueError, TypeError):
+            seconds = 0
+
+        print(f"[TEAM_TS_EDIT] Request: emp={employee_id} date={work_date} secs={seconds} task_guid={task_guid} task_id={task_id} project={project_id} role={role}")
+
         if not employee_id or not work_date or seconds < 0:
             return jsonify({"success": False, "error": "employee_id, work_date required; seconds>=0"}), 400
-        # Only L2/L3 allowed to perform manual edits
         if role == "l1":
             return jsonify({"success": False, "error": "forbidden"}), 403
 
-        token = get_access_token()
-        headers = {
+        try:
+            token = get_access_token()
+        except Exception as tok_err:
+            print(f"[ERROR] get_access_token failed: {tok_err}")
+            return jsonify({"success": False, "error": f"Auth token error: {tok_err}"}), 500
+
+        read_headers = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json",
+            "OData-Version": "4.0",
+        }
+        write_headers = {
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
             "Accept": "application/json",
             "OData-Version": "4.0",
+            "If-Match": "*",
         }
         hours_worked = round(seconds / 3600, 2)
 
-        # Query Dataverse directly for existing record matching employee+task+date
+        # Query Dataverse directly for existing record matching employee+date
         safe_emp = employee_id.replace("'", "''")
         safe_date = work_date.replace("'", "''")
         task_key = task_guid or task_id
         dv_id = None
 
-        if task_key:
-            safe_task = task_key.replace("'", "''")
-            if task_guid:
-                task_filter = f"crc6f_taskguid eq '{safe_task}'"
+        try:
+            filter_q = f"crc6f_employeeid eq '{safe_emp}' and crc6f_workdate ge '{safe_date}' and crc6f_workdate le '{safe_date}'"
+            search_url = f"{RESOURCE}{DV_API}/crc6f_hr_timesheetlogs?$filter={filter_q}&$top=50"
+            print(f"[TEAM_TS_EDIT] Searching: {search_url}")
+            search_resp = requests.get(search_url, headers=read_headers, timeout=30)
+            print(f"[TEAM_TS_EDIT] Search status: {search_resp.status_code}")
+
+            if search_resp.status_code == 200:
+                existing = search_resp.json().get("value", [])
+                print(f"[TEAM_TS_EDIT] Found {len(existing)} records for {safe_emp} on {safe_date}")
+                # Match by task if we have a task key
+                if task_key and existing:
+                    for rec in existing:
+                        rec_task = rec.get("crc6f_taskguid") or rec.get("crc6f_taskid") or ""
+                        if rec_task == task_key:
+                            dv_id = rec.get("crc6f_hr_timesheetlogid")
+                            print(f"[TEAM_TS_EDIT] Matched by task: {dv_id}")
+                            break
+                # If no task match but we have records, use the first one
+                if not dv_id and existing:
+                    dv_id = existing[0].get("crc6f_hr_timesheetlogid")
+                    print(f"[TEAM_TS_EDIT] Using first record: {dv_id}")
             else:
-                task_filter = f"crc6f_taskid eq '{safe_task}'"
-            filter_q = f"crc6f_employeeid eq '{safe_emp}' and crc6f_workdate eq '{safe_date}' and {task_filter}"
-        else:
-            filter_q = f"crc6f_employeeid eq '{safe_emp}' and crc6f_workdate eq '{safe_date}'"
-
-        search_url = f"{RESOURCE}{DV_API}/crc6f_hr_timesheetlogs?$filter={filter_q}&$top=1"
-        print(f"[TEAM_TS_EDIT] Searching Dataverse: {search_url}")
-        search_resp = requests.get(search_url, headers=headers, timeout=30)
-
-        if search_resp.status_code == 200:
-            existing = search_resp.json().get("value", [])
-            if existing:
-                dv_id = existing[0].get("crc6f_hr_timesheetlogid")
-                print(f"[TEAM_TS_EDIT] Found existing record: {dv_id}")
+                print(f"[TEAM_TS_EDIT] Search failed: {search_resp.status_code} - {search_resp.text[:300]}")
+        except Exception as search_err:
+            print(f"[TEAM_TS_EDIT] Search error (will create new): {search_err}")
 
         if dv_id:
-            # Update existing record in Dataverse
             patch_url = f"{RESOURCE}{DV_API}/crc6f_hr_timesheetlogs({dv_id})"
-            payload = {"crc6f_hoursworked": hours_worked, "crc6f_workdescription": description}
-            print(f"[TEAM_TS_EDIT] PATCH {patch_url} with {payload}")
-            dv_resp = requests.patch(patch_url, headers=headers, json=payload, timeout=30)
+            payload = {
+                "crc6f_hoursworked": hours_worked,
+                "crc6f_workdescription": description,
+            }
+            print(f"[TEAM_TS_EDIT] PATCH {patch_url} payload={payload}")
+            dv_resp = requests.patch(patch_url, headers=write_headers, json=payload, timeout=30)
+            print(f"[TEAM_TS_EDIT] PATCH status: {dv_resp.status_code}")
             if dv_resp.status_code not in (200, 204):
                 error_msg = f"Dataverse PATCH failed: {dv_resp.status_code} - {dv_resp.text[:300]}"
                 print(f"[ERROR] {error_msg}")
                 return jsonify({"success": False, "error": error_msg}), 500
-            print(f"[TEAM_TS_EDIT] Successfully updated record {dv_id}")
+            print(f"[TEAM_TS_EDIT] Updated record {dv_id}")
         else:
-            # Create new record in Dataverse
             post_url = f"{RESOURCE}{DV_API}/crc6f_hr_timesheetlogs"
             payload = {
                 "crc6f_employeeid": employee_id,
                 "crc6f_projectid": project_id,
                 "crc6f_taskid": task_id,
-                "crc6f_taskguid": task_guid or None,
-                "crc6f_workdate": work_date,
-                "crc6f_hoursworked": hours_worked,
-                "crc6f_workdescription": description,
-                "crc6f_approvalstatus": "Pending",
             }
-            print(f"[TEAM_TS_EDIT] POST {post_url} with {payload}")
-            dv_resp = requests.post(post_url, headers=headers, json=payload, timeout=30)
+            if task_guid:
+                payload["crc6f_taskguid"] = task_guid
+            payload["crc6f_workdate"] = work_date
+            payload["crc6f_hoursworked"] = hours_worked
+            payload["crc6f_workdescription"] = description
+            payload["crc6f_approvalstatus"] = "Pending"
+            print(f"[TEAM_TS_EDIT] POST {post_url} payload={payload}")
+            dv_resp = requests.post(post_url, headers=write_headers, json=payload, timeout=30)
+            print(f"[TEAM_TS_EDIT] POST status: {dv_resp.status_code}")
             if dv_resp.status_code not in (200, 201, 204):
                 error_msg = f"Dataverse POST failed: {dv_resp.status_code} - {dv_resp.text[:300]}"
                 print(f"[ERROR] {error_msg}")
@@ -357,7 +384,7 @@ def set_exact_log():
                     dv_id = ent.split('(')[-1].strip(')')
             except Exception:
                 pass
-            print(f"[TEAM_TS_EDIT] Successfully created record {dv_id}")
+            print(f"[TEAM_TS_EDIT] Created record {dv_id}")
 
         return jsonify({
             "success": True,
@@ -373,7 +400,9 @@ def set_exact_log():
             }
         }), 200
     except Exception as e:
-        print(f"[ERROR] set_exact_log failed: {e}")
+        import traceback
+        tb = traceback.format_exc()
+        print(f"[ERROR] set_exact_log failed: {e}\n{tb}")
         return jsonify({"success": False, "error": str(e)}), 500
 
 
