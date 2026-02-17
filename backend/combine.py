@@ -271,7 +271,7 @@ def on_leave_today():
 
         date_filter = (f"{FIELD_START_DATE} le '{today}' and "
                        f"{FIELD_END_DATE} ge '{today}' and "
-                       f"crc6f_status eq 'Approved'")
+                       f"(crc6f_status eq 'Approved' or crc6f_status eq 'Pending')")
         emp_filter = _build_in_filter("crc6f_employeeid", ids_list)
         filter_parts = [date_filter]
         if emp_filter:

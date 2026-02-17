@@ -1425,6 +1425,17 @@ export const handleApplyLeave = async (e) => {
 
       // Clear the cached leaves to force a fresh fetch
       state.leaves = [];
+      
+      // Clear homepage cache to update "On Leave Today" immediately
+      try {
+        const { clearCacheByPrefix } = await import('../features/cache.js');
+        clearCacheByPrefix('employees_list');
+        clearCacheByPrefix('on_leave_today');
+        clearCacheByPrefix('pending_leaves');
+        console.log('✅ Cleared homepage caches after leave application');
+      } catch (err) {
+        console.warn('⚠️ Failed to clear homepage caches:', err);
+      }
 
       // Wait for Dataverse to process and index the new record
       console.log("⏳ Waiting for Dataverse to process the new record...");
