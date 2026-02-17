@@ -845,7 +845,9 @@ FIELD_DURATION = "crc6f_duration"
 FIELD_DURATION_INTEXT = "crc6f_duration_intext"
 FIELD_ATTENDANCE_ID_CUSTOM = "crc6f_attendanceid"
 FIELD_RECORD_ID = "crc6f_table13id"
-FIELD_STATUS = "crc6f_status"
+# Optional: some environments do not have a status column on attendance entity.
+# Keep empty by default to avoid invalid-property update failures.
+FIELD_STATUS = (os.getenv("ATTENDANCE_STATUS_FIELD") or "").strip()
 
 # ================== LEAVE TRACKER CONFIGURATION ==================
 LEAVE_ENTITY = "crc6f_table14s"
@@ -4826,7 +4828,7 @@ def get_monthly_attendance(employee_id, year, month):
             effective_hours = augmented_hours if augmented_hours > duration_hours else duration_hours
 
             # Prefer persisted manual/status field; fallback to hour-based classification
-            persisted_status = (r.get(FIELD_STATUS) or "").strip().upper()
+            persisted_status = (r.get(FIELD_STATUS) or "").strip().upper() if FIELD_STATUS else ""
             if persisted_status == "H":
                 persisted_status = "HL"
             if persisted_status in ("P", "HL", "A", "CL", "SL", "CO", "INL"):
@@ -5063,10 +5065,11 @@ def manual_edit_attendance():
         payload = {
             FIELD_DURATION: str(int(duration_hours)),
             FIELD_DURATION_INTEXT: f"{int(duration_hours)} hour(s) 0 minute(s) [MANUAL]",
-            FIELD_STATUS: canonical_code,
             FIELD_CHECKIN: checkin_val,
             FIELD_CHECKOUT: checkout_val,
         }
+        if FIELD_STATUS:
+            payload[FIELD_STATUS] = canonical_code
 
         if record_id:
             print(f"[ATT_EDIT] Updating record {record_id} with payload: {payload}")
@@ -5080,8 +5083,9 @@ def manual_edit_attendance():
                 FIELD_ATTENDANCE_ID_CUSTOM: new_att_id,
                 FIELD_DURATION: str(int(duration_hours)),
                 FIELD_DURATION_INTEXT: f"{int(duration_hours)} hour(s) 0 minute(s) [MANUAL]",
-                FIELD_STATUS: canonical_code,
             }
+            if FIELD_STATUS:
+                create_payload[FIELD_STATUS] = canonical_code
             if checkin_val is not None:
                 create_payload[FIELD_CHECKIN] = checkin_val
             if checkout_val is not None:

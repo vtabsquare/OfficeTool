@@ -280,6 +280,8 @@ def set_exact_log():
         role = (b.get("role") or "l1").lower()
         editor_id = (b.get("editor_id") or "").strip()
         dv_id = (b.get("dv_id") or "").strip() or None
+        if dv_id:
+            dv_id = dv_id.strip("{}")
 
         try:
             seconds = int(float(b.get("seconds", 0)))
@@ -294,6 +296,7 @@ def set_exact_log():
             return jsonify({"success": False, "error": "forbidden"}), 403
 
         hours_worked = round(seconds / 3600, 2)
+        hours_worked_str = str(hours_worked)
 
         # If no dv_id from frontend, search Dataverse for existing record
         if not dv_id:
@@ -307,26 +310,50 @@ def set_exact_log():
                 print(f"[TEAM_TS_EDIT] Searching: {url}")
                 resp = requests.get(url, headers=headers, timeout=30)
                 print(f"[TEAM_TS_EDIT] Search status: {resp.status_code}")
+                rows = []
                 if resp.status_code == 200:
                     rows = resp.json().get("value", [])
                     print(f"[TEAM_TS_EDIT] Found {len(rows)} records")
-                    task_key = task_guid or task_id
-                    if task_key and rows:
-                        for r in rows:
-                            if (r.get("crc6f_taskguid") or r.get("crc6f_taskid") or "") == task_key:
-                                dv_id = r.get("crc6f_hr_timesheetlogid")
-                                break
-                    if not dv_id and rows:
-                        dv_id = rows[0].get("crc6f_hr_timesheetlogid")
-                    print(f"[TEAM_TS_EDIT] Resolved dv_id: {dv_id}")
                 else:
                     print(f"[TEAM_TS_EDIT] Search failed: {resp.status_code} {resp.text[:200]}")
+                # DateTime fallback in case workdate stores timestamp
+                if not rows:
+                    try:
+                        d0 = datetime.strptime(work_date, "%Y-%m-%d")
+                        d1 = d0 + timedelta(days=1)
+                        start_iso = d0.strftime("%Y-%m-%dT00:00:00Z")
+                        end_iso = d1.strftime("%Y-%m-%dT00:00:00Z")
+                        fq2 = (
+                            f"crc6f_employeeid eq '{safe_emp}' and "
+                            f"crc6f_workdate ge '{start_iso}' and crc6f_workdate lt '{end_iso}'"
+                        )
+                        url2 = f"{RESOURCE}/api/data/v9.2/{ENTITY}?$filter={fq2}&$top=50"
+                        print(f"[TEAM_TS_EDIT] DateTime fallback search: {url2}")
+                        resp2 = requests.get(url2, headers=headers, timeout=30)
+                        if resp2.status_code == 200:
+                            rows = resp2.json().get("value", [])
+                            print(f"[TEAM_TS_EDIT] DateTime fallback found {len(rows)} records")
+                    except Exception as dt_err:
+                        print(f"[TEAM_TS_EDIT] DateTime fallback error: {dt_err}")
+
+                task_key = (task_guid or task_id or "").strip()
+                if task_key and rows:
+                    for r in rows:
+                        row_task_key = (r.get("crc6f_taskguid") or r.get("crc6f_taskid") or "").strip()
+                        if row_task_key == task_key:
+                            dv_id = (r.get("crc6f_hr_timesheetlogid") or "").strip() or None
+                            break
+                if not dv_id and rows:
+                    dv_id = (rows[0].get("crc6f_hr_timesheetlogid") or "").strip() or None
+                if dv_id:
+                    dv_id = dv_id.strip("{}")
+                print(f"[TEAM_TS_EDIT] Resolved dv_id: {dv_id}")
             except Exception as se:
                 print(f"[TEAM_TS_EDIT] Search error: {se}")
 
         if dv_id:
             # Use proven update_record helper from dataverse_helper.py
-            update_data = {"crc6f_hoursworked": hours_worked, "crc6f_workdescription": description}
+            update_data = {"crc6f_hoursworked": hours_worked_str, "crc6f_workdescription": description}
             print(f"[TEAM_TS_EDIT] Updating {dv_id} with {update_data}")
             try:
                 update_record(ENTITY, dv_id, update_data)
@@ -340,17 +367,25 @@ def set_exact_log():
             # Use proven create_record helper from dataverse_helper.py
             create_data = {
                 "crc6f_employeeid": employee_id,
-                "crc6f_projectid": project_id,
-                "crc6f_taskid": task_id,
                 "crc6f_workdate": work_date,
-                "crc6f_hoursworked": hours_worked,
+                "crc6f_hoursworked": hours_worked_str,
                 "crc6f_workdescription": description,
                 "crc6f_approvalstatus": "Pending",
             }
+            if project_id:
+                create_data["crc6f_projectid"] = project_id
+            if task_id:
+                create_data["crc6f_taskid"] = task_id
             if task_guid:
                 create_data["crc6f_taskguid"] = task_guid
             print(f"[TEAM_TS_EDIT] Creating new record: {create_data}")
-            created = create_record(ENTITY, create_data)
+            try:
+                created = create_record(ENTITY, create_data)
+            except Exception as create_err:
+                # Some environments may reject approval field format; retry without it
+                print(f"[TEAM_TS_EDIT] Create with approvalstatus failed, retrying without approvalstatus: {create_err}")
+                create_data.pop("crc6f_approvalstatus", None)
+                created = create_record(ENTITY, create_data)
             dv_id = created.get("crc6f_hr_timesheetlogid")
             print(f"[TEAM_TS_EDIT] Created OK: {dv_id}")
 
@@ -370,6 +405,9 @@ def set_exact_log():
     except Exception as e:
         tb = traceback.format_exc()
         print(f"[ERROR] set_exact_log: {e}\n{tb}")
+        msg = str(e)
+        if "Error updating record:" in msg or "Error creating record:" in msg:
+            return jsonify({"success": False, "error": msg}), 400
         return jsonify({"success": False, "error": str(e)}), 500
 
 
