@@ -297,6 +297,10 @@ def set_exact_log():
 
         hours_worked = round(seconds / 3600, 2)
         hours_worked_str = str(hours_worked)
+        manual_marker = "[MANUAL]"
+        desc_for_save = description
+        if manual_marker not in desc_for_save:
+            desc_for_save = f"{desc_for_save} {manual_marker}".strip()
 
         # If no dv_id from frontend, search Dataverse for existing record
         if not dv_id:
@@ -353,7 +357,7 @@ def set_exact_log():
 
         if dv_id:
             # Use proven update_record helper from dataverse_helper.py
-            update_data = {"crc6f_hoursworked": hours_worked_str, "crc6f_workdescription": description}
+            update_data = {"crc6f_hoursworked": hours_worked_str, "crc6f_workdescription": desc_for_save}
             print(f"[TEAM_TS_EDIT] Updating {dv_id} with {update_data}")
             try:
                 update_record(ENTITY, dv_id, update_data)
@@ -369,7 +373,7 @@ def set_exact_log():
                 "crc6f_employeeid": employee_id,
                 "crc6f_workdate": work_date,
                 "crc6f_hoursworked": hours_worked_str,
-                "crc6f_workdescription": description,
+                "crc6f_workdescription": desc_for_save,
                 "crc6f_approvalstatus": "Pending",
             }
             if project_id:
@@ -400,6 +404,7 @@ def set_exact_log():
                 "seconds": seconds,
                 "description": description,
                 "dv_id": dv_id,
+                "manual": True,
             }
         }), 200
     except Exception as e:
@@ -845,19 +850,23 @@ def list_logs():
                     except:
                         pass
                 
+                raw_description = r.get("crc6f_workdescription", "") or ""
+                is_manual = "[MANUAL]" in raw_description
+                clean_description = raw_description.replace("[MANUAL]", "").strip()
+
                 log_entry = {
                     "id": r.get("crc6f_hr_timesheetlogid"),
                     "employee_id": r.get("crc6f_employeeid"),
                     "project_id": r.get("crc6f_projectid"),
                     "task_guid": r.get("crc6f_taskguid"),
                     "task_id": r.get("crc6f_taskid"),
-                    "task_name": r.get("crc6f_taskname") or r.get("crc6f_workdescription", "").split(" - ")[0] if r.get("crc6f_workdescription") else "",
+                    "task_name": r.get("crc6f_taskname") or clean_description.split(" - ")[0] if clean_description else "",
                     "seconds": int(float(r.get("crc6f_hoursworked", 0)) * 3600),  # Convert hours back to seconds
                     "work_date": work_date[:10] if work_date else "",  # Ensure YYYY-MM-DD format
-                    "description": r.get("crc6f_workdescription", ""),
+                    "description": clean_description,
                     "approval_status": r.get("crc6f_approvalstatus", "Pending"),
                     "created_at": r.get("createdon", ""),
-                    "manual": False,  # Default to false, can be enhanced later
+                    "manual": is_manual,
                 }
                 
                 # Apply additional date filtering in case Dataverse filtering didn't work

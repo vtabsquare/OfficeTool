@@ -104,7 +104,7 @@ const renderAttendanceTrackerPage = async (mode) => {
             <div class="status-cell status-${normalizedStatus.toLowerCase()}">
                 ${content}
                 ${isLate ? '<i class="fa-solid fa-clock-rotate-left late-icon" title="Late entry"></i>' : ''}
-                ${isManual ? '<i class="fa-solid fa-hand manual-icon" title="Manual entry"></i>' : ''}
+                ${isManual ? '<i class="fa-solid fa-users manual-icon" title="Manually edited by admin"></i>' : ''}
                 ${isPending ? '<i class="fa-solid fa-triangle-exclamation pending-icon" title="Pending"></i>' : ''}
                 ${pendingOverlay}
             </div>
@@ -1019,6 +1019,7 @@ export const renderMyAttendancePage = async () => {
                     checkIn: rec.checkIn,
                     checkOut: rec.checkOut,
                     duration: rec.duration,
+                    isManual: !!(rec.isManual || rec.is_manual),
                     leaveType: rec.leaveType,
                     compensationType: rec.paid_unpaid,
                     leaveStart: rec.leaveStart,
@@ -1130,6 +1131,7 @@ export const renderTeamAttendancePage = async () => {
                         checkIn: rec.checkIn,
                         checkOut: rec.checkOut,
                         duration: rec.duration,
+                        isManual: !!(rec.isManual || rec.is_manual),
                         leaveType: rec.leaveType,
                         compensationType: rec.paid_unpaid,
                         leaveStart: rec.leaveStart,

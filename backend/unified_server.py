@@ -4862,6 +4862,7 @@ def get_monthly_attendance(employee_id, year, month):
                 "duration": effective_hours,
                 "duration_text": duration_text,
                 "status": status,
+                "isManual": is_manual_override,
                 "liveAugmented": augmented_hours > duration_hours
             })
         
