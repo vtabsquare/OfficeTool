@@ -335,25 +335,40 @@ const saveEditedAllocationType = () => {
     } catch { }
 
     closeEditTypeModal();
+    // Invalidate employee cache so the employee table re-fetches fresh data
+    try { if (state?.cache?.employees) state.cache.employees = {}; } catch { }
     // Re-render page so both tables use updated configuration
     renderLeaveSettingsPage();
+};
+
+// Dynamically match CL/SL values to an allocation type from the live config
+const matchAllocationType = (cl, sl) => {
+    for (const t of allocationTypes) {
+        if (Number(t.casualLeave) === Number(cl) && Number(t.sickLeave) === Number(sl)) {
+            return t.type;
+        }
+    }
+    return 'Custom';
 };
 
 // Handle edit allocation
 const handleEditAllocation = async (employeeId, name, currentCL, currentSL, allocationType) => {
     console.log('✏️ Editing allocation for:', employeeId);
 
-    // Determine current allocation type based on CL and SL values
-    let currentType = 'Type 3'; // Default
-    if (currentCL === 6 && currentSL === 6) {
-        currentType = 'Type 1';
-    } else if (currentCL === 4 && currentSL === 4) {
-        currentType = 'Type 2';
-    } else if (currentCL === 3 && currentSL === 3) {
-        currentType = 'Type 3';
-    }
+    // Determine current allocation type dynamically from live config
+    const currentType = matchAllocationType(currentCL, currentSL);
 
     const total = currentCL + currentSL;
+
+    // Build dropdown options dynamically from allocationTypes config
+    const typeOptions = allocationTypes.map(t => {
+        const isSelected = t.type === currentType ? 'selected' : '';
+        return `<option value="${t.type}" ${isSelected}>${t.type} (${t.experience}+ years) - CL: ${t.casualLeave}, SL: ${t.sickLeave}</option>`;
+    }).join('');
+    // Add Custom option if current values don't match any type
+    const customOption = currentType === 'Custom'
+        ? `<option value="Custom" selected>Custom - CL: ${currentCL}, SL: ${currentSL}</option>`
+        : '';
 
     const formHTML = `
         <div class="modal-form modern-form leave-form">
@@ -373,9 +388,8 @@ const handleEditAllocation = async (employeeId, name, currentCL, currentSL, allo
                     <div class="form-field">
                         <label class="form-label" for="edit-allocation-type">Allocation Type</label>
                         <select id="edit-allocation-type" class="input-control" required onchange="window.updateAllocationTypeValues()">
-                            <option value="Type 1" ${currentType === 'Type 1' ? 'selected' : ''}>Type 1 (3+ years) - CL: 6, SL: 6</option>
-                            <option value="Type 2" ${currentType === 'Type 2' ? 'selected' : ''}>Type 2 (2+ years) - CL: 4, SL: 4</option>
-                            <option value="Type 3" ${currentType === 'Type 3' ? 'selected' : ''}>Type 3 (<2 years) - CL: 3, SL: 3</option>
+                            ${typeOptions}
+                            ${customOption}
                         </select>
                     </div>
                     <div class="form-field">
@@ -426,22 +440,21 @@ const handleEditAllocation = async (employeeId, name, currentCL, currentSL, allo
     }
 };
 
-// Update leave values when allocation type changes
+// Update leave values when allocation type changes (reads from live allocationTypes config)
 const updateAllocationTypeValues = () => {
     const typeSelect = document.getElementById('edit-allocation-type');
     const selectedType = typeSelect.value;
 
-    let cl = 3, sl = 3; // Default Type 3
-
-    if (selectedType === 'Type 1') {
-        cl = 6;
-        sl = 6;
-    } else if (selectedType === 'Type 2') {
-        cl = 4;
-        sl = 4;
-    } else if (selectedType === 'Type 3') {
-        cl = 3;
-        sl = 3;
+    // Look up values from the live allocationTypes config
+    const matched = allocationTypes.find(t => t.type === selectedType);
+    let cl, sl;
+    if (matched) {
+        cl = Number(matched.casualLeave);
+        sl = Number(matched.sickLeave);
+    } else {
+        // Custom type — keep current input values
+        cl = Number(document.getElementById('edit-casual-leave-display')?.value || 0);
+        sl = Number(document.getElementById('edit-sick-leave-display')?.value || 0);
     }
 
     const casualInput2 = document.getElementById('edit-casual-leave-display');
@@ -452,24 +465,14 @@ const updateAllocationTypeValues = () => {
     if (totalInput2) totalInput2.value = cl + sl;
 };
 
-// Save edited allocation
+// Save edited allocation (reads actual values from the displayed input fields)
 const saveEditedAllocation = async () => {
     const employeeId = document.getElementById('edit-employee-id').value;
-    const selectedType = document.getElementById('edit-allocation-type').value;
 
-    // Get CL and SL based on selected type
-    let casualLeave = 3, sickLeave = 3; // Default Type 3
-
-    if (selectedType === 'Type 1') {
-        casualLeave = 6;
-        sickLeave = 6;
-    } else if (selectedType === 'Type 2') {
-        casualLeave = 4;
-        sickLeave = 4;
-    } else if (selectedType === 'Type 3') {
-        casualLeave = 3;
-        sickLeave = 3;
-    }
+    // Read CL and SL directly from the displayed (readonly) input fields
+    // These are already kept in sync by updateAllocationTypeValues()
+    const casualLeave = Number(document.getElementById('edit-casual-leave-display')?.value || 0);
+    const sickLeave = Number(document.getElementById('edit-sick-leave-display')?.value || 0);
 
     try {
         const response = await fetch(`${API_BASE}/employee-leave-allocation/${employeeId}`, {
@@ -488,9 +491,9 @@ const saveEditedAllocation = async () => {
         if (result.success) {
             alert(`✅ Leave allocation updated successfully for ${employeeId}`);
             closeEditModal();
-            // Add a small delay to ensure database transaction completes
-            await new Promise(resolve => setTimeout(resolve, 500));
-            // Reload the page to show updated data
+            // Invalidate employee cache so the re-render fetches fresh data
+            try { if (state?.cache?.employees) state.cache.employees = {}; } catch { }
+            // Re-render the page to show updated data
             await renderLeaveSettingsPage();
         } else {
             alert(`❌ Error: ${result.error || 'Failed to update leave allocation'}`);
@@ -578,16 +581,8 @@ const renderEmployeeAllocationTable = async () => {
                 sickLeave = stored.sick_leave;
                 totalQuota = stored.total || (casualLeave + sickLeave);
                 
-                // Determine type based on stored values
-                if (casualLeave === 6 && sickLeave === 6) {
-                    allocationType = 'Type 1';
-                } else if (casualLeave === 4 && sickLeave === 4) {
-                    allocationType = 'Type 2';
-                } else if (casualLeave === 3 && sickLeave === 3) {
-                    allocationType = 'Type 3';
-                } else {
-                    allocationType = 'Custom';
-                }
+                // Determine type dynamically from live allocationTypes config
+                allocationType = matchAllocationType(casualLeave, sickLeave);
                 
                 console.log(`✓ ${empId}: Using stored allocation (${allocationType})`);
             } else {
