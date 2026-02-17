@@ -100,12 +100,16 @@ const renderAttendanceTrackerPage = async (mode) => {
             `
             : '';
 
+        const statusIcons = [
+            isLate ? '<i class="fa-solid fa-clock-rotate-left late-icon" title="Late entry"></i>' : '',
+            isManual ? '<i class="fa-solid fa-users manual-icon" title="Manually edited by admin"></i>' : '',
+            isPending ? '<i class="fa-solid fa-triangle-exclamation pending-icon" title="Pending"></i>' : ''
+        ].filter(Boolean).join('');
+
         return `
             <div class="status-cell status-${normalizedStatus.toLowerCase()}">
                 ${content}
-                ${isLate ? '<i class="fa-solid fa-clock-rotate-left late-icon" title="Late entry"></i>' : ''}
-                ${isManual ? '<i class="fa-solid fa-users manual-icon" title="Manually edited by admin"></i>' : ''}
-                ${isPending ? '<i class="fa-solid fa-triangle-exclamation pending-icon" title="Pending"></i>' : ''}
+                ${statusIcons ? `<div class="status-icons">${statusIcons}</div>` : ''}
                 ${pendingOverlay}
             </div>
         `;
