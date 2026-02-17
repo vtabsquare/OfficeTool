@@ -360,13 +360,17 @@ def set_exact_log():
                 if dv_resp.status_code in (200, 204):
                     rec["dv_id"] = dv_id
                 else:
-                    pass
+                    error_msg = f"Dataverse PATCH failed: {dv_resp.status_code} - {dv_resp.text[:200]}"
+                    print(f"[ERROR] {error_msg}")
+                    raise Exception(error_msg)
             else:
                 url = f"{RESOURCE}{DV_API}/crc6f_hr_timesheetlogs"
                 payload = {
                     "crc6f_employeeid": employee_id,
                     "crc6f_projectid": project_id,
                     "crc6f_taskid": task_id,
+                    "crc6f_taskguid": task_guid or None,
+                    "crc6f_workdate": work_date,
                     "crc6f_hoursworked": hours_worked,
                     "crc6f_workdescription": description,
                     "crc6f_approvalstatus": "Pending",
@@ -379,6 +383,10 @@ def set_exact_log():
                             rec["dv_id"] = ent.split('(')[-1].strip(')')
                     except Exception:
                         pass
+                else:
+                    error_msg = f"Dataverse POST failed: {dv_resp.status_code} - {dv_resp.text[:200]}"
+                    print(f"[ERROR] {error_msg}")
+                    raise Exception(error_msg)
         except Exception:
             pass
 
