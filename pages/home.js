@@ -302,7 +302,7 @@ const fetchPeopleOnLeave = async (employees = []) => {
     const limited = sourceEmployees.slice(0, 50);
     const ids = limited
         .map(emp => String(emp.employee_id || emp.id || '').toUpperCase())
-        .filter(id => id && id !== currentEmpId);
+        .filter(id => id); // Include current user's leave too
 
     // Prefer aggregated endpoint; fallback to per-employee fetch if it fails
     try {
@@ -323,12 +323,13 @@ const fetchPeopleOnLeave = async (employees = []) => {
     const results = [];
     for (const emp of limited) {
         const empId = String(emp.employee_id || emp.id || '').toUpperCase();
-        if (!empId || empId === currentEmpId) continue;
+        if (!empId) continue;
         try {
             const leaves = await fetchEmployeeLeaves(empId);
             const activeLeave = leaves.find(leave => {
                 const status = String(leave.status || '').toLowerCase();
-                if (status !== 'approved') return false;
+                // Include both approved and pending leaves for today
+                if (status !== 'approved' && status !== 'pending') return false;
                 const start = leave.start_date || leave.crc6f_startdate;
                 const end = leave.end_date || leave.crc6f_enddate || start;
                 return start && end && start <= today && end >= today;
