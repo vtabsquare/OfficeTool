@@ -5249,6 +5249,7 @@ def apply_leave():
                     "crc6f_totaldays": str(int(paid_days)),
                     "crc6f_employeeid": applied_by,
                     "crc6f_approvedby": "",
+                    "crc6f_reason": reason or "",
                 }
                 print(f"📦 Dataverse Record Data (Paid): {record_data_paid}")
                 created_paid = create_record(LEAVE_ENTITY, record_data_paid)
@@ -5273,6 +5274,7 @@ def apply_leave():
                     "crc6f_totaldays": str(int(unpaid_days)),
                     "crc6f_employeeid": applied_by,
                     "crc6f_approvedby": "",
+                    "crc6f_reason": reason or "",
                 }
                 print(f"📦 Dataverse Record Data (Unpaid): {record_data_unpaid}")
                 created_unpaid = create_record(LEAVE_ENTITY, record_data_unpaid)
@@ -5348,6 +5350,7 @@ def apply_leave():
             "crc6f_totaldays": str(leave_days),
             "crc6f_employeeid": applied_by,
             "crc6f_approvedby": "",
+            "crc6f_reason": reason or "",
         }
 
         print(f"📦 Dataverse Record Data: {record_data}")
@@ -5519,6 +5522,7 @@ def get_employee_leaves(employee_id):
                 "status": r.get("crc6f_status"),
                 "approved_by": r.get("crc6f_approvedby"),
                 "rejection_reason": r.get("crc6f_rejectionreason"),
+                "reason": r.get("crc6f_reason", ""),
                 "employee_id": r.get("crc6f_employeeid")
             })
         
@@ -6777,6 +6781,7 @@ def get_pending_leaves():
                 "paid_unpaid": r.get("crc6f_paidunpaid"),
                 "approved_by": r.get("crc6f_approvedby"),
                 "rejection_reason": r.get("crc6f_rejectionreason"),
+                "reason": r.get("crc6f_reason", ""),
                 "employee_id": r.get("crc6f_employeeid")
             })
         
