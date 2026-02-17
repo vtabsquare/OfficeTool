@@ -38,6 +38,10 @@ let allocationTypes = [...LEAVE_ALLOCATION_TYPES];
 
 const ALLOCATION_TYPES_STORAGE_KEY = 'leave_allocation_types_v1';
 
+// Optimistic update overrides — stores recently saved allocation values
+// that may not yet be reflected in Dataverse GET responses (eventual consistency).
+const pendingAllocationOverrides = {};
+
 try {
     const raw = localStorage.getItem(ALLOCATION_TYPES_STORAGE_KEY);
     if (raw) {
@@ -495,13 +499,21 @@ const saveEditedAllocation = async () => {
             // Close modal FIRST (before any alert or re-render)
             closeEditModal();
 
+            // Store optimistic override so the table shows correct values
+            // even if Dataverse GET still returns stale data
+            const empKey = (employeeId || '').trim().toUpperCase();
+            pendingAllocationOverrides[empKey] = {
+                casual_leave: casualLeave,
+                sick_leave: sickLeave,
+                total: casualLeave + sickLeave,
+                timestamp: Date.now()
+            };
+            console.log(`📌 Stored optimistic override for ${empKey}:`, pendingAllocationOverrides[empKey]);
+
             // Invalidate employee cache so the re-render fetches fresh data
             try { if (state?.cache?.employees) state.cache.employees = {}; } catch { }
 
-            // Wait for Dataverse to propagate the update
-            await new Promise(resolve => setTimeout(resolve, 1500));
-
-            // Full page re-render with fresh data from API
+            // Full page re-render (will use optimistic overrides for recently saved employees)
             console.log(`🔄 Re-rendering leave settings page after update for ${employeeId}...`);
             await renderLeaveSettingsPage();
             console.log(`✅ Re-render complete for ${employeeId}`);
@@ -589,10 +601,28 @@ const renderEmployeeAllocationTable = async () => {
                         storedAllocations[empId?.toUpperCase()] || 
                         storedAllocations[empId?.trim()];
             
+            // Apply optimistic overrides for recently saved employees
+            // These take priority over stale Dataverse data
+            const overrideKey = (empId || '').trim().toUpperCase();
+            const override = pendingAllocationOverrides[overrideKey];
+            if (override) {
+                console.log(`📌 Applying optimistic override for ${empId}: CL=${override.casual_leave}, SL=${override.sick_leave}`);
+                stored = {
+                    ...(stored || {}),
+                    casual_leave: override.casual_leave,
+                    sick_leave: override.sick_leave,
+                    total: override.total
+                };
+                // Clear override after 30 seconds (Dataverse should have propagated by then)
+                if (Date.now() - override.timestamp > 30000) {
+                    delete pendingAllocationOverrides[overrideKey];
+                }
+            }
+            
             let casualLeave, sickLeave, totalQuota, allocationType;
             
             if (stored) {
-                // Use stored values from database
+                // Use stored values from database (or optimistic override)
                 casualLeave = stored.casual_leave;
                 sickLeave = stored.sick_leave;
                 totalQuota = stored.total || (casualLeave + sickLeave);
