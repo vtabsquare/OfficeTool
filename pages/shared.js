@@ -276,6 +276,7 @@ const openTeamTsEditModal = async (employeeId, workDate) => {
         const key = `${l.project_id || ''}|${l.task_guid || l.task_id || ''}`;
         if (!byTask[key]) {
             byTask[key] = {
+                dv_id: l.id || '',
                 project_id: l.project_id || '',
                 task_guid: l.task_guid || '',
                 task_id: l.task_id || '',
@@ -344,6 +345,7 @@ const openTeamTsEditModal = async (employeeId, workDate) => {
                     const secs = (h * 3600) + (mm * 60);
                     const payload = {
                         employee_id: empId,
+                        dv_id: row.dv_id || '',
                         project_id: row.project_id || '',
                         task_guid: row.task_guid || '',
                         task_id: row.task_id || '',

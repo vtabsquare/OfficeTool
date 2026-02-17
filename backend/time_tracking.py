@@ -284,7 +284,10 @@ def set_exact_log():
         except (ValueError, TypeError):
             seconds = 0
 
-        print(f"[TEAM_TS_EDIT] Request: emp={employee_id} date={work_date} secs={seconds} task_guid={task_guid} task_id={task_id} project={project_id} role={role}")
+        # Accept dv_id from frontend (record ID from GET response)
+        dv_id = (b.get("dv_id") or "").strip() or None
+
+        print(f"[TEAM_TS_EDIT] Request: emp={employee_id} date={work_date} secs={seconds} dv_id={dv_id} task_guid={task_guid} task_id={task_id} project={project_id} role={role}")
 
         if not employee_id or not work_date or seconds < 0:
             return jsonify({"success": False, "error": "employee_id, work_date required; seconds>=0"}), 400
@@ -297,11 +300,6 @@ def set_exact_log():
             print(f"[ERROR] get_access_token failed: {tok_err}")
             return jsonify({"success": False, "error": f"Auth token error: {tok_err}"}), 500
 
-        read_headers = {
-            "Authorization": f"Bearer {token}",
-            "Accept": "application/json",
-            "OData-Version": "4.0",
-        }
         write_headers = {
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
@@ -310,38 +308,36 @@ def set_exact_log():
         }
         hours_worked = round(seconds / 3600, 2)
 
-        # Query Dataverse directly for existing record matching employee+date
-        safe_emp = employee_id.replace("'", "''")
-        safe_date = work_date.replace("'", "''")
-        task_key = task_guid or task_id
-        dv_id = None
-
-        try:
-            filter_q = f"crc6f_employeeid eq '{safe_emp}' and crc6f_workdate ge '{safe_date}' and crc6f_workdate le '{safe_date}'"
-            search_url = f"{RESOURCE}{DV_API}/crc6f_hr_timesheetlogs?$filter={filter_q}&$top=50"
-            print(f"[TEAM_TS_EDIT] Searching: {search_url}")
-            search_resp = requests.get(search_url, headers=read_headers, timeout=30)
-            print(f"[TEAM_TS_EDIT] Search status: {search_resp.status_code}")
-
-            if search_resp.status_code == 200:
-                existing = search_resp.json().get("value", [])
-                print(f"[TEAM_TS_EDIT] Found {len(existing)} records for {safe_emp} on {safe_date}")
-                # Match by task if we have a task key
-                if task_key and existing:
-                    for rec in existing:
-                        rec_task = rec.get("crc6f_taskguid") or rec.get("crc6f_taskid") or ""
-                        if rec_task == task_key:
-                            dv_id = rec.get("crc6f_hr_timesheetlogid")
-                            print(f"[TEAM_TS_EDIT] Matched by task: {dv_id}")
-                            break
-                # If no task match but we have records, use the first one
-                if not dv_id and existing:
-                    dv_id = existing[0].get("crc6f_hr_timesheetlogid")
-                    print(f"[TEAM_TS_EDIT] Using first record: {dv_id}")
-            else:
-                print(f"[TEAM_TS_EDIT] Search failed: {search_resp.status_code} - {search_resp.text[:300]}")
-        except Exception as search_err:
-            print(f"[TEAM_TS_EDIT] Search error (will create new): {search_err}")
+        # If no dv_id from frontend, try searching Dataverse
+        if not dv_id:
+            try:
+                read_headers = {
+                    "Authorization": f"Bearer {token}",
+                    "Accept": "application/json",
+                    "OData-Version": "4.0",
+                }
+                safe_emp = employee_id.replace("'", "''")
+                safe_date = work_date.replace("'", "''")
+                filter_q = f"crc6f_employeeid eq '{safe_emp}' and crc6f_workdate ge '{safe_date}' and crc6f_workdate le '{safe_date}'"
+                search_url = f"{RESOURCE}{DV_API}/crc6f_hr_timesheetlogs?$filter={filter_q}&$top=50"
+                print(f"[TEAM_TS_EDIT] No dv_id, searching: {search_url}")
+                search_resp = requests.get(search_url, headers=read_headers, timeout=30)
+                print(f"[TEAM_TS_EDIT] Search status: {search_resp.status_code}")
+                if search_resp.status_code == 200:
+                    existing = search_resp.json().get("value", [])
+                    print(f"[TEAM_TS_EDIT] Found {len(existing)} records")
+                    task_key = task_guid or task_id
+                    if task_key and existing:
+                        for rec in existing:
+                            rec_task = rec.get("crc6f_taskguid") or rec.get("crc6f_taskid") or ""
+                            if rec_task == task_key:
+                                dv_id = rec.get("crc6f_hr_timesheetlogid")
+                                break
+                    if not dv_id and existing:
+                        dv_id = existing[0].get("crc6f_hr_timesheetlogid")
+                    print(f"[TEAM_TS_EDIT] Resolved dv_id from search: {dv_id}")
+            except Exception as search_err:
+                print(f"[TEAM_TS_EDIT] Search error (will create new): {search_err}")
 
         if dv_id:
             patch_url = f"{RESOURCE}{DV_API}/crc6f_hr_timesheetlogs({dv_id})"
