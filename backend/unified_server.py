@@ -8166,27 +8166,28 @@ def update_employee_api(employee_id):
         # Build update payload using field map
         payload = {}
         if field_map['fullname']:
-            first = data.get("first_name", "")
-            last = data.get("last_name", "")
-            payload[field_map['fullname']] = f"{first} {last}".strip()
+            if "first_name" in data or "last_name" in data:
+                first = data.get("first_name") or ""
+                last = data.get("last_name") or ""
+                payload[field_map['fullname']] = f"{first} {last}".strip()
         else:
-            if field_map['firstname']:
+            if field_map['firstname'] and "first_name" in data:
                 payload[field_map['firstname']] = data.get("first_name")
-            if field_map['lastname']:
+            if field_map['lastname'] and "last_name" in data:
                 payload[field_map['lastname']] = data.get("last_name")
-        if field_map['email']:
+        if field_map['email'] and "email" in data:
             payload[field_map['email']] = data.get("email")
-        if field_map['contact']:
+        if field_map['contact'] and "contact_number" in data:
             payload[field_map['contact']] = data.get("contact_number")
-        if field_map['address']:
+        if field_map['address'] and "address" in data:
             payload[field_map['address']] = data.get("address")
-        if field_map['department']:
+        if field_map['department'] and "department" in data:
             payload[field_map['department']] = data.get("department")
-        if field_map['designation']:
+        if field_map['designation'] and "designation" in data:
             payload[field_map['designation']] = data.get("designation")
-        if field_map.get('doj'):
+        if field_map.get('doj') and "doj" in data:
             payload[field_map['doj']] = data.get("doj")
-        if field_map['active']:
+        if field_map['active'] and "active" in data:
             active_value = data.get("active")
             if isinstance(active_value, bool):
                 payload[field_map['active']] = "Active" if active_value else "Inactive"
@@ -8198,11 +8199,14 @@ def update_employee_api(employee_id):
             payload[field_map['employee_flag']] = data.get('employee_flag')
 
         # Profile picture
-        if field_map.get('profile_picture') is not None:
+        if has_profile_picture_field and field_map.get('profile_picture') is not None:
             if profile_picture is None:
                 payload[field_map['profile_picture']] = None
             elif isinstance(profile_picture, str):
                 payload[field_map['profile_picture']] = profile_picture
+
+        if not payload:
+            return jsonify({"success": False, "error": "No valid fields provided for update"}), 400
 
         # Try to extract the primary record id
         prefer_keys = [primary_field, f"{entity_set[:-1]}id", f"{entity_set}id"]  # heuristic
