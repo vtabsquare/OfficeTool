@@ -5,7 +5,7 @@ import { listEmployees, listAllEmployees } from '../features/employeeApi.js';
 import { getHolidays } from '../features/holidaysApi.js';
 import { fetchMonthlyAttendance } from '../features/attendanceApi.js';
 import { state } from '../state.js';
-import { cachedFetch, TTL, getPageState, cachePageState, clearCacheByPrefix } from '../features/cache.js';
+import { cachedFetch, TTL, getPageState, cachePageState, clearCacheByPrefix, clearCache } from '../features/cache.js';
 import { isAdminUser } from '../utils/accessControl.js';
 import { apiBase } from '../config.js';
 
@@ -293,6 +293,10 @@ const buildLineChart = (points = []) => {
 const fetchPeopleOnLeave = async (employees = []) => {
     const isAdmin = isAdminUser();
     const currentEmpId = String(state.user?.id || '').toUpperCase();
+    const today = new Date().toISOString().slice(0, 10);
+    
+    console.log(`🔍 Fetching people on leave for today: ${today}`);
+    
     let sourceEmployees = employees;
     if (!isAdmin) {
         const me = employees.find(emp => String(emp.employee_id || emp.id).toUpperCase() === currentEmpId);
@@ -306,7 +310,9 @@ const fetchPeopleOnLeave = async (employees = []) => {
 
     // Prefer aggregated endpoint; fallback to per-employee fetch if it fails
     try {
+        console.log(`📊 Checking ${ids.length} employees for leave today...`);
         const leaves = await fetchOnLeaveToday(ids);
+        console.log(`✅ Found ${leaves.length} employees on leave today`);
         return leaves.slice(0, 4).map(l => {
             const emp = limited.find(e => String(e.employee_id || e.id || '').toUpperCase() === l.employee_id);
             return {
@@ -319,7 +325,6 @@ const fetchPeopleOnLeave = async (employees = []) => {
         console.warn('⚠️ Falling back to per-employee leave fetch (on-leave-today failed):', err);
     }
 
-    const today = new Date().toISOString().slice(0, 10);
     const results = [];
     for (const emp of limited) {
         const empId = String(emp.employee_id || emp.id || '').toUpperCase();
@@ -345,6 +350,7 @@ const fetchPeopleOnLeave = async (employees = []) => {
         }
         if (results.length >= 4) break;
     }
+    console.log(`✅ Final count: ${results.length} employees on leave today`);
     return results;
 };
 
@@ -893,6 +899,17 @@ const loadDashboardData = async () => {
             }, TTL.SHORT)
             : Promise.resolve([]),
         cachedFetch('people_on_leave', async () => {
+            // Clear cache at midnight to ensure fresh data each day
+            const cacheKey = 'people_on_leave';
+            const lastFetch = localStorage.getItem(`${cacheKey}_last_fetch`);
+            const today = new Date().toDateString();
+            
+            if (lastFetch !== today) {
+                clearCache(cacheKey);
+                localStorage.setItem(`${cacheKey}_last_fetch`, today);
+                console.log(`🗑️ Cleared ${cacheKey} cache for new day: ${today}`);
+            }
+            
             try {
                 const empResp = await cachedFetch('employees_list', () => listEmployees(1, 200), TTL.LONG);
                 return await fetchPeopleOnLeave(empResp?.items || []);
@@ -900,7 +917,7 @@ const loadDashboardData = async () => {
                 console.warn('⚠️ Failed to fetch people on leave:', err);
                 return [];
             }
-        }, TTL.MEDIUM),
+        }, TTL.SHORT),
     ]);
 
     const upcomingHolidays = getUpcomingHolidays(holidays);
