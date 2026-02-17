@@ -286,113 +286,94 @@ def set_exact_log():
         if role == "l1":
             return jsonify({"success": False, "error": "forbidden"}), 403
 
-        logs = _read_logs()
-        idx = None
-        for i, r in enumerate(logs):
-            if (
-                r.get("employee_id") == employee_id
-                and (r.get("task_guid") or r.get("task_id")) == (task_guid or task_id)
-                and r.get("work_date") == work_date
-            ):
-                idx = i
-                break
+        token = get_access_token()
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "OData-Version": "4.0",
+        }
+        hours_worked = round(seconds / 3600, 2)
 
+        # Query Dataverse directly for existing record matching employee+task+date
+        safe_emp = employee_id.replace("'", "''")
+        safe_date = work_date.replace("'", "''")
+        task_key = task_guid or task_id
         dv_id = None
-        if idx is not None:
-            prev = logs[idx]
-            dv_id = prev.get("dv_id")
-            logs[idx] = {
-                **prev,
-                "seconds": int(seconds),
-                "description": description or prev.get("description") or "",
-                "manual": role != "l1",
-                "editor_id": editor_id or prev.get("editor_id"),
-            }
-            rec = logs[idx]
+
+        if task_key:
+            safe_task = task_key.replace("'", "''")
+            if task_guid:
+                task_filter = f"crc6f_taskguid eq '{safe_task}'"
+            else:
+                task_filter = f"crc6f_taskid eq '{safe_task}'"
+            filter_q = f"crc6f_employeeid eq '{safe_emp}' and crc6f_workdate eq '{safe_date}' and {task_filter}"
         else:
-            rec = {
-                "id": f"LOG-{int(datetime.now().timestamp()*1000)}",
+            filter_q = f"crc6f_employeeid eq '{safe_emp}' and crc6f_workdate eq '{safe_date}'"
+
+        search_url = f"{RESOURCE}{DV_API}/crc6f_hr_timesheetlogs?$filter={filter_q}&$top=1"
+        print(f"[TEAM_TS_EDIT] Searching Dataverse: {search_url}")
+        search_resp = requests.get(search_url, headers=headers, timeout=30)
+
+        if search_resp.status_code == 200:
+            existing = search_resp.json().get("value", [])
+            if existing:
+                dv_id = existing[0].get("crc6f_hr_timesheetlogid")
+                print(f"[TEAM_TS_EDIT] Found existing record: {dv_id}")
+
+        if dv_id:
+            # Update existing record in Dataverse
+            patch_url = f"{RESOURCE}{DV_API}/crc6f_hr_timesheetlogs({dv_id})"
+            payload = {"crc6f_hoursworked": hours_worked, "crc6f_workdescription": description}
+            print(f"[TEAM_TS_EDIT] PATCH {patch_url} with {payload}")
+            dv_resp = requests.patch(patch_url, headers=headers, json=payload, timeout=30)
+            if dv_resp.status_code not in (200, 204):
+                error_msg = f"Dataverse PATCH failed: {dv_resp.status_code} - {dv_resp.text[:300]}"
+                print(f"[ERROR] {error_msg}")
+                return jsonify({"success": False, "error": error_msg}), 500
+            print(f"[TEAM_TS_EDIT] Successfully updated record {dv_id}")
+        else:
+            # Create new record in Dataverse
+            post_url = f"{RESOURCE}{DV_API}/crc6f_hr_timesheetlogs"
+            payload = {
+                "crc6f_employeeid": employee_id,
+                "crc6f_projectid": project_id,
+                "crc6f_taskid": task_id,
+                "crc6f_taskguid": task_guid or None,
+                "crc6f_workdate": work_date,
+                "crc6f_hoursworked": hours_worked,
+                "crc6f_workdescription": description,
+                "crc6f_approvalstatus": "Pending",
+            }
+            print(f"[TEAM_TS_EDIT] POST {post_url} with {payload}")
+            dv_resp = requests.post(post_url, headers=headers, json=payload, timeout=30)
+            if dv_resp.status_code not in (200, 201, 204):
+                error_msg = f"Dataverse POST failed: {dv_resp.status_code} - {dv_resp.text[:300]}"
+                print(f"[ERROR] {error_msg}")
+                return jsonify({"success": False, "error": error_msg}), 500
+            try:
+                ent = dv_resp.headers.get('OData-EntityId') or dv_resp.headers.get('odata-entityid')
+                if ent and ent.endswith(')') and '(' in ent:
+                    dv_id = ent.split('(')[-1].strip(')')
+            except Exception:
+                pass
+            print(f"[TEAM_TS_EDIT] Successfully created record {dv_id}")
+
+        return jsonify({
+            "success": True,
+            "log": {
                 "employee_id": employee_id,
                 "project_id": project_id,
-                "task_guid": task_guid or None,
-                "task_id": task_id or None,
-                "task_name": b.get("task_name") or "",
-                "seconds": int(seconds),
+                "task_id": task_id,
+                "task_guid": task_guid,
                 "work_date": work_date,
+                "seconds": seconds,
                 "description": description,
-                "manual": role != "l1",
-                "editor_id": editor_id or None,
-                "created_at": _now_iso(),
+                "dv_id": dv_id,
             }
-            logs.append(rec)
-
-        # Collapse duplicates for same employee+task+date to avoid double counting
-        try:
-            base_key = (employee_id, (task_guid or task_id), work_date)
-            keep_index = None
-            for i, r in enumerate(list(logs)):
-                rk = (r.get("employee_id"), (r.get("task_guid") or r.get("task_id")), r.get("work_date"))
-                if rk == base_key:
-                    if keep_index is None:
-                        keep_index = i
-                        # ensure kept record matches rec
-                        logs[i] = rec
-                    elif i != keep_index:
-                        # remove duplicate
-                        logs.pop(i)
-            # rec reference may shift; safe
-        except Exception:
-            pass
-
-        try:
-            token = get_access_token()
-            headers = {
-                "Authorization": f"Bearer {token}",
-                "Content-Type": "application/json",
-                "Accept": "application/json",
-                "OData-Version": "4.0",
-            }
-            hours_worked = round(seconds / 3600, 2)
-            if dv_id:
-                url = f"{RESOURCE}{DV_API}/crc6f_hr_timesheetlogs({dv_id})"
-                payload = {"crc6f_hoursworked": hours_worked, "crc6f_workdescription": description}
-                dv_resp = requests.patch(url, headers=headers, json=payload, timeout=30)
-                if dv_resp.status_code in (200, 204):
-                    rec["dv_id"] = dv_id
-                else:
-                    error_msg = f"Dataverse PATCH failed: {dv_resp.status_code} - {dv_resp.text[:200]}"
-                    print(f"[ERROR] {error_msg}")
-                    raise Exception(error_msg)
-            else:
-                url = f"{RESOURCE}{DV_API}/crc6f_hr_timesheetlogs"
-                payload = {
-                    "crc6f_employeeid": employee_id,
-                    "crc6f_projectid": project_id,
-                    "crc6f_taskid": task_id,
-                    "crc6f_taskguid": task_guid or None,
-                    "crc6f_workdate": work_date,
-                    "crc6f_hoursworked": hours_worked,
-                    "crc6f_workdescription": description,
-                    "crc6f_approvalstatus": "Pending",
-                }
-                dv_resp = requests.post(url, headers=headers, json=payload, timeout=30)
-                if dv_resp.status_code in (200, 201, 204):
-                    try:
-                        ent = dv_resp.headers.get('OData-EntityId') or dv_resp.headers.get('odata-entityid')
-                        if ent and ent.endswith(')') and '(' in ent:
-                            rec["dv_id"] = ent.split('(')[-1].strip(')')
-                    except Exception:
-                        pass
-                else:
-                    error_msg = f"Dataverse POST failed: {dv_resp.status_code} - {dv_resp.text[:200]}"
-                    print(f"[ERROR] {error_msg}")
-                    raise Exception(error_msg)
-        except Exception:
-            pass
-
-        _write_logs(logs)
-        return jsonify({"success": True, "log": rec}), 200
+        }), 200
     except Exception as e:
+        print(f"[ERROR] set_exact_log failed: {e}")
         return jsonify({"success": False, "error": str(e)}), 500
 
 
@@ -801,8 +782,9 @@ def list_logs():
         filter_query = " and ".join(filter_parts) if filter_parts else ""
         url = f"{RESOURCE}{DV_API}/crc6f_hr_timesheetlogs"
         if filter_query:
-            url += f"?$filter={filter_query}"
-        url += "&$top=5000&$orderby=crc6f_workdate desc"
+            url += f"?$filter={filter_query}&$top=5000&$orderby=crc6f_workdate desc"
+        else:
+            url += "?$top=5000&$orderby=crc6f_workdate desc"
         
         print(f"[TIME_TRACKER] Fetching from Dataverse URL: {url}")
         print(f"[TIME_TRACKER] Filter query: {filter_query}")

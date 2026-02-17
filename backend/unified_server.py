@@ -5012,17 +5012,21 @@ def manual_edit_attendance():
         safe_emp = normalized_emp_id.replace("'", "''")
         safe_date = date_str
         filter_q = (
-            f"?$top=1&$filter={FIELD_EMPLOYEE_ID} eq '{safe_emp}' and {FIELD_DATE} eq '{safe_date}' "
-            f"and startswith({FIELD_ATTENDANCE_ID_CUSTOM},'ATD-')"
+            f"?$top=1&$filter={FIELD_EMPLOYEE_ID} eq '{safe_emp}' and {FIELD_DATE} eq '{safe_date}'"
         )
         url = f"{RESOURCE}/api/data/v9.2/{ATTENDANCE_ENTITY}{filter_q}"
+        print(f"[ATT_EDIT] Searching for existing record: {url}")
         resp = requests.get(url, headers=headers)
         record_id = None
         if resp.status_code == 200:
             values = resp.json().get("value", [])
+            print(f"[ATT_EDIT] Found {len(values)} existing records for {safe_emp} on {safe_date}")
             if values:
                 row = values[0]
                 record_id = row.get(FIELD_RECORD_ID) or row.get("crc6f_table13id") or row.get("id")
+                print(f"[ATT_EDIT] Using existing record_id: {record_id}")
+        else:
+            print(f"[ATT_EDIT] Dataverse search failed: {resp.status_code} - {resp.text[:200]}")
 
         payload = {
             FIELD_DURATION: str(int(duration_hours)),
@@ -5034,7 +5038,9 @@ def manual_edit_attendance():
             payload[FIELD_CHECKOUT] = checkout_val
 
         if record_id:
+            print(f"[ATT_EDIT] Updating record {record_id} with payload: {payload}")
             update_record(ATTENDANCE_ENTITY, record_id, payload)
+            print(f"[ATT_EDIT] Successfully updated record {record_id}")
         else:
             new_att_id = generate_random_attendance_id()
             create_payload = {
@@ -5048,8 +5054,10 @@ def manual_edit_attendance():
                 create_payload[FIELD_CHECKIN] = checkin_val
             if checkout_val is not None:
                 create_payload[FIELD_CHECKOUT] = checkout_val
+            print(f"[ATT_EDIT] Creating new record with payload: {create_payload}")
             created = create_record(ATTENDANCE_ENTITY, create_payload)
             record_id = created.get(FIELD_RECORD_ID) or created.get("crc6f_table13id") or created.get("id")
+            print(f"[ATT_EDIT] Successfully created record {record_id}")
 
         final_status = "P" if duration_hours >= 9 else ("HL" if duration_hours > 4 else "A")
 

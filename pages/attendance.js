@@ -702,32 +702,20 @@ const openTeamAttendanceEditModal = (employeeId, day, year, monthIndex) => {
                         return;
                     }
                     
-                    // Clear attendance cache to ensure fresh data is fetched
+                    // Clear ALL attendance cache to ensure fresh data is fetched
                     try {
-                        // Clear cache for this employee's attendance
                         if (state?.cache?.attendance) {
-                            const cacheKey = `${employeeId.toUpperCase()}|${year}|${monthIndex + 1}`;
-                            delete state.cache.attendance[cacheKey];
+                            // Wipe entire attendance cache so every employee re-fetches
+                            state.cache.attendance = {};
                         }
-                        // Also clear any general attendance cache
                         clearCacheByPrefix('attendance_');
                     } catch (cacheErr) {
                         console.warn('Failed to clear attendance cache:', cacheErr);
                     }
                     
                     closeModal();
-                    // Refresh both team and my attendance pages
+                    // Refresh team attendance page with fresh data
                     await renderTeamAttendancePage();
-                    // Also refresh my attendance if the edited employee is the current user
-                    if (employeeId.toUpperCase() === String(state.user?.id || '').toUpperCase()) {
-                        // Update local state for immediate reflection
-                        if (state.attendanceData[employeeId]) {
-                            state.attendanceData[employeeId][day] = {
-                                ...state.attendanceData[employeeId][day],
-                                status: code,
-                            };
-                        }
-                    }
                 } catch (err) {
                     console.error('manual-edit failed', err);
                     alert('Failed to update attendance');
