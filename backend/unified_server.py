@@ -6703,10 +6703,11 @@ def reject_leave(leave_id):
         print(employee_email,employee_id)
 
         if employee_email:
+            reason_text = f" Reason: {rejection_reason}" if rejection_reason else ""
             send_email(
-                subject=f"[OK] Leave Approved for {employee_id}",
+                subject=f"[REJECTED] Leave Rejected for {employee_id}",
                 recipients=[employee_email],
-                body=f"Hello {employee_name} {employee_id}, your leave from {start_date} to {end_date} has been approved by {rejected_by}."
+                body=f"Hello {employee_name} {employee_id}, your leave from {start_date} to {end_date} has been rejected by {rejected_by}.{reason_text}"
             )
         else:
             print(f"[WARN] Could not send mail — no email found for {employee_id}")
