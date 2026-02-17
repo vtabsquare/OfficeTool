@@ -4427,7 +4427,13 @@ const handleInboxApprove = async (leaveId) => {
             }
         }
 
+        closeModal();
         alert(`✅ Leave ${leaveId} approved successfully!`);
+        // Switch to completed tab to show the approved leave
+        currentInboxTab = 'completed';
+        // Update tab UI
+        document.querySelectorAll('.inbox-tab').forEach(t => t.classList.remove('active'));
+        document.querySelector('.inbox-tab[data-tab="completed"]')?.classList.add('active');
         await loadInboxLeaves();
     } catch (err) {
         console.error('❌ Error approving leave:', err);
@@ -4482,6 +4488,11 @@ export const handleInboxRejectLeave = async (e) => {
 
         closeModal();
         alert(`✅ Leave ${leaveId} rejected successfully!`);
+        // Switch to completed tab to show the rejected leave
+        currentInboxTab = 'completed';
+        // Update tab UI
+        document.querySelectorAll('.inbox-tab').forEach(t => t.classList.remove('active'));
+        document.querySelector('.inbox-tab[data-tab="completed"]')?.classList.add('active');
         await loadInboxLeaves();
     } catch (err) {
         console.error('❌ Error rejecting leave:', err);
