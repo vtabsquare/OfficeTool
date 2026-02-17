@@ -1,7 +1,7 @@
 from flask import Blueprint, request, jsonify
 from datetime import datetime, timezone, timedelta
 import os, json, traceback
-from dataverse_helper import get_access_token
+from dataverse_helper import get_access_token, update_record, create_record
 import requests
 import urllib.parse
 
@@ -268,6 +268,7 @@ def proxy_tasks():
 
 @bp_time.route("/time-tracker/logs/exact", methods=["PUT"])
 def set_exact_log():
+    ENTITY = "crc6f_hr_timesheetlogs"
     try:
         b = request.get_json(force=True) or {}
         employee_id = (b.get("employee_id") or "").strip()
@@ -278,110 +279,74 @@ def set_exact_log():
         description = (b.get("description") or "").strip()
         role = (b.get("role") or "l1").lower()
         editor_id = (b.get("editor_id") or "").strip()
+        dv_id = (b.get("dv_id") or "").strip() or None
 
         try:
             seconds = int(float(b.get("seconds", 0)))
         except (ValueError, TypeError):
             seconds = 0
 
-        # Accept dv_id from frontend (record ID from GET response)
-        dv_id = (b.get("dv_id") or "").strip() or None
-
-        print(f"[TEAM_TS_EDIT] Request: emp={employee_id} date={work_date} secs={seconds} dv_id={dv_id} task_guid={task_guid} task_id={task_id} project={project_id} role={role}")
+        print(f"[TEAM_TS_EDIT] emp={employee_id} date={work_date} secs={seconds} dv_id={dv_id} task_id={task_id} project={project_id} role={role}")
 
         if not employee_id or not work_date or seconds < 0:
             return jsonify({"success": False, "error": "employee_id, work_date required; seconds>=0"}), 400
         if role == "l1":
             return jsonify({"success": False, "error": "forbidden"}), 403
 
-        try:
-            token = get_access_token()
-        except Exception as tok_err:
-            print(f"[ERROR] get_access_token failed: {tok_err}")
-            return jsonify({"success": False, "error": f"Auth token error: {tok_err}"}), 500
-
-        write_headers = {
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-            "OData-Version": "4.0",
-        }
         hours_worked = round(seconds / 3600, 2)
 
-        # If no dv_id from frontend, try searching Dataverse
+        # If no dv_id from frontend, search Dataverse for existing record
         if not dv_id:
             try:
-                read_headers = {
-                    "Authorization": f"Bearer {token}",
-                    "Accept": "application/json",
-                    "OData-Version": "4.0",
-                }
+                token = get_access_token()
+                headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
                 safe_emp = employee_id.replace("'", "''")
                 safe_date = work_date.replace("'", "''")
-                filter_q = f"crc6f_employeeid eq '{safe_emp}' and crc6f_workdate ge '{safe_date}' and crc6f_workdate le '{safe_date}'"
-                search_url = f"{RESOURCE}{DV_API}/crc6f_hr_timesheetlogs?$filter={filter_q}&$top=50"
-                print(f"[TEAM_TS_EDIT] No dv_id, searching: {search_url}")
-                search_resp = requests.get(search_url, headers=read_headers, timeout=30)
-                print(f"[TEAM_TS_EDIT] Search status: {search_resp.status_code}")
-                if search_resp.status_code == 200:
-                    existing = search_resp.json().get("value", [])
-                    print(f"[TEAM_TS_EDIT] Found {len(existing)} records")
+                fq = f"crc6f_employeeid eq '{safe_emp}' and crc6f_workdate ge '{safe_date}' and crc6f_workdate le '{safe_date}'"
+                url = f"{RESOURCE}/api/data/v9.2/{ENTITY}?$filter={fq}&$top=50"
+                print(f"[TEAM_TS_EDIT] Searching: {url}")
+                resp = requests.get(url, headers=headers, timeout=30)
+                print(f"[TEAM_TS_EDIT] Search status: {resp.status_code}")
+                if resp.status_code == 200:
+                    rows = resp.json().get("value", [])
+                    print(f"[TEAM_TS_EDIT] Found {len(rows)} records")
                     task_key = task_guid or task_id
-                    if task_key and existing:
-                        for rec in existing:
-                            rec_task = rec.get("crc6f_taskguid") or rec.get("crc6f_taskid") or ""
-                            if rec_task == task_key:
-                                dv_id = rec.get("crc6f_hr_timesheetlogid")
+                    if task_key and rows:
+                        for r in rows:
+                            if (r.get("crc6f_taskguid") or r.get("crc6f_taskid") or "") == task_key:
+                                dv_id = r.get("crc6f_hr_timesheetlogid")
                                 break
-                    if not dv_id and existing:
-                        dv_id = existing[0].get("crc6f_hr_timesheetlogid")
-                    print(f"[TEAM_TS_EDIT] Resolved dv_id from search: {dv_id}")
-            except Exception as search_err:
-                print(f"[TEAM_TS_EDIT] Search error (will create new): {search_err}")
+                    if not dv_id and rows:
+                        dv_id = rows[0].get("crc6f_hr_timesheetlogid")
+                    print(f"[TEAM_TS_EDIT] Resolved dv_id: {dv_id}")
+                else:
+                    print(f"[TEAM_TS_EDIT] Search failed: {resp.status_code} {resp.text[:200]}")
+            except Exception as se:
+                print(f"[TEAM_TS_EDIT] Search error: {se}")
 
         if dv_id:
-            patch_url = f"{RESOURCE}{DV_API}/crc6f_hr_timesheetlogs({dv_id})"
-            payload = {
-                "crc6f_hoursworked": hours_worked,
-                "crc6f_workdescription": description,
-            }
-            patch_headers = {**write_headers, "If-Match": "*"}
-            print(f"[TEAM_TS_EDIT] PATCH {patch_url} payload={payload}")
-            dv_resp = requests.patch(patch_url, headers=patch_headers, json=payload, timeout=30)
-            print(f"[TEAM_TS_EDIT] PATCH status: {dv_resp.status_code}")
-            if dv_resp.status_code not in (200, 204):
-                error_msg = f"Dataverse PATCH failed: {dv_resp.status_code} - {dv_resp.text[:300]}"
-                print(f"[ERROR] {error_msg}")
-                return jsonify({"success": False, "error": error_msg}), 500
-            print(f"[TEAM_TS_EDIT] Updated record {dv_id}")
+            # Use proven update_record helper from dataverse_helper.py
+            update_data = {"crc6f_hoursworked": hours_worked, "crc6f_workdescription": description}
+            print(f"[TEAM_TS_EDIT] Updating {dv_id} with {update_data}")
+            update_record(ENTITY, dv_id, update_data)
+            print(f"[TEAM_TS_EDIT] Updated OK")
         else:
-            post_url = f"{RESOURCE}{DV_API}/crc6f_hr_timesheetlogs"
-            payload = {
+            # Use proven create_record helper from dataverse_helper.py
+            create_data = {
                 "crc6f_employeeid": employee_id,
                 "crc6f_projectid": project_id,
                 "crc6f_taskid": task_id,
+                "crc6f_workdate": work_date,
+                "crc6f_hoursworked": hours_worked,
+                "crc6f_workdescription": description,
+                "crc6f_approvalstatus": "Pending",
             }
             if task_guid:
-                payload["crc6f_taskguid"] = task_guid
-            payload["crc6f_workdate"] = work_date
-            payload["crc6f_hoursworked"] = hours_worked
-            payload["crc6f_workdescription"] = description
-            payload["crc6f_approvalstatus"] = "Pending"
-            post_headers = {k: v for k, v in write_headers.items() if k != "If-Match"}
-            print(f"[TEAM_TS_EDIT] POST {post_url} payload={payload}")
-            dv_resp = requests.post(post_url, headers=post_headers, json=payload, timeout=30)
-            print(f"[TEAM_TS_EDIT] POST status: {dv_resp.status_code}")
-            if dv_resp.status_code not in (200, 201, 204):
-                error_msg = f"Dataverse POST failed: {dv_resp.status_code} - {dv_resp.text[:300]}"
-                print(f"[ERROR] {error_msg}")
-                return jsonify({"success": False, "error": error_msg}), 500
-            try:
-                ent = dv_resp.headers.get('OData-EntityId') or dv_resp.headers.get('odata-entityid')
-                if ent and ent.endswith(')') and '(' in ent:
-                    dv_id = ent.split('(')[-1].strip(')')
-            except Exception:
-                pass
-            print(f"[TEAM_TS_EDIT] Created record {dv_id}")
+                create_data["crc6f_taskguid"] = task_guid
+            print(f"[TEAM_TS_EDIT] Creating new record: {create_data}")
+            created = create_record(ENTITY, create_data)
+            dv_id = created.get("crc6f_hr_timesheetlogid")
+            print(f"[TEAM_TS_EDIT] Created OK: {dv_id}")
 
         return jsonify({
             "success": True,
@@ -398,7 +363,7 @@ def set_exact_log():
         }), 200
     except Exception as e:
         tb = traceback.format_exc()
-        print(f"[ERROR] set_exact_log failed: {e}\n{tb}")
+        print(f"[ERROR] set_exact_log: {e}\n{tb}")
         return jsonify({"success": False, "error": str(e)}), 500
 
 

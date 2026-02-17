@@ -1118,7 +1118,7 @@ export const renderTeamAttendancePage = async () => {
         // Fetch attendance for each employee
         await Promise.all(employeesToFetch.map(async (empId) => {
             console.log(`🔄 Fetching attendance for employee: ${empId}`);
-            const records = await fetchMonthlyAttendance(empId, year, month);
+            const records = await fetchMonthlyAttendance(empId, year, month, true);
             console.log(`📊 Fetched ${records.length} attendance records for ${empId}`);
 
             const attendanceMap = {};
