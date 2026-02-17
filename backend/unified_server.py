@@ -6842,13 +6842,99 @@ def get_pending_leaves():
     except Exception as e:
         print(f"[ERROR] Error fetching pending leaves: {str(e)}")
         traceback.print_exc()
-        print("[WARN] Returning empty pending-leave list due to backend failure")
+        print(f"{'='*70}\n")
+        return jsonify({
+            "success": False,
+            "error": str(e),
+            "leaves": []
+        }), 500
+
+
+@app.route('/api/leaves/on-leave-today', methods=['GET'])
+def get_on_leave_today():
+    """Return active leaves for today, optionally limited to a set of employee IDs."""
+    try:
+        print(f"\n{'='*70}")
+        print(f"[FETCH] FETCHING EMPLOYEES ON LEAVE FOR TODAY")
+        print(f"{'='*70}")
+        
+        token = get_access_token()
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json",
+            "OData-MaxVersion": "4.0",
+            "OData-Version": "4.0"
+        }
+        
+        # Get today's date in ISO format
+        today = datetime.now().date().isoformat()
+        print(f"   [DATE] Today's date: {today}")
+        
+        # Get employee IDs from query parameter
+        employee_ids = request.args.get('employee_ids', '')
+        ids_list = [v.strip().upper() for v in employee_ids.split(',') if v.strip()]
+        
+        # Build filter for approved leaves that include today
+        date_filter = f"crc6f_startdate le '{today}' and crc6f_enddate ge '{today}' and crc6f_status eq 'Approved'"
+        
+        # If specific employee IDs provided, add them to filter
+        if ids_list:
+            emp_filter_parts = [f"crc6f_employeeid eq '{emp_id}'" for emp_id in ids_list]
+            emp_filter = f" and ({' or '.join(emp_filter_parts)})"
+            full_filter = f"?$filter={date_filter}{emp_filter}"
+        else:
+            full_filter = f"?$filter={date_filter}"
+        
+        # Build the URL
+        url = f"{RESOURCE}/api/data/v9.2/{LEAVE_ENTITY}{full_filter}"
+        print(f"   [URL] Request URL: {url}")
+        
+        # Make the request
+        response = requests.get(url, headers=headers)
+        
+        if response.status_code != 200:
+            print(f"   [ERROR] Failed to fetch leaves: {response.status_code}")
+            return jsonify({
+                "success": False,
+                "error": f"Failed to fetch leaves: {response.status_code}",
+                "leaves": []
+            }), 500
+        
+        records = response.json().get("value", [])
+        print(f"   [DATA] Found {len(records)} employees on leave today")
+        
+        # Format the response
+        leaves = []
+        for r in records:
+            leaves.append({
+                "employee_id": r.get("crc6f_employeeid"),
+                "leave_type": r.get("crc6f_leavetype"),
+                "start_date": r.get("crc6f_startdate"),
+                "end_date": r.get("crc6f_enddate"),
+                "status": r.get("crc6f_status"),
+                "reason": r.get("crc6f_reason", "")
+            })
+        
+        print(f"   [SEND] Returning {len(leaves)} leave records")
+        print(f"{'='*70}\n")
+        
         return jsonify({
             "success": True,
-            "leaves": [],
-            "count": 0,
-            "warning": "Pending leaves unavailable (backend error)"
+            "leaves": leaves,
+            "count": len(leaves),
+            "date": today
         }), 200
+        
+    except Exception as e:
+        print(f"   [ERROR] ERROR in /api/leaves/on-leave-today: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        print(f"{'='*70}\n")
+        return jsonify({
+            "success": False,
+            "error": str(e),
+            "leaves": []
+        }), 500
 
 
 # ================== UTILITY ROUTES ==================
