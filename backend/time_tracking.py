@@ -1,6 +1,6 @@
 from flask import Blueprint, request, jsonify
 from datetime import datetime, timezone, timedelta
-import os, json
+import os, json, traceback
 from dataverse_helper import get_access_token
 import requests
 import urllib.parse
@@ -307,7 +307,6 @@ def set_exact_log():
             "Content-Type": "application/json",
             "Accept": "application/json",
             "OData-Version": "4.0",
-            "If-Match": "*",
         }
         hours_worked = round(seconds / 3600, 2)
 
@@ -350,8 +349,9 @@ def set_exact_log():
                 "crc6f_hoursworked": hours_worked,
                 "crc6f_workdescription": description,
             }
+            patch_headers = {**write_headers, "If-Match": "*"}
             print(f"[TEAM_TS_EDIT] PATCH {patch_url} payload={payload}")
-            dv_resp = requests.patch(patch_url, headers=write_headers, json=payload, timeout=30)
+            dv_resp = requests.patch(patch_url, headers=patch_headers, json=payload, timeout=30)
             print(f"[TEAM_TS_EDIT] PATCH status: {dv_resp.status_code}")
             if dv_resp.status_code not in (200, 204):
                 error_msg = f"Dataverse PATCH failed: {dv_resp.status_code} - {dv_resp.text[:300]}"
@@ -371,8 +371,9 @@ def set_exact_log():
             payload["crc6f_hoursworked"] = hours_worked
             payload["crc6f_workdescription"] = description
             payload["crc6f_approvalstatus"] = "Pending"
+            post_headers = {k: v for k, v in write_headers.items() if k != "If-Match"}
             print(f"[TEAM_TS_EDIT] POST {post_url} payload={payload}")
-            dv_resp = requests.post(post_url, headers=write_headers, json=payload, timeout=30)
+            dv_resp = requests.post(post_url, headers=post_headers, json=payload, timeout=30)
             print(f"[TEAM_TS_EDIT] POST status: {dv_resp.status_code}")
             if dv_resp.status_code not in (200, 201, 204):
                 error_msg = f"Dataverse POST failed: {dv_resp.status_code} - {dv_resp.text[:300]}"
@@ -400,7 +401,6 @@ def set_exact_log():
             }
         }), 200
     except Exception as e:
-        import traceback
         tb = traceback.format_exc()
         print(f"[ERROR] set_exact_log failed: {e}\n{tb}")
         return jsonify({"success": False, "error": str(e)}), 500
