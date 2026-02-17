@@ -3736,7 +3736,7 @@ const loadInboxLeaves = async () => {
             const status = leave.status || 'Pending';
             const paidUnpaid = leave.paid_unpaid || 'Paid';
             const rejectionReason = leave.rejection_reason || leave.crc6f_rejectionreason || '';
-            const leaveReason = leave.reason || leave.crc6f_reason || '';
+            const leaveReason = leave.reason || leave.rejection_reason || leave.crc6f_rejectionreason || '';
 
             // Debug logging for rejected leaves
             if (status.toLowerCase() === 'rejected') {
