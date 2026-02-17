@@ -493,6 +493,8 @@ const saveEditedAllocation = async () => {
             closeEditModal();
             // Invalidate employee cache so the re-render fetches fresh data
             try { if (state?.cache?.employees) state.cache.employees = {}; } catch { }
+            // Add a small delay to ensure database transaction completes
+            await new Promise(resolve => setTimeout(resolve, 1000));
             // Re-render the page to show updated data
             await renderLeaveSettingsPage();
         } else {
@@ -528,12 +530,18 @@ const renderEmployeeAllocationTable = async () => {
         console.log('📊 Fetching stored leave allocations from database...');
         let storedAllocations = {};
         try {
-            // Add cache busting to ensure fresh data
-            const cacheBuster = `?_t=${Date.now()}`;
+            // Add aggressive cache busting to ensure fresh data
+            const timestamp = Date.now();
+            const random = Math.random().toString(36).substring(7);
+            const cacheBuster = `?_t=${timestamp}&_r=${random}`;
+            console.log('🔍 Cache buster:', cacheBuster);
+            
             const allocResponse = await fetch(`${API_BASE}/employee-leave-allocations${cacheBuster}`, {
                 cache: 'no-store',
                 headers: {
-                    'Accept': 'application/json'
+                    'Accept': 'application/json',
+                    'Cache-Control': 'no-cache',
+                    'Pragma': 'no-cache'
                 }
             });
             
