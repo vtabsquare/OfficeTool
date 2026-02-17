@@ -1109,10 +1109,13 @@ export const renderHomePage = async () => {
         // Refresh data in background (stale-while-revalidate pattern)
         loadDashboardData().then(data => {
             const freshHtml = getPageContentHTML('', buildDashboardLayout(data));
+            // Apply fresh dashboard immediately so headline stats/cards don't stay stale.
+            appContent.innerHTML = freshHtml;
             cachePageState('/', freshHtml, data);
             // Re-apply hydration with fresh data
             hydrateUserScoreboard(data);
             hydrateAnnouncementsCard();
+            scheduleNotificationRefresh();
             setupRefreshButton();
             setupAutoRefresh();
         }).catch(() => {});
