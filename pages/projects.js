@@ -2810,9 +2810,6 @@ const crmTab = async (project) => {
     </div>
   `;
 
-  const resolvedBoardName = boardName;
-  const boardParam = new URLSearchParams(window.location.hash.split("?")[1] || "").get("board") || "General";
-
   return `
     <div class="board-header" style="margin-bottom:10px; font-weight:700; color:#0f172a;">
       Board: ${resolvedBoardName}
