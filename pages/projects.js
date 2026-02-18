@@ -2709,6 +2709,12 @@ const crmTab = async (project) => {
   }
   const tasks = Array.isArray(tasksResult) ? tasksResult : [];
 
+  // Resolve board name for display and matching
+  const boardName =
+    new URLSearchParams(window.location.hash.split("?")[1] || "").get(
+      "boardName"
+    ) || boardParam;
+
   // Fetch columns from database
   let cols = [];
   let colColors = {};
@@ -2746,17 +2752,27 @@ const crmTab = async (project) => {
   const grouped = cols.map((col) => ({
     name: col,
     color: colColors[col] || getDefaultColor(col),
-    items: tasks.filter(
-      (t) =>
-        (t.task_status || "").toLowerCase() === col.toLowerCase() &&
-        (!t.board_name || t.board_name === boardParam)
-    ),
-  }));
+    items: tasks.filter((t) => {
+      const statusMatches = (t.task_status || "").toLowerCase() === col.toLowerCase();
+      const boardId = (t.board_id || "").trim();
+      const boardNameField = (t.board_name || "").trim();
+      const boardDisplayName = boardNameField || boardId;
 
-  const boardName =
-    new URLSearchParams(window.location.hash.split("?")[1] || "").get(
-      "boardName"
-    ) || boardParam;
+      // Accept tasks that explicitly match the current board id or name.
+      // Fallback: tasks without a board assignment only appear on the default "General" board.
+      const boardMatches =
+        (boardId && boardId === boardParam) ||
+        (boardNameField && (boardNameField === boardParam || boardNameField === boardName)) ||
+        (!boardId && !boardNameField && boardParam.toLowerCase() === "general");
+
+      // Preserve board name for rendering in cards if available
+      if (!t.board_name && boardDisplayName) {
+        t.board_name = boardDisplayName;
+      }
+
+      return statusMatches && boardMatches;
+    }),
+  }));
 
   const listsHtml = grouped
     .map((col) => {
@@ -3573,7 +3589,8 @@ function renderTaskFormPage(projectId, boardName, defaultStatus = "New") {
       assigned_to: assignedTo, // ✅ FIXED
       assigned_date: startDate,
       due_date: dueDate,
-      board_name: boardName,
+      // Store the board id so tasks stay scoped to their board
+      board_name: boardParam,
     };
 
     const res = await fetch(
