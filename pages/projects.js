@@ -2557,16 +2557,6 @@ function showBoardModal(projectId, board = null) {
             <label class="form-label" for="bd-desc">Board Description</label>
             <textarea class="input-control" id="bd-desc" rows="3"></textarea>
           </div>
-
-          <div class="form-field">
-            <label class="form-label" for="bd-tasks">No. of Tasks</label>
-            <input class="input-control" type="number" id="bd-tasks" value="0" />
-          </div>
-
-          <div class="form-field">
-            <label class="form-label" for="bd-members">No. of Members</label>
-            <input class="input-control" type="number" id="bd-members" value="0" />
-          </div>
         </div>
       </div>
     </div>
@@ -2578,8 +2568,6 @@ function showBoardModal(projectId, board = null) {
   if (isEdit) {
     document.getElementById("bd-name").value = board.board_name || "";
     document.getElementById("bd-desc").value = board.board_description || "";
-    document.getElementById("bd-tasks").value = board.no_of_tasks || 0;
-    document.getElementById("bd-members").value = board.no_of_members || 0;
   }
 
   // Save logic
@@ -2587,14 +2575,6 @@ function showBoardModal(projectId, board = null) {
     const payload = {
       board_name: document.getElementById("bd-name").value.trim(),
       board_description: document.getElementById("bd-desc").value.trim(),
-      no_of_tasks: parseInt(
-        document.getElementById("bd-tasks").value || "0",
-        10
-      ),
-      no_of_members: parseInt(
-        document.getElementById("bd-members").value || "0",
-        10
-      ),
     };
 
     if (!payload.board_name) {
