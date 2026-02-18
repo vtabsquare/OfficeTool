@@ -543,19 +543,73 @@ const renderAttendanceTrackerPage = async (mode) => {
                         </table>
                     </div>
                 </div>
+                <div class="login-details-card">
+                    <div class="login-details-header">
+                        <h4 class="login-details-title">Current Week / Month Login Details</h4>
+                        <div class="filter-dropdown">
+                            <select id="time-filter" class="filter-select">
+                                <option value="week">Week</option>
+                                <option value="month">Month</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="table-container">
+                        <table class="table">
+                        <thead><tr><th>Date</th><th>First in</th><th>Last out</th><th>Total in-time</th></tr></thead>
+                        <tbody>${entryExitDetailsHTML}</tbody>
+                        </table>
+                    </div>
+                </div>
             </div>
         `;
-};
+    };
 
     const myControls = `
         <div class="page-header-actions">
             <button class="btn btn-success" id="submit-attendance-btn"><i class="fa-solid fa-paper-plane"></i> Submit Attendance</button>
-`;
+        </div>
+    `;
+
+    const headerHTML = `
+        <div class="attendance-header page-header">
+            <div class="page-header-title">
+                <h1>${mode === 'my' ? 'My Attendance' : 'My Team Attendance'}</h1>
+            </div>
+            <div class="month-navigator">
+                <button class="month-nav-btn" data-direction="prev"><i class="fa-solid fa-chevron-left"></i></button>
+                <span>${monthName} ${year}</span>
+                <button class="month-nav-btn" data-direction="next"><i class="fa-solid fa-chevron-right"></i></button>
+            </div>
+            ${mode === 'my' ? myControls : `
+                <div class="page-header-actions">
+                    <button class="btn btn-secondary" id="export-attendance-btn">
+                        <i class="fa-solid fa-file-export"></i> Export CSV
+                    </button>
+                </div>
+            `}
+        </div>
+    `;
+    
+    const myViewHTML = mode === 'my' ? await getMyViewHTML() : getTeamViewHTML();
+    
+    const content = `
+        ${headerHTML}
+        <div class="card attendance-card">
+            ${myViewHTML}
+        </div>
+    `;
 
     document.getElementById('app-content').innerHTML = content;
 
     // Set up event listeners
-
+    const timeFilter = document.getElementById('time-filter');
+    if (timeFilter) {
+        timeFilter.value = state.attendanceFilter || 'week';
+        timeFilter.addEventListener('change', async (e) => {
+            state.attendanceFilter = e.target.value;
+            await renderAttendanceTrackerPage(mode);
+        });
+    }
 
     // Set up submit attendance button listener
     const submitBtn = document.getElementById('submit-attendance-btn');
