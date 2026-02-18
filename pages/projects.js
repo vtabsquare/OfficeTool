@@ -2714,6 +2714,7 @@ const crmTab = async (project) => {
     new URLSearchParams(window.location.hash.split("?")[1] || "").get(
       "boardName"
     ) || boardParam;
+  const resolvedBoardName = boardName;
 
   // Fetch columns from database
   let cols = [];
