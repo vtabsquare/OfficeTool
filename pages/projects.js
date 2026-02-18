@@ -2810,9 +2810,12 @@ const crmTab = async (project) => {
     </div>
   `;
 
+  const resolvedBoardName = boardName;
+  const boardParam = new URLSearchParams(window.location.hash.split("?")[1] || "").get("board") || "General";
+
   return `
     <div class="board-header" style="margin-bottom:10px; font-weight:700; color:#0f172a;">
-      Board: ${boardName}
+      Board: ${resolvedBoardName}
     </div>
     <div class="kan-wrap">
       ${listsHtml}
@@ -3422,6 +3425,10 @@ function initMultiSelect(elementId, items) {
 }
 
 function renderTaskFormPage(projectId, boardName, defaultStatus = "New") {
+  // Resolve board identifier safely from URL or fallback to provided name/General
+  const params = new URLSearchParams(window.location.hash.split("?")[1] || "");
+  const boardParam = params.get("board") || boardName || "General";
+  const resolvedBoardName = params.get("boardName") || boardName || boardParam;
   const app = document.getElementById("app-content");
 
   app.innerHTML = `
@@ -3547,7 +3554,7 @@ function renderTaskFormPage(projectId, boardName, defaultStatus = "New") {
   document.getElementById("task-back").onclick = () => {
     window.location.hash = `#/time-projects?id=${encodeURIComponent(
       projectId
-    )}&tab=crm&board=${encodeURIComponent(boardParam)}&boardName=${encodeURIComponent(boardName)}`;
+    )}&tab=crm&board=${encodeURIComponent(boardParam)}&boardName=${encodeURIComponent(resolvedBoardName)}`;
     renderProjectDetails(projectId, "crm");
   };
   document.getElementById("tk-cancel").onclick = () =>
