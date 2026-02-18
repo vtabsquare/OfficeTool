@@ -3591,6 +3591,7 @@ function renderTaskFormPage(projectId, boardName, defaultStatus = "New") {
       due_date: dueDate,
       // Store the board id so tasks stay scoped to their board
       board_name: boardParam,
+      board_id: boardParam,
     };
 
     const res = await fetch(
