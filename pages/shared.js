@@ -1398,20 +1398,6 @@ export const renderMyTimesheetPage = async () => {
                     <span id="ts-week-label" style="font-weight: 500; min-width: 280px; text-align: center;">${weekLabel}</span>
                     <button id="ts-next-week"><i class="fa-solid fa-chevron-right"></i></button>
                 </div>
-                <div class="ts-action-btns">
-                    <button id="ts-submit" class="btn" style="background: #fff; color: var(--primary-color); border: none; padding: 8px 20px;">SUBMIT</button>
-                </div>
-            </div>
-            ${statusBanner}
-            <div class="ts-summary">
-                <div>Total logged: <strong>${formatTimeDisplay(totalLoggedSecs)}</strong></div>
-                <div>Total billable: <strong>${formatTimeDisplay(totalBillableSecs)}</strong></div>
-            </div>
-            <div class="ts-table-wrapper">
-                <table class="ts-table">
-                    <thead>
-                        <tr>
-                            <th>Project</th>
                             <th>Task</th>
                             <th>Billing</th>
                             ${days.map(d => `<th>${d.toLocaleDateString('en-US', { weekday: 'short' })}<br><span style="font-size: 11px; color: #999;">${d.toLocaleDateString('en-US', { month: 'short', day: '2-digit' })}</span></th>`).join('')}
@@ -1629,11 +1615,75 @@ export const renderMyTimesheetPage = async () => {
             };
         }
 
-        // My Timesheet is read-only: disable all hour inputs and remove manual overrides
-        document.querySelectorAll('.ts-hour-input').forEach(inp => {
-            inp.setAttribute('readonly', 'readonly');
-            inp.setAttribute('disabled', 'disabled');
-        });
+        // Allow manual edits (mirrors Team Timesheet behaviour) with week-level overrides
+        (() => {
+            const weekKey = `ts_manual_${fmt(s)}_${fmt(e)}`;
+            const overridesKey = `${weekKey}_overrides`;
+            let overridesMap = {};
+            try { overridesMap = JSON.parse(sessionStorage.getItem(overridesKey) || '{}'); } catch { overridesMap = {}; }
+
+            const saveOverrides = () => {
+                try { sessionStorage.setItem(overridesKey, JSON.stringify(overridesMap)); } catch { }
+            };
+
+            const refreshTotals = () => {
+                let totalLogged = 0;
+                gridRows.forEach((row, idx) => {
+                    const key = rowKeyFor(row);
+                    const ov = overridesMap[key] || [];
+                    let rowSecs = 0;
+                    for (let i = 0; i < 7; i++) {
+                        const d = new Date(s); d.setDate(s.getDate() + i);
+                        const dStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+                        if (dStr > todayStr) continue;
+                        rowSecs += Number(ov[i] ?? row.hours[i] ?? 0);
+                    }
+                    totalLogged += rowSecs;
+                    const rowTotalCell = document.querySelectorAll('.ts-total')[idx];
+                    if (rowTotalCell) rowTotalCell.textContent = formatTime(rowSecs);
+                });
+                const tl = document.getElementById('ts-total-logged-val');
+                if (tl) tl.textContent = formatTime(totalLogged);
+                const tb = document.getElementById('ts-total-billable-val');
+                if (tb) tb.textContent = formatTime(totalLogged); // billable split not tracked per-row here
+            };
+
+            const validateAndSave = (inp) => {
+                const key = inp.getAttribute('data-key');
+                const dayIdx = Number(inp.getAttribute('data-day'));
+                if (!key || Number.isNaN(dayIdx)) return;
+                const raw = String(inp.value || '').trim();
+                if (!raw) {
+                    if (overridesMap[key]) overridesMap[key][dayIdx] = undefined;
+                    inp.classList.remove('manual');
+                    saveOverrides();
+                    refreshTotals();
+                    return;
+                }
+                const secs = parseToSeconds(raw);
+                if (!secs || secs < 0) {
+                    showToast('Enter time as HH:MM (e.g., 01:30)');
+                    inp.value = '';
+                    return;
+                }
+                if (!overridesMap[key]) overridesMap[key] = [];
+                overridesMap[key][dayIdx] = secs;
+                inp.classList.add('manual');
+                saveOverrides();
+                refreshTotals();
+            };
+
+            document.querySelectorAll('.ts-hour-input').forEach(inp => {
+                if (inp.disabled) return; // keep Sundays/future disabled
+                inp.removeAttribute('readonly');
+                inp.addEventListener('change', () => validateAndSave(inp));
+                inp.addEventListener('blur', () => validateAndSave(inp));
+            });
+
+            // Refresh totals on load in case overrides existed
+            refreshTotals();
+        })();
+
         const addRowBtn = document.getElementById('ts-add-row');
         if (addRowBtn) {
             if (canManageMyTimesheetRows()) {
