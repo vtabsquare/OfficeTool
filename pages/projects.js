@@ -2687,7 +2687,10 @@ const crmTab = async (project) => {
   if (tasksResult.error) {
     return `<div class="placeholder-text">Failed to load tasks: ${tasksResult.error}</div>`;
   }
-  const tasks = Array.isArray(tasksResult) ? tasksResult : [];
+  const tasks = (Array.isArray(tasksResult) ? tasksResult : []).filter((t) => {
+    const pid = String(t.project_id || t.projectId || t.project || '').trim().toUpperCase();
+    return pid === String(project.id || '').trim().toUpperCase();
+  });
 
   // Resolve board name for display and matching
   const boardName =
