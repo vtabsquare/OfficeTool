@@ -2759,7 +2759,7 @@ const crmTab = async (project) => {
     .map((col) => {
       const bg = col.color;
       const itemsHtml = col.items.length
-        ? col.items.map((t, idx) => taskCardHtml(t, idx)).join("")
+        ? col.items.map((t, idx) => taskCardHtml(t, idx, project.id)).join("")
         : `<div class="placeholder-text" style="color:rgba(255,255,255,0.7);">No tasks</div>`;
 
       return `
@@ -2768,7 +2768,7 @@ const crmTab = async (project) => {
           <strong style="font-size:14px; font-weight:600;">${col.name}</strong>
           <div style="display:flex; align-items:center; gap:8px;">
             <span class="badge" style="background:rgba(255,255,255,0.2); color:white;">${col.items.length}</span>
-            <button class="delete-col-btn" onclick="deleteColumn('${project.id}', '${col.name}')" style="background:none; border:none; color:rgba(255,255,255,0.8); cursor:pointer; padding:2px; font-size:14px;" title="Delete column">
+            <button class="delete-col-btn" onclick="deleteColumn('${project.id}', '${col.name}', ${col.items.length})" ${col.items.length ? 'disabled' : ''} style="background:none; border:none; color:${col.items.length ? 'rgba(255,255,255,0.4)' : 'rgba(255,255,255,0.8)'}; cursor:${col.items.length ? 'not-allowed' : 'pointer'}; padding:2px; font-size:14px;" title="${col.items.length ? 'Move tasks out before deleting' : 'Delete column'}">
               <i class="fa-solid fa-trash"></i>
             </button>
           </div>
@@ -2938,7 +2938,12 @@ if (typeof window !== "undefined") {
 // ==========================
 // Delete Column Function
 // ==========================
-function deleteColumn(projectId, columnName) {
+function deleteColumn(projectId, columnName, itemCount = 0) {
+  if (itemCount > 0) {
+    alert("Column has tasks, move them first before deleting.");
+    return;
+  }
+
   if (!confirm(`Are you sure you want to delete the column "${columnName}"? Any tasks in this column will remain but won't be visible until moved to another column.`)) {
     return;
   }
@@ -3009,12 +3014,15 @@ function attachCRMEventHandlers(projectId) {
   }
 }
 
-const taskCardHtml = (t, index) => {
-  const taskTitle = t.task_name || "Untitled Task";
-  const dueDate = t.due_date ? new Date(t.due_date) : null;
+function handleCardDelete(evt, taskId, projectId) {
+  if (evt && typeof evt.stopPropagation === "function") evt.stopPropagation();
+  deleteTask(taskId, projectId);
+}
 
-  // 🔹 Show index number
-  const taskNumber = t.display_index || "";
+function taskCardHtml(t, index, projectId) {
+  const taskTitle = escapeHtml(t.task_name || "Untitled Task");
+  const taskNumber = index + 1;
+  const dueDate = t.due_date ? new Date(t.due_date) : null;
 
   // 🔹 Assignee initials (max 2)
   const assignedPeople = (t.assigned_to || "")
@@ -3049,10 +3057,12 @@ const taskCardHtml = (t, index) => {
     : "—";
 
   return `
-    <div class="kan-card modern" draggable="true" data-id="${t.guid}" style="background:#ffffff !important; border-radius:8px; margin-bottom:8px; box-shadow:0 1px 3px rgba(0,0,0,0.1); border:1px solid rgba(0,0,0,0.1);">
-      <div class="card-top" style="padding:12px;">
-        <span class="card-title" style="color:#1f2937 !important; font-size:14px; line-height:1.4;"><strong>${taskNumber ? taskNumber + ". " : ""
-    }${taskTitle}</strong></span>
+    <div class="kan-card modern" draggable="true" data-id="${t.guid}" style="background:#ffffff !important; border-radius:8px; margin-bottom:8px; box-shadow:0 1px 3px rgba(0,0,0,0.1); border:1px solid rgba(0,0,0,0.1); position:relative;">
+      <div class="card-top" style="padding:12px; display:flex; justify-content:space-between; align-items:flex-start; gap:8px;">
+        <span class="card-title" style="color:#1f2937 !important; font-size:14px; line-height:1.4;"><strong>${taskNumber ? taskNumber + ". " : ""}${taskTitle}</strong></span>
+        <button class="task-del-btn" title="Delete task" onclick="handleCardDelete(event, '${t.guid}', '${projectId}')" style="background:transparent; border:none; color:#9ca3af; cursor:pointer; padding:2px;">
+          <i class="fa-solid fa-trash"></i>
+        </button>
       </div>
 
       <div class="card-mid" style="padding:0 12px;">
@@ -3066,7 +3076,7 @@ const taskCardHtml = (t, index) => {
       </div>
     </div>
   `;
-};
+}
 
 const enableDragDrop = (projectId, boardId) => {
   const lists = document.querySelectorAll(".kan-list");
