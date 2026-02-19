@@ -2660,9 +2660,10 @@ function getDefaultColor(name) {
   }
 }
 
-async function fetchProjectTasks(projectId) {
+async function fetchProjectTasks(projectId, boardId = "") {
   try {
-    const res = await fetch(`${API_BASE}/api/projects/${projectId}/tasks`);
+    const qs = boardId ? `?board_id=${encodeURIComponent(boardId)}` : "";
+    const res = await fetch(`${API_BASE}/api/projects/${projectId}/tasks${qs}`);
     const data = await res.json();
     if (!res.ok || !data.success) {
       throw new Error(data.error || "Failed to load tasks");
@@ -2683,7 +2684,7 @@ const crmTab = async (project) => {
       "board"
     ) || "General";
 
-  const tasksResult = await fetchProjectTasks(project.id);
+  const tasksResult = await fetchProjectTasks(project.id, boardParam);
   if (tasksResult.error) {
     return `<div class="placeholder-text">Failed to load tasks: ${tasksResult.error}</div>`;
   }

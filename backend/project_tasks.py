@@ -73,8 +73,13 @@ def get_tasks(project_code):
         token = get_access_token()
         hdrs = headers()
 
-        # 🔹 Fetch all tasks for the given project
-        url = f"{DATAVERSE_BASE}{DATAVERSE_API}/{ENTITY_SET_TASKS}?$filter=crc6f_projectid eq '{project_code}'"
+        # 🔹 Fetch all tasks for the given project (optionally scoped to a board)
+        board_id = (request.args.get("board_id") or "").strip()
+        filter_q = f"crc6f_projectid eq '{project_code}'"
+        if board_id:
+            filter_q += f" and crc6f_boardid eq '{board_id}'"
+
+        url = f"{DATAVERSE_BASE}{DATAVERSE_API}/{ENTITY_SET_TASKS}?$filter={filter_q}"
         res = requests.get(url, headers=hdrs, timeout=20)
 
         if not res.ok:
