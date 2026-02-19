@@ -1248,6 +1248,7 @@ export const renderMyTimesheetPage = async () => {
                 const sec = isFuture ? 0 : secRaw; // hide any future-dated values
                 const isManual = (row.manualFlags && row.manualFlags[dayIdx]) || (ov[dayIdx] !== undefined && ov[dayIdx] !== null);
                 const displayVal = sec ? formatTime(sec) : '';
+
                 const placeholderVal = isSunday ? 'Day off' : '00:00';
                 const icon = isFuture ? '' : (isManual ? `<i class="fa-solid fa-users" style="font-size:11px; color:#60a5fa; margin-left:4px;" title="Manually edited by admin"></i>` : (sec > 0 ? `<i class="fa-regular fa-clock" style="font-size:11px; color:#10b981; margin-left:4px;" title="Automatic capture (play/stop)"></i>` : ''));
                 return `
@@ -1260,7 +1261,8 @@ export const renderMyTimesheetPage = async () => {
                                    data-key="${key}"
                                    value="${displayVal}" 
                                    placeholder="${placeholderVal}" 
-                                   ${(isSunday || isFuture) ? 'disabled' : ''} />
+                                   ${(isSunday || isFuture) ? 'disabled' : ''} 
+                                   readonly />
                             ${icon}
                         </div>
                     </td>`;
@@ -1546,8 +1548,7 @@ export const renderMyTimesheetPage = async () => {
                     const key = rowKeyFor(row);
                     const ov = overridesMap[key] || [];
                     for (let i = 0; i < 7; i++) {
-                        const d = new Date(s);
-                        d.setDate(s.getDate() + i);
+                        const d = new Date(s); d.setDate(s.getDate() + i);
                         const yyyy = d.getFullYear();
                         const mm = String(d.getMonth() + 1).padStart(2, '0');
                         const dd = String(d.getDate()).padStart(2, '0');
@@ -1629,16 +1630,109 @@ export const renderMyTimesheetPage = async () => {
             };
         }
 
-        // My Timesheet is read-only: disable all hour inputs and remove manual overrides
+        // Enable inline edit on double-click; save to backend and refresh
+        const parseHHMM = (v) => {
+            const s = String(v || '').trim();
+            if (!s) return 0;
+            const m = s.match(/^([0-9]{1,2}):([0-5][0-9])$/);
+            if (!m) return null;
+            const h = parseInt(m[1], 10);
+            const mm = parseInt(m[2], 10);
+            return (h * 3600) + (mm * 60);
+        };
+
+        const saveCell = async (rowIdx, dayIdx, seconds) => {
+            const row = gridRows[rowIdx];
+            if (!row) return;
+            const dayDate = new Date(startOfWeek(anchor));
+            dayDate.setDate(startOfWeek(anchor).getDate() + dayIdx);
+            const yyyy = dayDate.getFullYear();
+            const mm = String(dayDate.getMonth() + 1).padStart(2, '0');
+            const dd = String(dayDate.getDate()).padStart(2, '0');
+            const workDate = `${yyyy}-${mm}-${dd}`;
+            // prevent future edit
+            const today = new Date();
+            const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+            if (workDate > todayStr) return;
+
+            const payload = {
+                employee_id: String(empId || '').toUpperCase(),
+                project_id: row.project_id || '',
+                task_guid: row.task_guid || '',
+                task_id: row.task_id || '',
+                task_name: row.task_name || '',
+                seconds: Number(seconds || 0),
+                work_date: workDate,
+                description: '',
+                role: 'l1',
+                editor_id: String(empId || '').toUpperCase(),
+                manual: true,
+            };
+
+            try {
+                const res = await fetch(`${API}/time-tracker/logs/exact`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok || !data.success) {
+                    showToast(data.error || 'Failed to save time');
+                    return;
+                }
+                // persist override for current week
+                const ovMap = loadOverrides();
+                const key = rowKeyFor(row);
+                const arr = ovMap[key] || [];
+                arr[dayIdx] = Number(seconds || 0);
+                ovMap[key] = arr;
+                saveOverrides(ovMap);
+                await render();
+            } catch (err) {
+                console.error('Cell save failed', err);
+                showToast('Failed to save time');
+            }
+        };
+
         document.querySelectorAll('.ts-hour-input').forEach(inp => {
-            inp.setAttribute('readonly', 'readonly');
-            inp.setAttribute('disabled', 'disabled');
+            // Double-click to edit
+            inp.addEventListener('dblclick', (e) => {
+                if (inp.hasAttribute('disabled')) return;
+                inp.removeAttribute('readonly');
+                inp.classList.add('manual');
+                setTimeout(() => { inp.focus(); inp.select(); }, 10);
+            });
+
+            const commit = () => {
+                const rowIdx = parseInt(inp.getAttribute('data-row'), 10);
+                const dayIdx = parseInt(inp.getAttribute('data-day'), 10);
+                const secs = parseHHMM(inp.value);
+                if (secs === null) {
+                    showToast('Enter time as HH:MM');
+                    return;
+                }
+                inp.setAttribute('readonly', 'readonly');
+                saveCell(rowIdx, dayIdx, secs);
+            };
+
+            inp.addEventListener('blur', commit);
+            inp.addEventListener('keydown', (ev) => {
+                if (ev.key === 'Enter') {
+                    ev.preventDefault();
+                    commit();
+                }
+                if (ev.key === 'Escape') {
+                    inp.setAttribute('readonly', 'readonly');
+                    render();
+                }
+            });
         });
         const addRowBtn = document.getElementById('ts-add-row');
         if (addRowBtn) {
             if (canManageMyTimesheetRows()) {
                 addRowBtn.removeAttribute('disabled');
                 addRowBtn.style.opacity = '';
+
                 addRowBtn.style.cursor = '';
             } else {
                 addRowBtn.setAttribute('disabled', 'disabled');
