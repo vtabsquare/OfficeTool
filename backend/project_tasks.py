@@ -117,15 +117,30 @@ def add_task(project_code):
         token = get_access_token()
         hdrs = headers()
 
-        # ✅ Generate and verify unique Task ID
-        generated_id = generate_task_id()
-        check_url = f"{DATAVERSE_BASE}{DATAVERSE_API}/{ENTITY_SET_TASKS}?$filter=crc6f_taskid eq '{generated_id}'"
-        check_res = requests.get(check_url, headers=hdrs, timeout=15)
+        # ✅ Generate and verify unique Task ID (retry if collision)
+        generated_id = None
+        candidate_id = generate_task_id()
+        attempt = 0
+        MAX_ATTEMPTS = 10
 
-        if check_res.ok:
-            existing = check_res.json().get("value", [])
-            if existing:
-                return jsonify({"success": False, "error": "Duplicate TASK ID not allowed"}), 400
+        while attempt < MAX_ATTEMPTS:
+            check_url = f"{DATAVERSE_BASE}{DATAVERSE_API}/{ENTITY_SET_TASKS}?$filter=crc6f_taskid eq '{candidate_id}'"
+            check_res = requests.get(check_url, headers=hdrs, timeout=15)
+
+            if check_res.ok:
+                existing = check_res.json().get("value", [])
+                if not existing:
+                    generated_id = candidate_id
+                    break
+
+            # Collision detected; increment numeric suffix and retry
+            match = re.search(r"TASK(\d+)", candidate_id)
+            next_num = int(match.group(1)) + 1 if match else attempt + 1
+            candidate_id = f"TASK{next_num:03d}"
+            attempt += 1
+
+        if not generated_id:
+            return jsonify({"success": False, "error": "Unable to generate unique TASK ID"}), 400
 
         # ✅ Continue if no duplicate found
         dv_payload = {
