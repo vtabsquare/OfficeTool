@@ -1630,7 +1630,7 @@ export const renderMyTimesheetPage = async () => {
             };
         }
 
-        // Enable inline edit on double-click; save to backend and refresh
+        // Enable edit via modal on double-click; save to backend and refresh
         const parseHHMM = (v) => {
             const s = String(v || '').trim();
             if (!s) return 0;
@@ -1694,39 +1694,75 @@ export const renderMyTimesheetPage = async () => {
             }
         };
 
-        document.querySelectorAll('.ts-hour-input').forEach(inp => {
-            // Double-click to edit
-            inp.addEventListener('dblclick', (e) => {
-                if (inp.hasAttribute('disabled')) return;
-                inp.removeAttribute('readonly');
-                inp.classList.add('manual');
-                setTimeout(() => { inp.focus(); inp.select(); }, 10);
-            });
+        const openCellEditModal = (rowIdx, dayIdx) => {
+            const row = gridRows[rowIdx];
+            if (!row) return;
+            const dayDate = new Date(startOfWeek(anchor));
+            dayDate.setDate(startOfWeek(anchor).getDate() + dayIdx);
+            const yyyy = dayDate.getFullYear();
+            const mm = String(dayDate.getMonth() + 1).padStart(2, '0');
+            const dd = String(dayDate.getDate()).padStart(2, '0');
+            const workDate = `${yyyy}-${mm}-${dd}`;
+            const today = new Date();
+            const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+            if (workDate > todayStr) {
+                showToast('Cannot edit future dates');
+                return;
+            }
 
-            const commit = () => {
+            const key = rowKeyFor(row);
+            const ovMap = loadOverrides();
+            const arr = ovMap[key] || [];
+            const currentSeconds = Number(arr[dayIdx] ?? row.hours?.[dayIdx] ?? 0);
+            const currentHHMM = formatSeconds(currentSeconds) || '';
+
+            const body = `
+                <div style="display:flex; flex-direction:column; gap:12px;">
+                    <div style="color:#475569; font-size:13px;">
+                        <div><strong>Date:</strong> ${workDate}</div>
+                        <div><strong>Project:</strong> ${row.project_id || row.project_name || '-'}</div>
+                        <div><strong>Task:</strong> ${row.task_id || row.task_name || '-'}</div>
+                    </div>
+                    <div class="form-group" style="display:flex; flex-direction:column; gap:6px;">
+                        <label for="ts-edit-time" style="font-weight:600;">Time (HH:MM)</label>
+                        <input id="ts-edit-time" type="text" placeholder="HH:MM" value="${currentHHMM}" style="padding:10px; border:1px solid #d7dce4; border-radius:10px;" />
+                    </div>
+                </div>`;
+
+            renderModal('Edit time entry', body, [
+                { id: 'ts-edit-cancel', text: 'Cancel', className: 'btn btn-secondary', type: 'button' },
+                { id: 'ts-edit-save', text: 'Save', className: 'btn btn-primary', type: 'button' }
+            ]);
+
+            setTimeout(() => {
+                const cancelBtn = document.getElementById('ts-edit-cancel');
+                const saveBtn = document.getElementById('ts-edit-save');
+                const input = document.getElementById('ts-edit-time');
+                input?.focus();
+                input?.select();
+
+                cancelBtn?.addEventListener('click', () => closeModal());
+                saveBtn?.addEventListener('click', async () => {
+                    const secs = parseHHMM(input?.value || '');
+                    if (secs === null) {
+                        showToast('Enter time as HH:MM');
+                        return;
+                    }
+                    closeModal();
+                    await saveCell(rowIdx, dayIdx, secs);
+                });
+            }, 20);
+        };
+
+        document.querySelectorAll('.ts-hour-input').forEach(inp => {
+            inp.addEventListener('dblclick', () => {
+                if (inp.hasAttribute('disabled')) return;
                 const rowIdx = parseInt(inp.getAttribute('data-row'), 10);
                 const dayIdx = parseInt(inp.getAttribute('data-day'), 10);
-                const secs = parseHHMM(inp.value);
-                if (secs === null) {
-                    showToast('Enter time as HH:MM');
-                    return;
-                }
-                inp.setAttribute('readonly', 'readonly');
-                saveCell(rowIdx, dayIdx, secs);
-            };
-
-            inp.addEventListener('blur', commit);
-            inp.addEventListener('keydown', (ev) => {
-                if (ev.key === 'Enter') {
-                    ev.preventDefault();
-                    commit();
-                }
-                if (ev.key === 'Escape') {
-                    inp.setAttribute('readonly', 'readonly');
-                    render();
-                }
+                openCellEditModal(rowIdx, dayIdx);
             });
         });
+
         const addRowBtn = document.getElementById('ts-add-row');
         if (addRowBtn) {
             if (canManageMyTimesheetRows()) {
