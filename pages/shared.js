@@ -1641,6 +1641,14 @@ export const renderMyTimesheetPage = async () => {
             return (h * 3600) + (mm * 60);
         };
 
+        const resolveRole = () => {
+            const u = state?.user || window.state?.user || {};
+            const isAdmin = !!u.is_admin || String(u.id || '').toUpperCase() === 'EMP001';
+            const roleStr = String(u.role || '').toLowerCase();
+            const isManager = !!u.is_manager || roleStr === 'l2' || String(u.designation || '').toLowerCase().includes('manager');
+            return isAdmin ? 'l3' : (isManager ? 'l2' : 'l2');
+        };
+
         const saveCell = async (rowIdx, dayIdx, seconds) => {
             const row = gridRows[rowIdx];
             if (!row) return;
