@@ -2749,12 +2749,15 @@ const crmTab = async (project) => {
         (boardNameField && (boardNameField === boardParam || boardNameField === boardName)) ||
         (!boardId && !boardNameField && boardParam.toLowerCase() === "general");
 
+      // Extra guard: ensure task project matches the current project even if upstream data is noisy
+      const projectMatches = String(t.project_id || t.projectId || t.project || "").toUpperCase() === String(project.id || "").toUpperCase();
+
       // Preserve board name for rendering in cards if available
       if (!t.board_name && boardDisplayName) {
         t.board_name = boardDisplayName;
       }
 
-      return statusMatches && boardMatches;
+      return statusMatches && boardMatches && projectMatches;
     }),
   }));
 
