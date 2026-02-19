@@ -1641,59 +1641,6 @@ export const renderMyTimesheetPage = async () => {
             return (h * 3600) + (mm * 60);
         };
 
-        const saveCell = async (rowIdx, dayIdx, seconds) => {
-            const row = gridRows[rowIdx];
-            if (!row) return;
-            const dayDate = new Date(startOfWeek(anchor));
-            dayDate.setDate(startOfWeek(anchor).getDate() + dayIdx);
-            const yyyy = dayDate.getFullYear();
-            const mm = String(dayDate.getMonth() + 1).padStart(2, '0');
-            const dd = String(dayDate.getDate()).padStart(2, '0');
-            const workDate = `${yyyy}-${mm}-${dd}`;
-            // prevent future edit
-            const today = new Date();
-            const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-            if (workDate > todayStr) return;
-
-            const payload = {
-                employee_id: String(empId || '').toUpperCase(),
-                project_id: row.project_id || '',
-                task_guid: row.task_guid || '',
-                task_id: row.task_id || '',
-                task_name: row.task_name || '',
-                seconds: Number(seconds || 0),
-                work_date: workDate,
-                description: '',
-                role: 'l1',
-                editor_id: String(empId || '').toUpperCase(),
-                manual: true,
-            };
-
-            try {
-                const res = await fetch(`${API}/time-tracker/logs/exact`, {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload),
-                });
-                const data = await res.json().catch(() => ({}));
-                if (!res.ok || !data.success) {
-                    showToast(data.error || 'Failed to save time');
-                    return;
-                }
-                // persist override for current week
-                const ovMap = loadOverrides();
-                const key = rowKeyFor(row);
-                const arr = ovMap[key] || [];
-                arr[dayIdx] = Number(seconds || 0);
-                ovMap[key] = arr;
-                saveOverrides(ovMap);
-                await render();
-            } catch (err) {
-                console.error('Cell save failed', err);
-                showToast('Failed to save time');
-            }
-        };
-
         const openCellEditModal = (rowIdx, dayIdx) => {
             const row = gridRows[rowIdx];
             if (!row) return;
