@@ -93,6 +93,7 @@ def get_tasks(project_code):
                 "assigned_to": t.get("crc6f_assignedto"),
                 "due_date": t.get("crc6f_duedate"),
                 "board_id": t.get("crc6f_boardid"),
+                "project_id": project_code,
                 "display_index": idx  # ✅ for 1, 2, 3 numbering
             })
 
