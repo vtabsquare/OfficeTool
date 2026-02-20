@@ -2,8 +2,58 @@ import { getPageContentHTML } from "../utils.js";
 import { state } from "../state.js";
 import { renderModal, closeModal } from "../components/modal.js";
 import { API_BASE_URL } from '../config.js';
+import { listAllEmployees } from '../features/employeeApi.js';
 
 const API_BASE = `${API_BASE_URL}/api/assets`;
+const EMPLOYEE_DIRECTORY_CACHE_TTL_MS = 5 * 60 * 1000;
+
+const escapeHtml = (value = "") =>
+  String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+
+let assetEmployeeDirectoryCache = {
+  data: [],
+  fetchedAt: 0,
+};
+
+const shapeEmployeeRecord = (entry = {}) => {
+  const id = String(entry.employee_id || entry.id || "").trim();
+  const name = (entry.name || [entry.first_name, entry.last_name].filter(Boolean).join(" ")).trim();
+  const email = String(entry.email || "").trim();
+  const displayName = name || email || id;
+  return {
+    id,
+    name: displayName,
+    department: entry.department || entry.team || "",
+  };
+};
+
+const loadEmployeeDirectoryForAssets = async () => {
+  const now = Date.now();
+  if (
+    assetEmployeeDirectoryCache.data.length &&
+    now - assetEmployeeDirectoryCache.fetchedAt < EMPLOYEE_DIRECTORY_CACHE_TTL_MS
+  ) {
+    return assetEmployeeDirectoryCache.data;
+  }
+  try {
+    const rawEmployees = await listAllEmployees();
+    const shaped = (rawEmployees || [])
+      .map(shapeEmployeeRecord)
+      .filter((emp) => emp.id && emp.name)
+      .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+    assetEmployeeDirectoryCache = { data: shaped, fetchedAt: now };
+    return shaped;
+  } catch (err) {
+    console.warn("Failed to load employee directory for assets", err);
+    assetEmployeeDirectoryCache = { data: [], fetchedAt: now };
+    return [];
+  }
+};
 
 // -------------------- FETCH ASSETS --------------------
 export const fetchAssets = async () => {
@@ -118,9 +168,42 @@ export const renderAssetsPage = async () => {
 };
 
 // -------------------- SHOW MODAL --------------------
-export const showAssetModal = (assetId) => {
+export const showAssetModal = async (assetId) => {
   const isEditMode = Boolean(assetId);
   const asset = isEditMode ? state.assets.find((a) => a.id === assetId) : null;
+
+  const employees = await loadEmployeeDirectoryForAssets();
+  let hasPrefilledSelection = false;
+  const employeeOptions = employees
+    .map((emp) => {
+      const isSelected = Boolean(
+        (asset?.employeeId && emp.id && emp.id.toUpperCase() === asset.employeeId.toUpperCase()) ||
+          (!asset?.employeeId && asset?.assignedTo && emp.name && emp.name.toLowerCase() === asset.assignedTo.toLowerCase())
+      );
+      if (isSelected) hasPrefilledSelection = true;
+      const label = emp.department ? `${emp.name} · ${emp.department}` : emp.name;
+      return `<option value="${escapeHtml(emp.id)}" data-name="${escapeHtml(emp.name)}"${isSelected ? " selected" : ""}>${escapeHtml(label)}</option>`;
+    })
+    .join("");
+
+  let fallbackOption = "";
+  if (!hasPrefilledSelection && asset?.assignedTo) {
+    const label = asset.employeeId ? `${asset.assignedTo} (${asset.employeeId})` : asset.assignedTo;
+    fallbackOption = `<option value="${escapeHtml(asset?.employeeId || "")}" data-name="${escapeHtml(asset.assignedTo)}" selected>${escapeHtml(label)} • Not in directory</option>`;
+    hasPrefilledSelection = true;
+  }
+
+  const hasEmployeeOptions = Boolean(employeeOptions || fallbackOption);
+  const placeholderSelectedAttr = hasPrefilledSelection ? "" : " selected";
+  const placeholderLabel = employees.length ? "Select employee" : "No employees available";
+  const assignedDropdownHTML = `
+      <select class="input-control" id="assignedTo" ${hasEmployeeOptions ? "" : "disabled"}>
+          <option value="" disabled${placeholderSelectedAttr}>${placeholderLabel}</option>
+          ${fallbackOption}
+          ${employeeOptions || ""}
+      </select>
+  `;
+  const employeeIdReadonlyAttr = hasEmployeeOptions ? "readonly" : "";
 
   const formHTML = `
       <div class="modal-form modern-form asset-form">
@@ -184,12 +267,12 @@ export const showAssetModal = (assetId) => {
                   </div>
                   <div class="form-field">
                       <label class="form-label" for="assignedTo">Assigned To</label>
-                      <input class="input-control" type="text" id="assignedTo" value="${asset?.assignedTo || ""}" placeholder="John Doe">
-                     <p class="helper-text">Employee name who is currently using this asset.</p>
+                      ${assignedDropdownHTML}
+                     <p class="helper-text">Select the employee currently using this asset.</p>
                   </div>
                   <div class="form-field">
                       <label class="form-label" for="employeeId">Employee ID</label>
-                      <input class="input-control" type="text" id="employeeId" value="${asset?.employeeId || ""}" placeholder="EMP-001">
+                      <input class="input-control" type="text" id="employeeId" value="${asset?.employeeId || ""}" placeholder="EMP-001" ${employeeIdReadonlyAttr}>
                   </div>
               </div>
           </div>
@@ -221,10 +304,32 @@ export const showAssetModal = (assetId) => {
     }
   };
   document.getElementById("cancel-asset-btn").onclick = closeModal;
+
+  const assignedSelect = document.getElementById("assignedTo");
+  const employeeIdInput = document.getElementById("employeeId");
+  if (assignedSelect && employeeIdInput && !assignedSelect.disabled) {
+    const syncEmployeeId = () => {
+      const selectedOption = assignedSelect.options[assignedSelect.selectedIndex];
+      if (selectedOption && selectedOption.value) {
+        employeeIdInput.value = selectedOption.value;
+      } else if (!isEditMode) {
+        employeeIdInput.value = "";
+      }
+    };
+    assignedSelect.addEventListener("change", syncEmployeeId);
+    syncEmployeeId();
+  }
 };
 
 export const handleSaveAsset = async (assetId) => {
   const isEditMode = Boolean(assetId);
+
+  const assignedSelect = document.getElementById("assignedTo");
+  const selectedAssignedOption = assignedSelect
+    ? assignedSelect.options[assignedSelect.selectedIndex]
+    : null;
+  const assignedEmployeeName = selectedAssignedOption?.dataset?.name || selectedAssignedOption?.textContent?.trim() || "";
+  const assignedEmployeeId = selectedAssignedOption?.value || "";
 
   const category = document.getElementById("assetCategory").value;
   const assetData = {
@@ -233,8 +338,8 @@ export const handleSaveAsset = async (assetId) => {
     crc6f_assetcategory: category,
     crc6f_location: document.getElementById("assetLocation").value,
     crc6f_assetstatus: document.getElementById("assetStatus").value,
-    crc6f_assignedto: document.getElementById("assignedTo").value,
-    crc6f_employeeid: document.getElementById("employeeId").value,
+    crc6f_assignedto: assignedEmployeeName || "",
+    crc6f_employeeid: assignedEmployeeId || document.getElementById("employeeId").value,
     crc6f_assignedon: document.getElementById("assignedOn").value,
   };
 

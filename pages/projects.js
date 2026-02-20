@@ -3422,8 +3422,10 @@ function initMultiSelect(elementId, items) {
 function renderTaskFormPage(projectId, boardName, defaultStatus = "New") {
   // Resolve board identifier safely from URL or fallback to provided name/General
   const params = new URLSearchParams(window.location.hash.split("?")[1] || "");
-  const boardParam = params.get("board") || boardName || "General";
-  const resolvedBoardName = params.get("boardName") || boardName || boardParam;
+  const boardParamRaw = params.get("board") || boardName || "General";
+  const boardNameRaw = params.get("boardName") || boardName || boardParamRaw;
+  const boardParam = decodeURIComponent(boardParamRaw);
+  const resolvedBoardName = decodeURIComponent(boardNameRaw);
   const app = document.getElementById("app-content");
 
   app.innerHTML = `
@@ -3583,6 +3585,9 @@ function renderTaskFormPage(projectId, boardName, defaultStatus = "New") {
     const assignedUsers = window.getAssignedUsers();
     const assignedTo = assignedUsers.map((u) => u.name).join(", ");
 
+    const boardIdValue = boardParam;
+    const boardNameValue = resolvedBoardName || boardParam;
+
     const payload = {
       task_name: document.getElementById("tk-name").value.trim(),
       task_description: document.getElementById("tk-desc").value.trim(),
@@ -3591,9 +3596,9 @@ function renderTaskFormPage(projectId, boardName, defaultStatus = "New") {
       assigned_to: assignedTo, // ✅ FIXED
       assigned_date: startDate,
       due_date: dueDate,
-      // Store the board id so tasks stay scoped to their board
-      board_name: boardParam,
-      board_id: boardParam,
+      // Store both board id + human-readable name so tasks stay scoped to current board
+      board_name: boardNameValue,
+      board_id: boardIdValue,
     };
 
     const res = await fetch(
