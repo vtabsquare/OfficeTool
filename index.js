@@ -402,11 +402,16 @@ const hydrateUserProfileFromDirectory = ({ forceRefresh = false } = {}) => {
   const hydrationPromise = (async () => {
     const fallbackProfile = { ...(state?.user || {}) };
     const currentId = String(fallbackProfile.id || '').trim().toUpperCase();
-    if (!currentId) return fallbackProfile;
+    const currentEmail = String(fallbackProfile.email || '').trim().toLowerCase();
+    if (!currentId && !currentEmail) return fallbackProfile;
 
     try {
       const employees = await listAllEmployees(forceRefresh);
-      const match = (employees || []).find((e) => String(e.employee_id || e.id || '').trim().toUpperCase() === currentId);
+      const match = (employees || []).find((e) => {
+        const employeeId = String(e.employee_id || e.id || '').trim().toUpperCase();
+        const employeeEmail = String(e.email || '').trim().toLowerCase();
+        return (currentId && employeeId === currentId) || (currentEmail && employeeEmail === currentEmail);
+      });
       if (!match) return fallbackProfile;
 
       const fullName = match.name || [match.first_name, match.last_name].filter(Boolean).join(' ').trim();
