@@ -393,6 +393,84 @@ const updateHeaderAvatar = () => {
   }
 };
 
+let profileHydrationInFlight = null;
+const hydrateUserProfileFromDirectory = ({ forceRefresh = false } = {}) => {
+  if (profileHydrationInFlight && !forceRefresh) {
+    return profileHydrationInFlight;
+  }
+
+  const hydrationPromise = (async () => {
+    const fallbackProfile = { ...(state?.user || {}) };
+    const currentId = String(fallbackProfile.id || '').trim().toUpperCase();
+    if (!currentId) return fallbackProfile;
+
+    try {
+      const employees = await listAllEmployees(forceRefresh);
+      const match = (employees || []).find((e) => String(e.employee_id || e.id || '').trim().toUpperCase() === currentId);
+      if (!match) return fallbackProfile;
+
+      const fullName = match.name || [match.first_name, match.last_name].filter(Boolean).join(' ').trim();
+      const resolvedPhoto = match.photo || match.avatarUrl || fallbackProfile.avatarUrl;
+      const hydratedProfile = {
+        ...fallbackProfile,
+        id: match.employee_id || match.id || fallbackProfile.id,
+        name: fullName || fallbackProfile.name,
+        designation: match.designation || fallbackProfile.designation,
+        email: match.email || fallbackProfile.email,
+        contact_number: match.contact_number || match.contact || fallbackProfile.contact_number || fallbackProfile.phone,
+        address: match.address || fallbackProfile.address || match.location,
+        department: match.department || fallbackProfile.department,
+        doj: match.doj || fallbackProfile.doj,
+        avatarUrl: resolvedPhoto,
+        initials:
+          fallbackProfile.initials ||
+          (fullName ? fullName.split(' ').map((p) => p[0]).join('').slice(0, 2).toUpperCase() : fallbackProfile.initials) ||
+          'U',
+      };
+
+      state.user = {
+        ...(state.user || {}),
+        id: hydratedProfile.id,
+        name: hydratedProfile.name,
+        designation: hydratedProfile.designation,
+        email: hydratedProfile.email,
+        contact_number: hydratedProfile.contact_number,
+        address: hydratedProfile.address,
+        department: hydratedProfile.department,
+        doj: hydratedProfile.doj,
+        avatarUrl: resolvedPhoto,
+        initials: hydratedProfile.initials,
+      };
+
+      try {
+        const authRaw = localStorage.getItem('auth');
+        if (authRaw) {
+          const parsed = JSON.parse(authRaw);
+          if (parsed && parsed.user) {
+            parsed.user.avatarUrl = resolvedPhoto;
+            parsed.user.name = hydratedProfile.name || parsed.user.name;
+            parsed.user.email = hydratedProfile.email || parsed.user.email;
+            localStorage.setItem('auth', JSON.stringify(parsed));
+          }
+        }
+      } catch { }
+
+      updateHeaderAvatar();
+      return hydratedProfile;
+    } catch (err) {
+      console.warn('Failed to hydrate user profile from directory', err);
+      return fallbackProfile;
+    }
+  })().finally(() => {
+    if (profileHydrationInFlight === hydrationPromise) {
+      profileHydrationInFlight = null;
+    }
+  });
+
+  profileHydrationInFlight = hydrationPromise;
+  return hydrationPromise;
+};
+
 const openProfilePanel = async () => {
   // Show lightweight loader
   const loaderId = 'profile-loader-toast';
@@ -412,49 +490,7 @@ const openProfilePanel = async () => {
   }
 
   try {
-    const currentId = String(state?.user?.id || '').toUpperCase();
-    let profile = { ...(state?.user || {}) };
-
-    // Attempt to hydrate from master employee directory (crc6f_table12s)
-    if (currentId) {
-      try {
-        const employees = await listAllEmployees();
-        const match = (employees || []).find(e => String(e.employee_id || e.id || '').toUpperCase() === currentId);
-        if (match) {
-          const fullName = match.name ||
-            [match.first_name, match.last_name].filter(Boolean).join(' ').trim();
-          const resolvedPhoto = match.photo || match.avatarUrl || profile.avatarUrl;
-          profile = {
-            ...profile,
-            id: match.employee_id || match.id || profile.id,
-            name: fullName || profile.name,
-            designation: match.designation || profile.designation,
-            email: match.email || profile.email,
-            contact_number: match.contact_number || match.contact || profile.contact_number || profile.phone,
-            address: match.address || profile.address || match.location,
-            department: match.department || profile.department,
-            doj: match.doj || profile.doj,
-            avatarUrl: resolvedPhoto,
-            initials: profile.initials || (fullName ? fullName.split(' ').map((p) => p[0]).join('').slice(0, 2).toUpperCase() : profile.initials),
-          };
-          // Persist photo to user state for header/avatar reuse
-          state.user = { ...(state.user || {}), avatarUrl: resolvedPhoto, name: profile.name, email: profile.email };
-          try {
-            const authRaw = localStorage.getItem('auth');
-            if (authRaw) {
-              const parsed = JSON.parse(authRaw);
-              if (parsed && parsed.user) {
-                parsed.user.avatarUrl = resolvedPhoto;
-                localStorage.setItem('auth', JSON.stringify(parsed));
-              }
-            }
-          } catch {}
-        }
-      } catch (err) {
-        console.warn('Failed to load employee profile from master table', err);
-      }
-    }
-
+    const profile = await hydrateUserProfileFromDirectory();
     renderProfileOverlay(profile);
   } finally {
     const toast = document.getElementById(loaderId);
@@ -794,6 +830,7 @@ const init = async () => {
 
   // Apply header avatar (handles stored photo)
   updateHeaderAvatar();
+  hydrateUserProfileFromDirectory().catch(() => {});
 
   initTheme();
 
