@@ -148,6 +148,9 @@ def add_task(project_code):
         if not generated_id:
             return jsonify({"success": False, "error": "Unable to generate unique TASK ID"}), 400
 
+        # Resolve board identifier (accept both legacy board_name and new board_id field)
+        board_identifier = body.get("board_id") or body.get("board_name")
+
         # ✅ Continue if no duplicate found
         dv_payload = {
             "crc6f_taskid": generated_id,
@@ -159,7 +162,7 @@ def add_task(project_code):
             "crc6f_assigneddate": body.get("assigned_date"),
             "crc6f_duedate": body.get("due_date"),
             "crc6f_projectid": project_code,
-            "crc6f_boardid": body.get("board_name"),
+            "crc6f_boardid": board_identifier,
         }
 
         dv_payload = {k: v for k, v in dv_payload.items() if v not in (None, "", [])}
