@@ -5407,12 +5407,12 @@ body.dark-theme .kan-col {
   border: 1px solid var(--border-color) !important;
 }
 
-/* Darken kanban columns in dark theme so fades go to black instead of white */
+/* Dark theme Kanban: let columns fade to transparent, not a colored overlay */
 body.dark-theme .kan-list {
-  background-color: rgba(0, 0, 0, 0.45) !important;
-  background-blend-mode: multiply;
-  filter: brightness(0.82) saturate(0.95);
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.35) !important;
+  background-color: transparent !important;
+  background-blend-mode: normal;
+  filter: none;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.25) !important;
   border-color: rgba(255, 255, 255, 0.08) !important;
 }
 
