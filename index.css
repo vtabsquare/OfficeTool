@@ -5520,8 +5520,10 @@ body.dark-theme .form-section-title {
 
 /* Dark Theme Assignee Circle */
 body.dark-theme .assignee-circle {
-  background: rgba(99, 102, 241, 0.2);
-  color: var(--text-light);
+  background: #4f46e5;
+  color: #fff;
+  border: 2px solid rgba(255, 255, 255, 0.28);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.25);
 }
 
 /* Dark Theme Multi-Select */
