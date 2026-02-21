@@ -767,7 +767,8 @@ export const renderMyTasksPage = async () => {
             const timeText = (isRunning || isPaused || runSecs > 0) ? `<span class="running" style="color:${color}; font-weight:600;">${fmt(runSecs)}</span>` : '-';
             const toggleIcon = isRunning ? 'fa-pause' : 'fa-play';
             const toggleTitle = isRunning ? 'Pause' : (isPaused ? 'Resume' : 'Start');
-            const canNavigate = t.project_id && t.board_id;
+            const canNavigate = !!t.project_id;
+
             const taskLabel = `
               <div style="display:flex; align-items:center; gap:10px;">
                 <i class="fa-regular fa-calendar"></i>
@@ -776,8 +777,8 @@ export const renderMyTasksPage = async () => {
                     ? `<button type="button"
                                class="task-link"
                                data-project="${encodeURIComponent(t.project_id)}"
-                               data-board="${encodeURIComponent(t.board_id)}"
-                               title="Open project board">
+                               ${t.board_id ? `data-board="${encodeURIComponent(t.board_id)}"` : ''}
+                               title="Open project page">
                           ${t.task_name || ''}
                        </button>`
                     : `<div style="font-weight:600;">${t.task_name || ''}</div>`}
@@ -785,10 +786,11 @@ export const renderMyTasksPage = async () => {
                 </div>
               </div>`;
             return `
-            <tr data-guid="${t.guid}">
+            <tr data-guid="${t.guid}" ${canNavigate ? `data-project="${encodeURIComponent(t.project_id)}" ${t.board_id ? `data-board="${encodeURIComponent(t.board_id)}"` : ''} class="task-row-clickable"` : ''}>
               <td class="actions-cell" style="width:50px; text-align:left;">
                 <button class="action-btn toggle-timer" title="${toggleTitle}"><i class="fa-solid ${toggleIcon}"></i></button>
               </td>
+
               <td>${taskLabel}</td>
               <td>${projectName}</td>
               <td>${clientName}</td>
@@ -855,6 +857,7 @@ export const renderMyTasksPage = async () => {
 
         document.querySelectorAll('tr[data-guid] .action-btn.toggle-timer').forEach(btn => {
             btn.addEventListener('click', (e) => {
+                e.stopPropagation();
                 const tr = e.currentTarget.closest('tr');
                 const guid = tr?.getAttribute('data-guid');
                 const t = tasks.find(x => x.guid === guid);
@@ -866,12 +869,28 @@ export const renderMyTasksPage = async () => {
 
         document.querySelectorAll('.task-link').forEach(btn => {
             btn.addEventListener('click', (e) => {
+                e.stopPropagation();
                 const projectId = e.currentTarget.getAttribute('data-project');
                 const boardId = e.currentTarget.getAttribute('data-board');
-                if (!projectId || !boardId) return;
-                window.location.hash = `#/time-projects?id=${projectId}&tab=crm&board=${boardId}`;
+                if (!projectId) return;
+                const boardPart = boardId ? `&tab=crm&board=${boardId}` : '';
+                const tabPart = boardId ? '' : '&tab=crm';
+                window.location.hash = `#/time-projects?id=${projectId}${tabPart}${boardPart}`;
             });
         });
+
+        document.querySelectorAll('tr.task-row-clickable').forEach(tr => {
+            tr.style.cursor = 'pointer';
+            tr.addEventListener('click', () => {
+                const projectId = tr.getAttribute('data-project');
+                const boardId = tr.getAttribute('data-board');
+                if (!projectId) return;
+                const boardPart = boardId ? `&tab=crm&board=${boardId}` : '';
+                const tabPart = boardId ? '' : '&tab=crm';
+                window.location.hash = `#/time-projects?id=${projectId}${tabPart}${boardPart}`;
+            });
+        });
+
 
         // Start timer interval if there's an active timer (running or paused)
         if (timerInterval) clearInterval(timerInterval);
