@@ -422,10 +422,10 @@ input[type="checkbox"] {
 .page-header {
   background: var(--surface-color);
   border-radius: var(--radius-lg);
-  padding: 1.5rem 2rem;
+  padding: 1rem 1.25rem;
   box-shadow: var(--shadow-sm);
   border: 1px solid var(--border-color);
-  margin-bottom: 2rem;
+  margin-bottom: 0.85rem;
   display: flex;
   align-items: center;
   justify-content: space-between;
