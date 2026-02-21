@@ -5407,6 +5407,24 @@ body.dark-theme .kan-col {
   border: 1px solid var(--border-color) !important;
 }
 
+/* Darken kanban columns in dark theme so fades go to black instead of white */
+body.dark-theme .kan-list {
+  background-color: rgba(0, 0, 0, 0.45) !important;
+  background-blend-mode: multiply;
+  filter: brightness(0.82) saturate(0.95);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.35) !important;
+  border-color: rgba(255, 255, 255, 0.08) !important;
+}
+
+body.dark-theme .kan-head {
+  color: #e2e8f0 !important;
+}
+
+body.dark-theme .kan-head .badge {
+  background: rgba(255, 255, 255, 0.16) !important;
+  color: #fff !important;
+}
+
 /* Dark Theme Kanban Column Tints (override light pastel inline colors) */
 body.dark-theme .kan-col[data-col="New"] {
   background: linear-gradient(135deg, rgba(148, 163, 184, 0.22), rgba(30, 41, 59, 0.9)) !important;
