@@ -592,9 +592,38 @@ async function showActionSuccess(actionResult) {
             
             // 🌐 Background: Capture location and call SAME API as manual button (non-blocking)
             (async () => {
-                try {
+                const normalizeMsg = (err) => {
+                    if (!err) return '';
+                    if (typeof err === 'string') return err.toLowerCase();
+                    if (err?.message) return String(err.message || '').toLowerCase();
+                    return '';
+                };
+
+                const performCheckout = async () => {
                     const location = await getGeolocation();
-                    const result = await checkOut(uid, location);
+                    return checkOut(uid, location);
+                };
+
+                const performCheckinThenCheckout = async () => {
+                    const location = await getGeolocation();
+                    await checkIn(uid, location);
+                    return checkOut(uid, location);
+                };
+
+                try {
+                    let result;
+                    try {
+                        result = await performCheckout();
+                    } catch (err) {
+                        const msg = normalizeMsg(err);
+                        const noActive = msg.includes('no active check-in') || msg.includes('no active checkin') || msg.includes('active check-in found');
+                        if (noActive) {
+                            console.warn('[AI] No active session on checkout; performing auto check-in then checkout');
+                            result = await performCheckinThenCheckout();
+                        } else {
+                            throw err;
+                        }
+                    }
                     
                     // Sync with backend if it has a larger total
                     let backendTotal = 0;
