@@ -1302,8 +1302,9 @@ export const renderMyTimesheetPage = async () => {
             // Task ID only (not task name)
             const taskId = row.task_id || row.task_name || 'Manual Task';
 
+            const rowProjectId = row.project_id || row.projectId || row.project;
             return `
-                <tr data-row-id="${row.id || idx}" ${row._manual ? 'data-manual="1"' : ''}>
+                <tr data-row-id="${row.id || idx}" ${row._manual ? 'data-manual="1"' : ''} ${rowProjectId ? `data-project="${encodeURIComponent(rowProjectId)}" class="ts-row-clickable"` : ''}>
                     <td>
                         <div style="padding: 8px; font-weight: 500; color: #334155 !important;">${projectName}</div>
                     </td>
@@ -1785,6 +1786,19 @@ export const renderMyTimesheetPage = async () => {
                 const rowIdx = parseInt(inp.getAttribute('data-row'), 10);
                 const dayIdx = parseInt(inp.getAttribute('data-day'), 10);
                 openCellEditModal(rowIdx, dayIdx);
+            });
+        });
+
+        // Make entire timesheet rows navigate to their project page (ignore clicks on form controls)
+        document.querySelectorAll('tr.ts-row-clickable').forEach(tr => {
+            tr.style.cursor = 'pointer';
+            tr.addEventListener('click', (e) => {
+                const tag = (e.target && e.target.tagName) || '';
+                const skipTags = ['INPUT', 'SELECT', 'TEXTAREA', 'OPTION', 'BUTTON', 'LABEL'];
+                if (skipTags.includes(tag)) return;
+                const projectId = tr.getAttribute('data-project');
+                if (!projectId) return;
+                window.location.hash = `#/time-projects?id=${projectId}&tab=crm`;
             });
         });
 
