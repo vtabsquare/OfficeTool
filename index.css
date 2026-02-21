@@ -8995,10 +8995,12 @@ body.dark-theme .onboarding-main-stepper .stepper-item.completed .stepper-label-
   width: 28px;
   height: 28px;
   border-radius: 50%;
-  background: var(--surface-alt);
+  background: #4f46e5;
   font-size: 12px;
-  font-weight: 600;
-  color: var(--text-primary);
+  font-weight: 700;
+  color: #fff;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.08);
   margin-right: 4px;
 }
 
