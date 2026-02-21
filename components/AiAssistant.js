@@ -607,6 +607,8 @@ async function showActionSuccess(actionResult) {
                 const performCheckinThenCheckout = async () => {
                     const location = await getGeolocation();
                     await checkIn(uid, location);
+                    // small delay to let backend persist before checkout
+                    await new Promise((r) => setTimeout(r, 400));
                     return checkOut(uid, location);
                 };
 
