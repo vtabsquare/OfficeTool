@@ -1,6 +1,6 @@
 export const deriveRoleInfo = (payload = {}) => {
   const normalize = (val = '') => String(val || '').trim().toUpperCase();
-  const allowed = new Set(['L1', 'L2', 'L3']);
+  const allowed = new Set(['L1', 'L2', 'L3', 'L4']);
 
   let role = normalize(payload.access_level || payload.role);
   if (!allowed.has(role)) {
@@ -10,7 +10,9 @@ export const deriveRoleInfo = (payload = {}) => {
       role = 'L2';
     } else {
       const designation = String(payload.designation || '').toLowerCase();
-      if (designation.includes('admin') || designation.includes('hr')) {
+      if (designation.includes('team lead') || designation.includes('lead')) {
+        role = 'L4';
+      } else if (designation.includes('admin') || designation.includes('hr')) {
         role = 'L3';
       } else if (designation.includes('manager')) {
         role = 'L2';

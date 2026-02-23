@@ -514,7 +514,8 @@ const openAddLoginModal = () => {
                     <div class="form-field">
                         <label class="form-label" for="login-access-level">Access Level</label>
                         <select id="login-access-level" class="input-control">
-                            <option value="L1">L1 - User</option>
+                            <option value="L1" selected>L1 - User</option>
+                            <option value="L4">L4 - Team Lead</option>
                             <option value="L2">L2 - Manager</option>
                             <option value="L3">L3 - Admin</option>
                         </select>
@@ -575,6 +576,7 @@ const openEditLoginModal = (account) => {
                         <label class="form-label" for="login-edit-access-level">Access Level</label>
                         <select id="login-edit-access-level" class="input-control">
                             <option value="L1" ${account.accessLevel === 'L1' ? 'selected' : ''}>L1 - User</option>
+                            <option value="L4" ${account.accessLevel === 'L4' ? 'selected' : ''}>L4 - Team Lead</option>
                             <option value="L2" ${account.accessLevel === 'L2' ? 'selected' : ''}>L2 - Manager</option>
                             <option value="L3" ${account.accessLevel === 'L3' ? 'selected' : ''}>L3 - Admin</option>
                         </select>

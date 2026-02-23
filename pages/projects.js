@@ -2,6 +2,7 @@ import { getPageContentHTML } from "../utils.js";
 import { renderModal, closeModal } from "../components/modal.js";
 import { state as appState } from "../state.js";
 import { apiBase } from "../config.js";
+import { getUserAccessContext } from "../utils/accessControl.js";
 
 // // ROLE CHECKER
 // function getUserRole() {
@@ -209,30 +210,22 @@ const handleProjectBulkUpload = async (e) => {
 
 const getProjectAccess = () => {
   try {
-    const rawRole = (
-      appState?.user?.role ||
-      window?.state?.user?.role ||
-      localStorage.getItem("role") ||
-      ""
-    )
-      .toString()
-      .trim();
-    const normalizedRole = rawRole ? rawRole.toUpperCase() : "";
-    const hasAdminFlag = !!(appState?.user?.is_admin || window?.state?.user?.is_admin);
-    const hasManagerFlag = !!(appState?.user?.is_manager || window?.state?.user?.is_manager);
-    const designation = (appState?.user?.designation || "").toString().toLowerCase();
-    const derivedRole =
-      normalizedRole ||
-      (hasAdminFlag ? "L3" : "") ||
-      (hasManagerFlag ? "L2" : "") ||
-      (designation.includes("manager") ? "L2" : "") ||
-      (designation.includes("hr") ? "L3" : "") ||
-      "L1";
-    const isAdmin = hasAdminFlag || ["L3", "ADMIN"].includes(derivedRole);
-    const isManager = hasManagerFlag || ["L2", "MANAGER"].includes(derivedRole);
-    return { role: derivedRole, canManage: isAdmin || isManager };
+    const { role, isAdmin, isManager } = getUserAccessContext();
+    const isTeamLead = role === "L4";
+    const canManage = isAdmin || isManager;
+    const canManageTasks = canManage || isTeamLead;
+    return { role, canManage, canManageTasks, isTeamLead };
   } catch {
-    return { role: "L1", canManage: false };
+    return { role: "L1", canManage: false, canManageTasks: false, isTeamLead: false };
+  }
+};
+
+const wireCrmTaskControls = (projectId) => {
+  const { canManage, canManageTasks } = getProjectAccess();
+  if (canManage) {
+    attachCRMEventHandlers(projectId);
+  } else if (canManageTasks) {
+    document.getElementById("crm-add-task")?.addEventListener("click", () => showTaskModal(projectId, "New"));
   }
 };
 
@@ -1086,9 +1079,30 @@ const renderProjectDetails = (id, tab) => {
     window.location.hash = "#/time-projects";
     return;
   }
-  const { canManage } = getProjectAccess();
+  const { canManage, canManageTasks } = getProjectAccess();
 
   const tabs = ["details", "contributors", "boards", "crm"];
+
+  const crmControls = tab === "crm"
+    ? (canManage
+        ? `
+        <div class="dropdown">
+          <button id="crm-add-dd" class="btn btn-light" style="background:white; color:var(--primary-color); font-weight:600; border-radius:8px;">
+            ADD NEW <i class="fa-solid fa-caret-down"></i>
+          </button>
+          <div id="crm-add-menu" class="dropdown-menu" style="display:none;">
+            <button class="dropdown-item" data-type="Task">Task</button>
+            <button class="dropdown-item" data-type="Bug">Bug</button>
+          </div>
+        </div>
+        <button class="btn btn-secondary" title="Board"><i class="fa-solid fa-table-columns"></i></button>
+        <button class="btn btn-secondary" title="List"><i class="fa-solid fa-list"></i></button>
+        <button class="btn btn-secondary" title="Filter"><i class="fa-solid fa-filter"></i></button>
+        `
+        : canManageTasks
+          ? '<button id="crm-add-task" class="btn btn-light" style="background:white; color:var(--primary-color); font-weight:600; border-radius:8px;"><i class="fa-solid fa-plus"></i> ADD TASK</button>'
+          : "")
+    : "";
 
   const tabsHtml = `
   <div class="tabs">
@@ -1126,23 +1140,7 @@ const renderProjectDetails = (id, tab) => {
       ? '<button id="board-add" class="btn btn-light" style="background:white; color:var(--primary-color); font-weight:600; border-radius:8px;">ADD NEW</button>'
       : ""
     }
-      ${tab === "crm" && canManage
-      ? `
-        <div class="dropdown">
-          <button id="crm-add-dd" class="btn btn-light" style="background:white; color:var(--primary-color); font-weight:600; border-radius:8px;">
-            ADD NEW <i class="fa-solid fa-caret-down"></i>
-          </button>
-          <div id="crm-add-menu" class="dropdown-menu" style="display:none;">
-            <button class="dropdown-item" data-type="Task">Task</button>
-            <button class="dropdown-item" data-type="Bug">Bug</button>
-          </div>
-        </div>
-        <button class="btn btn-secondary" title="Board"><i class="fa-solid fa-table-columns"></i></button>
-        <button class="btn btn-secondary" title="List"><i class="fa-solid fa-list"></i></button>
-        <button class="btn btn-secondary" title="Filter"><i class="fa-solid fa-filter"></i></button>
-        `
-      : ""
-    }
+      ${crmControls}
     </div>
   </div>`;
 
@@ -1601,14 +1599,7 @@ const renderProjectDetails = (id, tab) => {
     crmTab(p, canManage).then((html) => {
       crmContainer.innerHTML = html;
       enableDragDrop(id);
-
-      // reattach dropdown & buttons
-      if (!canManage) {
-        document.getElementById("crm-add-dd")?.remove();
-        document.getElementById("crm-add-menu")?.remove();
-      } else {
-        attachCRMEventHandlers(id);
-      }
+      wireCrmTaskControls(id);
     });
   }
 };
@@ -2925,9 +2916,7 @@ async function handleAddColumn(e) {
       if (crmContainer) {
         crmContainer.innerHTML = html;
         enableDragDrop(projectId);
-        
-        // Reattach event handlers
-        attachCRMEventHandlers(projectId);
+        wireCrmTaskControls(projectId);
       }
     });
     
@@ -2983,9 +2972,7 @@ function deleteColumn(projectId, columnName, itemCount = 0) {
       if (crmContainer) {
         crmContainer.innerHTML = html;
         enableDragDrop(projectId);
-        
-        // Reattach event handlers
-        attachCRMEventHandlers(projectId);
+        wireCrmTaskControls(projectId);
       }
     });
   })
@@ -3023,10 +3010,15 @@ function attachCRMEventHandlers(projectId) {
 
 function handleCardDelete(evt, taskId, projectId) {
   if (evt && typeof evt.stopPropagation === "function") evt.stopPropagation();
+  if (!getProjectAccess().canManage) {
+    alert("Only project admins/managers can delete tasks.");
+    return;
+  }
   deleteTask(taskId, projectId);
 }
 
 function taskCardHtml(t, index, projectId) {
+  const { canManage } = getProjectAccess();
   const taskTitle = escapeHtml(t.task_name || "Untitled Task");
   const taskNumber = index + 1;
   const dueDate = t.due_date ? new Date(t.due_date) : null;
@@ -3067,9 +3059,13 @@ function taskCardHtml(t, index, projectId) {
     <div class="kan-card modern" draggable="true" data-id="${t.guid}" style="background:#ffffff !important; border-radius:8px; margin-bottom:8px; box-shadow:0 1px 3px rgba(0,0,0,0.1); border:1px solid rgba(0,0,0,0.1); position:relative;">
       <div class="card-top" style="padding:12px; display:flex; justify-content:space-between; align-items:flex-start; gap:8px;">
         <span class="card-title" style="color:#1f2937 !important; font-size:14px; line-height:1.4;"><strong>${taskNumber ? taskNumber + ". " : ""}${taskTitle}</strong></span>
-        <button class="task-del-btn" title="Delete task" onclick="handleCardDelete(event, '${t.guid}', '${projectId}')" style="background:transparent; border:none; color:#9ca3af; cursor:pointer; padding:2px;">
+        ${
+          canManage
+            ? `<button class="task-del-btn" title="Delete task" onclick="handleCardDelete(event, '${t.guid}', '${projectId}')" style="background:transparent; border:none; color:#9ca3af; cursor:pointer; padding:2px;">
           <i class="fa-solid fa-trash"></i>
-        </button>
+        </button>`
+            : ""
+        }
       </div>
 
       <div class="card-mid" style="padding:0 12px;">
@@ -3337,6 +3333,10 @@ async function moveTask(projectId, taskId, newCol) {
 // Add New Task Modal
 // ==========================
 function showTaskModal(projectId, defaultStatus = "New") {
+  if (!getProjectAccess().canManageTasks) {
+    alert("You don't have permission to create project tasks.");
+    return;
+  }
   const currentHash = window.location.hash;
   const params = new URLSearchParams(currentHash.split("?")[1]);
   const boardParam = params.get("board") || "General";

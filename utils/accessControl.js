@@ -5,7 +5,7 @@ const ADMIN_EMAILS = ['bala.t@vtab.com'];
 
 const normalizeRole = (value) => {
   const val = String(value || '').trim().toUpperCase();
-  if (val === 'L1' || val === 'L2' || val === 'L3') {
+  if (['L1', 'L2', 'L3', 'L4'].includes(val)) {
     return val;
   }
   return '';
@@ -15,6 +15,7 @@ export const getUserAccessContext = () => {
   const role = normalizeRole(state.user?.access_level || state.user?.role);
   const empId = String(state.user?.id || '').trim().toUpperCase();
   const email = String(state.user?.email || '').trim().toLowerCase();
+  const designation = String(state.user?.designation || '').trim().toLowerCase();
 
   const isAdminFromFallback = ADMIN_EMP_IDS.includes(empId) || ADMIN_EMAILS.includes(email);
   const isAdminByRole = role === 'L3';
@@ -23,8 +24,16 @@ export const getUserAccessContext = () => {
   const isAdmin = Boolean(state.user?.is_admin || isAdminByRole || isAdminFromFallback);
   const isManager = Boolean(state.user?.is_manager || isManagerByRole);
 
+  let derivedRole = role;
+  if (!derivedRole) {
+    if (isAdmin) derivedRole = 'L3';
+    else if (isManager) derivedRole = 'L2';
+    else if (designation.includes('team lead') || designation.includes('lead')) derivedRole = 'L4';
+    else derivedRole = 'L1';
+  }
+
   return {
-    role: role || (isAdmin ? 'L3' : isManager ? 'L2' : 'L1'),
+    role: derivedRole,
     empId,
     email,
     isAdmin,
@@ -46,3 +55,5 @@ export const isL3User = () => {
   if (!designation) return false;
   return designation.includes('hr') || designation.includes('manager');
 };
+
+export const isTeamLeadUser = () => getUserAccessContext().role === 'L4';
