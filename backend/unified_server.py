@@ -2927,7 +2927,7 @@ def verify_reset_token(token):
 
 def _normalize_access_level(value):
     level = (value or "").strip().upper()
-    if level in ("L1", "L2", "L3"):
+    if level in ("L1", "L2", "L3", "L4"):
         return level
     return "L1"
 
