@@ -3779,168 +3779,13 @@ const handleAddProject = async (projectId, triggerBtn) => {
                         </div>
                     `;
                 }
-};
-
-if (audienceSelect) {
-    audienceSelect.addEventListener('change', updateAudienceVisibility);
-    updateAudienceVisibility();
-}
-
-if (startNowCheckbox) {
-    startNowCheckbox.addEventListener('change', updateTimeInputs);
-    updateTimeInputs();
-}
-
-if (!form || !resultEl) return;
-
-attachCallListEvents();
-
-// Expose participant update handler for socket events from index.js
-const applyServerParticipantUpdate = (payload) => {
-    try {
-        if (!payload || !Array.isArray(payload.participants)) return;
-        serverParticipantStatuses = new Map();
-        (payload.participants || []).forEach((p) => {
-            const rawId = normalizeEmployeeId(p.employee_id || '');
-            const emailKey = String(p.email || '').trim().toUpperCase();
-            const idKey = rawId || emailKey;
-            if (!idKey) return;
-            const status = String(p.status || 'ringing').toLowerCase();
-            serverParticipantStatuses.set(idKey, status);
-            if (status === 'accepted' || status === 'declined') {
-                callDecisions.set(idKey, status);
             }
-        });
-        renderCallList();
-        syncCallBannerState();
-    } catch (err) {
-        console.error('applyServerParticipantUpdate error', err);
-        try { closeCallModal(); } catch (_) {}
-    }
+        })();
+    }, 0);
 };
-
-// Expose handler globally so index.js socket listener can call it
-try {
-    window.__onParticipantUpdate = applyServerParticipantUpdate;
-} catch (_) {}
-
-// Cleanup helper so router can hide/stop Meet UI artifacts when navigating away
-window.__cleanupMeetUI = () => {
-    try {
-        if (typeof stopRingTone === 'function') stopRingTone();
-        if (typeof closeCallModal === 'function') closeCallModal();
-        if (callBanner) callBanner.classList.add('hidden');
-        callDecisions = new Map();
-        serverParticipantStatuses = new Map();
-        // Remove modal from document.body to prevent it from persisting across pages
-        if (callModal && callModal.parentElement === document.body) {
-            callModal.remove();
-        }
-    } catch (err) {
-        console.warn('cleanupMeetUI error', err);
-    }
-    try {
-        window.__onParticipantUpdate = null;
-    } catch (_) {}
-};
-
-if (callModal) {
-    // Close on backdrop click
-    callModal.addEventListener('click', (ev) => {
-        if (ev.target === callModal) {
-            closeCallModal();
-        }
-    });
-
-    // Event delegation for close/cancel buttons (works even after modal is moved to body)
-    callModal.addEventListener('click', (ev) => {
-        const target = ev.target;
-        const closeBtn = target.closest('#meet-call-close');
-        const cancelBtn = target.closest('#meet-call-cancel');
-        console.log('[MEET] Modal click - target:', target.tagName, target.id, 'closeBtn:', !!closeBtn, 'cancelBtn:', !!cancelBtn);
-        if (closeBtn || cancelBtn) {
-            ev.preventDefault();
-            ev.stopPropagation();
-            if (cancelBtn) {
-                console.log('[MEET] Cancel button clicked via delegation');
-                cancelOutgoingCall();
-            } else {
-                console.log('[MEET] Close button clicked via delegation');
-                closeCallModal();
-            }
-        }
-    });
-}
-
-// Direct event listeners as fallback
-if (callCloseBtn) {
-    callCloseBtn.addEventListener('click', (ev) => {
-        ev.preventDefault();
-        ev.stopPropagation();
-        closeCallModal();
-    });
-}
-if (callCancelBtn) {
-    console.log('[MEET] Cancel button found, attaching direct listener');
-    callCancelBtn.addEventListener('click', (ev) => {
-        console.log('[MEET] Cancel button direct click');
-        ev.preventDefault();
-        ev.stopPropagation();
-        cancelOutgoingCall();
-    });
-} else {
-    console.warn('[MEET] Cancel button NOT found in DOM');
-}
-
-if (form) {
-    form.addEventListener('submit', (ev) => {
-        ev.preventDefault();
-        startMeetFlow({ openCallModalAfter: false, triggerBtn: createMeetBtn });
-    });
-}
-
-if (callBtn) {
-    callBtn.addEventListener('click', () => {
-        startMeetFlow({ openCallModalAfter: true, triggerBtn: callBtn });
-    });
-}
-
-if (employeeSearchInput) {
-    employeeSearchInput.addEventListener('input', (ev) => {
-        filterEmployeeGrid(ev.target.value);
-    });
-}
-
-fetchProjects();
-renderParticipants();
-renderSelectedProjects();
-updateCallButtonState();
-
-// Load employee directory and render the employee grid
-(async () => {
-    try {
-        await loadEmployeeDirectory();
-        buildEmployeeCards();
-        renderEmployeeGrid();
-        if (employeeCountEl) {
-            employeeCountEl.textContent = `${employeesDirectory.size} employees`;
-        }
-    } catch (err) {
-        console.error('Failed to load employee directory for grid', err);
-        if (employeeGrid) {
-            employeeGrid.innerHTML = `
-                <div class="placeholder-text" style="grid-column:1 / -1; color:#dc2626;">
-                    <p>Failed to load employees. Please refresh.</p>
-                </div>
-            `;
-        }
-    }
-})();
 
 const loadInboxLeaves = async () => {
     const isAdmin = isAdminUser();
-    const canViewTeamQueues = isManagerOrAdmin();
-
     const listContainer = document.querySelector('.inbox-list');
 
     if (!listContainer) return;
@@ -3979,7 +3824,7 @@ const loadInboxLeaves = async () => {
             _raw: r,
         });
 
-        if (currentInboxTab === 'awaiting' && canViewTeamQueues) {
+        if (currentInboxTab === 'awaiting' && isAdmin) {
             // Fetch all pending leaves for admin
             const pendingLeaves = await fetchPendingLeaves();
             const compPending = compAll.filter(r => (r.status || 'pending').toLowerCase() === 'pending').map(normalizeComp);
@@ -4142,6 +3987,7 @@ const loadInboxLeaves = async () => {
                 });
             });
         }
+
     } catch (err) {
         console.error('❌ Error loading inbox leaves:', err);
         listContainer.innerHTML = `
@@ -4155,8 +4001,6 @@ const loadInboxLeaves = async () => {
 
 const loadInboxTimesheets = async () => {
     const isAdmin = isAdminUser();
-    const canViewTeamQueues = isManagerOrAdmin();
-
     const listContainer = document.querySelector('.inbox-list');
 
     if (!listContainer) return;
@@ -4180,13 +4024,7 @@ const loadInboxTimesheets = async () => {
 
         // Build query string based on role and tab
         const params = new URLSearchParams();
-        const viewingTeamQueue = currentInboxTab === 'awaiting' && canViewTeamQueues;
-
-        if (isAdmin || viewingTeamQueue) {
-            if (currentInboxTab === 'awaiting') {
-                params.set('status', 'pending');
-            }
-        } else {
+        if (!isAdmin) {
             const empId = await resolveCurrentEmployeeId();
             if (!empId) {
                 listContainer.innerHTML = `
@@ -4201,6 +4039,8 @@ const loadInboxTimesheets = async () => {
             if (currentInboxTab === 'requests') {
                 params.set('status', 'pending');
             }
+        } else if (currentInboxTab === 'awaiting') {
+            params.set('status', 'pending');
         }
 
         const qs = params.toString() ? `?${params.toString()}` : '';
@@ -4215,9 +4055,10 @@ const loadInboxTimesheets = async () => {
 
         // For completed tab, keep only Accepted/Rejected
         if (currentInboxTab === 'completed') {
-            items = items.filter(r =>
-                r.status?.toLowerCase() === 'accepted' || r.status?.toLowerCase() === 'rejected'
-            );
+            items = items.filter(r => {
+                const s = String(r.status || '').toLowerCase();
+                return s === 'accepted' || s === 'rejected';
+            });
         }
 
         // Sort by submitted date (latest first)
@@ -4239,7 +4080,6 @@ const loadInboxTimesheets = async () => {
             const status = entry.status || 'Pending';
             const statusClass = String(status).toLowerCase();
             const showActions = isAdmin && currentInboxTab === 'awaiting';
-
             const isRejected = statusClass === 'rejected';
             const rejectionReason = entry.reject_comment || '';
             const projectName = entry.project_name || entry.project_id || '-';
@@ -4576,8 +4416,6 @@ export const handleTimesheetReject = async (e) => {
 
 const loadInboxAttendance = async () => {
     const isAdmin = isAdminUser();
-    const canViewTeamQueues = isManagerOrAdmin();
-
     const listContainer = document.querySelector('.inbox-list');
 
     if (!listContainer) return;
@@ -4591,15 +4429,13 @@ const loadInboxAttendance = async () => {
 
     try {
         // Build query for submissions based on current tab
-        const viewingTeamQueue = currentInboxTab === 'awaiting' && canViewTeamQueues;
         let qs = '';
-        if (viewingTeamQueue) {
+        if (currentInboxTab === 'awaiting' && isAdmin) {
             qs = '?status=pending';
         } else if (currentInboxTab === 'completed') {
             // Completed = approved or rejected. We'll fetch all and client-filter.
             qs = '';
         }
-
         const response = await fetch(`${apiBase}/api/attendance/submissions${qs}`);
         const data = await response.json();
 
@@ -4618,15 +4454,15 @@ const loadInboxAttendance = async () => {
 
         // Data format: [{ marker_id, employee_id, year, month, status, rejection_reason, created_date }]
         let attendanceReports = data.items || [];
-        // Client-side filter for requests/completed when not admin or not on team queue
-        if (!isAdmin && !viewingTeamQueue) {
+        // Client-side filter for requests/completed when not admin
+        if (!isAdmin) {
             const empId = await resolveCurrentEmployeeId();
             if (currentInboxTab === 'requests') {
                 attendanceReports = attendanceReports.filter(r => r.employee_id === empId && r.status === 'pending');
             } else if (currentInboxTab === 'completed') {
                 attendanceReports = attendanceReports.filter(r => r.employee_id === empId && (r.status === 'approved' || r.status === 'rejected'));
             }
-        } else if (isAdmin && currentInboxTab === 'completed') {
+        } else if (currentInboxTab === 'completed') {
             attendanceReports = attendanceReports.filter(r => r.status === 'approved' || r.status === 'rejected');
         }
 
