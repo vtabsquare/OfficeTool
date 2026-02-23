@@ -3781,6 +3781,9 @@ const handleAddProject = async (projectId, triggerBtn) => {
                         </div>
                     `;
                 }
+            }
+        })();
+
 const loadInboxLeaves = async () => {
     const isAdmin = isAdminUser();
     const isManager = isManagerOrAdmin();
