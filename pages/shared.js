@@ -2302,6 +2302,7 @@ export const renderInboxPage = async () => {
 
     const isAdmin = isAdminUser();
     const canViewTeamQueues = isManagerOrAdmin();
+    const showAwaitingTab = isAdmin; // Only admins can act on approvals
     console.log('👤 User is admin:', isAdmin, '| can view team queues:', canViewTeamQueues);
 
     // Initial static content
@@ -2314,8 +2315,8 @@ export const renderInboxPage = async () => {
         </div>
         <div class="inbox-content">
             <div class="inbox-tabs">
-                ${canViewTeamQueues ? '<div class="inbox-tab active" data-tab="awaiting">Awaiting approval</div>' : ''}
-                <div class="inbox-tab ${canViewTeamQueues ? '' : 'active'}" data-tab="requests">My requests</div>
+                ${showAwaitingTab ? '<div class="inbox-tab active" data-tab="awaiting">Awaiting approval</div>' : ''}
+                <div class="inbox-tab ${showAwaitingTab ? '' : 'active'}" data-tab="requests">My requests</div>
                 <div class="inbox-tab" data-tab="completed">Completed</div>
             </div>
             <div class="inbox-list">
@@ -2334,8 +2335,12 @@ export const renderInboxPage = async () => {
     `;
     document.getElementById('app-content').innerHTML = getPageContentHTML('Inbox', content);
 
-    // Set initial tab
-    currentInboxTab = canViewTeamQueues ? 'awaiting' : 'requests';
+    // Set initial tab (force non-admins away from awaiting queue)
+    if (!showAwaitingTab && currentInboxTab === 'awaiting') {
+        currentInboxTab = 'requests';
+    } else {
+        currentInboxTab = showAwaitingTab ? 'awaiting' : 'requests';
+    }
 
     // Add event listeners
     setTimeout(async () => {
