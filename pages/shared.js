@@ -2301,7 +2301,8 @@ export const renderInboxPage = async () => {
     await updateNotificationBadge();
 
     const isAdmin = isAdminUser();
-    console.log('👤 User is admin:', isAdmin);
+    const isManager = isManagerOrAdmin();
+    console.log('👤 User is admin:', isAdmin, 'manager:', isManager);
 
     // Initial static content
     const content = `
@@ -2313,8 +2314,8 @@ export const renderInboxPage = async () => {
         </div>
         <div class="inbox-content">
             <div class="inbox-tabs">
-                ${isAdmin ? '<div class="inbox-tab active" data-tab="awaiting">Awaiting approval</div>' : ''}
-                <div class="inbox-tab ${!isAdmin ? 'active' : ''}" data-tab="requests">My requests</div>
+                ${(isAdmin || isManager) ? '<div class="inbox-tab active" data-tab="awaiting">Awaiting approval</div>' : ''}
+                <div class="inbox-tab ${(!isAdmin && !isManager) ? 'active' : ''}" data-tab="requests">My requests</div>
                 <div class="inbox-tab" data-tab="completed">Completed</div>
             </div>
             <div class="inbox-list">
@@ -2334,7 +2335,7 @@ export const renderInboxPage = async () => {
     document.getElementById('app-content').innerHTML = getPageContentHTML('Inbox', content);
 
     // Set initial tab
-    if (!isAdmin) {
+    if (!isAdmin && !isManager) {
         currentInboxTab = 'requests';
     }
 
@@ -3780,13 +3781,9 @@ const handleAddProject = async (projectId, triggerBtn) => {
                         </div>
                     `;
                 }
-            }
-        })();
-    }, 0);
-};
-
 const loadInboxLeaves = async () => {
     const isAdmin = isAdminUser();
+    const isManager = isManagerOrAdmin();
     const listContainer = document.querySelector('.inbox-list');
 
     if (!listContainer) return;
@@ -3825,14 +3822,14 @@ const loadInboxLeaves = async () => {
             _raw: r,
         });
 
-        if (currentInboxTab === 'awaiting' && isAdmin) {
-            // Fetch all pending leaves for admin
+        if (currentInboxTab === 'awaiting' && (isAdmin || isManager)) {
+            // Admins and managers can view all pending leaves (managers are view-only)
             const pendingLeaves = await fetchPendingLeaves();
             const compPending = compAll.filter(r => (r.status || 'pending').toLowerCase() === 'pending').map(normalizeComp);
             leaves = (pendingLeaves || []).concat(compPending);
             console.log(`📋 Loaded ${leaves.length} pending leave requests`);
-        } else if (currentInboxTab === 'completed' && isAdmin) {
-            // For admin in completed tab, fetch all employees' completed leaves
+        } else if (currentInboxTab === 'completed' && (isAdmin || isManager)) {
+            // Admins and managers can view all completed leaves (actions remain admin-only)
             try {
                 const allEmployees = await listEmployees(1, 5000);
                 const employeeIds = (allEmployees.items || []).map(emp => emp.employee_id).filter(Boolean);
@@ -3919,7 +3916,7 @@ const loadInboxLeaves = async () => {
             }
 
             const statusClass = status.toLowerCase();
-            const showActions = currentInboxTab === 'awaiting' && isAdmin;
+            const showActions = currentInboxTab === 'awaiting' && isAdmin; // managers view-only
             const isRejected = status.toLowerCase() === 'rejected';
             const isCompOff = leave._source === 'compoff' || (String(leaveType).toLowerCase() === 'comp off');
 
