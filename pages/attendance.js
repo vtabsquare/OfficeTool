@@ -185,7 +185,6 @@ const renderAttendanceTrackerPage = async (mode) => {
                         <div class="employee-avatar">${initials}</div>
                         <div class="employee-details">
                             <div class="employee-name">${employeeName}</div>
-                            <div class="employee-role">UI/UX Designer</div>
                         </div>
                     </td>
                     ${dayCells}
