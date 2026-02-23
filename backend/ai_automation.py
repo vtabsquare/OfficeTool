@@ -7,7 +7,7 @@ import json
 import re
 import os
 from typing import Dict, Any, Optional, List, Tuple
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # Backend API base URLs
 # - BACKEND_API_URL: public URL (used by frontend or external callers)
@@ -108,6 +108,63 @@ AI_DATAVERSE_TABLES = {
     }
 }
 
+ROLE_ORDER = {"L1": 1, "L2": 2, "L3": 3}
+
+
+def _normalize_role(value: Optional[str]) -> str:
+    val = (value or "").strip().upper()
+    return val if val in ROLE_ORDER else "L1"
+
+
+def _user_role_level(user_access: Optional[Dict[str, Any]]) -> int:
+    if not user_access:
+        return ROLE_ORDER["L1"]
+    if user_access.get("is_admin") or user_access.get("is_l3"):
+        return ROLE_ORDER["L3"]
+    if user_access.get("is_l2") or _normalize_role(user_access.get("access_level")) == "L2":
+        return ROLE_ORDER["L2"]
+    return ROLE_ORDER["L1"]
+
+
+def _role_name(level: int) -> str:
+    for name, lvl in ROLE_ORDER.items():
+        if lvl == level:
+            return name
+    return "L1"
+
+
+AUTOMATION_REGISTRY: Dict[str, Dict[str, Any]] = {
+    "employee_creation": {"min_role": "L3", "handler": "handle_employee_creation_flow", "description": "Create a new employee record", "audit": "employee.create"},
+    "employee_edit": {"min_role": "L3", "handler": "handle_employee_edit_flow", "description": "Edit an existing employee", "audit": "employee.edit"},
+    "employee_delete": {"min_role": "L3", "handler": "handle_employee_delete_flow", "description": "Delete an employee", "audit": "employee.delete"},
+    "leave_application": {"min_role": "L1", "handler": "handle_leave_application_flow", "description": "Apply for leave", "audit": "leave.apply"},
+    "asset_creation": {"min_role": "L3", "handler": "handle_asset_creation_flow", "description": "Create an asset record", "audit": "asset.create"},
+    "asset_assignment": {"min_role": "L2", "handler": "handle_asset_assignment_flow", "description": "Assign or reassign an asset", "audit": "asset.assign"},
+    "task_creation": {"min_role": "L2", "handler": "handle_task_creation_flow", "description": "Create a new project task", "audit": "task.create"},
+    "task_start": {"min_role": "L1", "handler": "handle_task_start_flow", "description": "Start a task timer", "audit": "task.start"},
+    "task_stop": {"min_role": "L1", "handler": "handle_task_stop_flow", "description": "Stop a task timer", "audit": "task.stop"},
+    "check_in": {"min_role": "L1", "handler": "_handle_check_action", "description": "Check in attendance", "audit": "attendance.checkin"},
+    "check_out": {"min_role": "L1", "handler": "_handle_check_action", "description": "Check out attendance", "audit": "attendance.checkout"},
+    "attendance_submit": {"min_role": "L1", "handler": "handle_attendance_submission_flow", "description": "Submit attendance report for approval", "audit": "attendance.submit"},
+    "attendance_review": {"min_role": "L3", "handler": "handle_attendance_review_flow", "description": "Approve or reject attendance submissions", "audit": "attendance.review"},
+    "timesheet_submit": {"min_role": "L1", "handler": "handle_timesheet_submission_flow", "description": "Submit a timesheet entry", "audit": "timesheet.submit"},
+    "timesheet_review": {"min_role": "L3", "handler": "handle_timesheet_review_flow", "description": "Approve or reject timesheet entries", "audit": "timesheet.review"},
+    "chat_send_message": {"min_role": "L1", "handler": "handle_chat_send_message_flow", "description": "Send internal chat", "audit": "chat.send"},
+    "chat_read_messages": {"min_role": "L1", "handler": "handle_chat_read_messages_flow", "description": "Read messages", "audit": "chat.read"},
+    "chat_read_conversation": {"min_role": "L1", "handler": "handle_chat_read_conversation_flow", "description": "Read conversation", "audit": "chat.conversation"},
+    "chat_reply": {"min_role": "L1", "handler": "handle_chat_reply_flow", "description": "Reply to chat", "audit": "chat.reply"},
+}
+
+
+def _is_flow_allowed(flow_name: str, user_access: Optional[Dict[str, Any]]) -> Tuple[bool, str]:
+    meta = AUTOMATION_REGISTRY.get(flow_name)
+    if not meta:
+        return True, "L1"
+    required = meta.get("min_role", "L1")
+    required_level = ROLE_ORDER.get(required, ROLE_ORDER["L1"])
+    user_level = _user_role_level(user_access)
+    return user_level >= required_level, required
+
 def get_ai_table_entity(table_name: str) -> str:
     """Get the Dataverse entity name for an AI-accessible table."""
     table_info = AI_DATAVERSE_TABLES.get(table_name.lower())
@@ -118,6 +175,93 @@ def get_ai_table_entity(table_name: str) -> str:
 def list_ai_accessible_tables() -> List[str]:
     """List all tables the AI can access."""
     return list(AI_DATAVERSE_TABLES.keys())
+
+
+def _log_automation_event(flow_name: str, user_id: Optional[str], result: Dict[str, Any]):
+    try:
+        meta = AUTOMATION_REGISTRY.get(flow_name) or {}
+        audit_tag = meta.get("audit", flow_name)
+        status = "success" if result.get("success", True) else "error"
+        print(f"[AI_AUTOMATION] flow={flow_name} audit={audit_tag} status={status} user={user_id} info={result.get('message') or result.get('error')}")
+    except Exception as err:
+        try:
+            print(f"[AI_AUTOMATION] log failed for {flow_name}: {err}")
+        except Exception:
+            pass
+
+
+def _validate_project_code(value: str) -> bool:
+    value = (value or "").strip()
+    return len(value) >= 4 and value.upper().startswith("VTAB")
+
+
+def _normalize_task_priority(value: str) -> str:
+    priorities = {"low": "Low", "medium": "Medium", "high": "High"}
+    return priorities.get((value or "").strip().lower(), "Medium")
+
+
+def _normalize_optional_date(value: str) -> str:
+    text = (value or "").strip().lower()
+    if not text or text == "skip":
+        return ""
+    if text == "today":
+        return datetime.now().strftime("%Y-%m-%d")
+    if text == "tomorrow":
+        return (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
+    return value.strip()
+
+
+def _normalize_task_field(key: str, value: str) -> Any:
+    if key == "project_code":
+        return value.strip().upper()
+    if key == "board_name":
+        return value.strip()
+    if key == "task_name":
+        return value.strip()
+    if key == "task_description":
+        return value.strip() if value.strip().lower() != "skip" else ""
+    if key == "task_priority":
+        return _normalize_task_priority(value)
+    if key == "assigned_to":
+        return value.strip().upper()
+    if key == "due_date":
+        return _normalize_optional_date(value)
+    return value.strip()
+
+
+def _build_task_summary(data: Dict[str, Any]) -> str:
+    lines = [
+        f"• **Project:** {data.get('project_code')}",
+        f"• **Board/List:** {data.get('board_name') or 'Not specified'}",
+        f"• **Task Name:** {data.get('task_name')}",
+        f"• **Description:** {data.get('task_description') or 'Not provided'}",
+        f"• **Priority:** {data.get('task_priority', 'Medium')}",
+        f"• **Assigned To:** {data.get('assigned_to') or 'Not set'}",
+        f"• **Due Date:** {data.get('due_date') or 'Not set'}",
+    ]
+    return "\n".join(lines)
+
+
+def _normalize_asset_assignment_field(key: str, value: str) -> Any:
+    if key == "asset_id":
+        return value.strip().upper()
+    if key == "employee_id":
+        cleaned = value.strip().upper()
+        return cleaned if cleaned else ""
+    if key == "employee_name":
+        return value.strip()
+    if key == "asset_status":
+        status_map = {
+            "in use": "In Use",
+            "not use": "Not Use",
+            "available": "Not Use",
+            "repair": "Repair",
+        }
+        return status_map.get(value.strip().lower(), "In Use")
+    if key == "assigned_on":
+        return _normalize_optional_date(value)
+    return value.strip()
+
 
 # ================== EMPLOYEE CREATION FLOW ==================
 
@@ -343,6 +487,537 @@ def _normalize_leave_value(key: str, value: str, collected_data: Dict[str, Any] 
     return value
 
 
+# ================== ATTENDANCE SUBMISSION HELPERS ==================
+
+def _parse_month_year(value: str) -> Optional[Tuple[int, int]]:
+    """Parse free-form month/year input (e.g., 'March 2026', '03/2026')."""
+    import calendar
+    text = (value or "").strip().lower()
+    if not text:
+        return None
+
+    # Try formats like March 2026
+    months = {m.lower(): idx for idx, m in enumerate(calendar.month_name) if m}
+    months.update({m.lower(): idx for idx, m in enumerate(calendar.month_abbr) if m})
+
+    parts = text.replace(',', ' ').replace('/', ' ').replace('-', ' ').split()
+    year = None
+    month = None
+    for part in parts:
+        if part.isdigit() and len(part) == 4:
+            year = int(part)
+        elif part.isdigit() and len(part) <= 2 and 1 <= int(part) <= 12:
+            month = int(part)
+        elif part in months:
+            month = months[part]
+    if year and month:
+        return (year, month)
+    return None
+
+
+def _format_month_name(year: int, month: int) -> str:
+    import calendar
+    return f"{calendar.month_name[month]} {year}"
+
+
+def _submit_attendance_report(employee_id: str, year: int, month: int) -> Dict[str, Any]:
+    import requests
+    payload = {
+        "employee_id": employee_id,
+        "year": year,
+        "month": month,
+    }
+    submit_url = f"{BACKEND_API_INTERNAL_URL}/api/attendance/submit"
+    try:
+        resp = requests.post(submit_url, json=payload, timeout=20)
+        data = resp.json()
+        if resp.status_code == 200 and data.get("success"):
+            return {"success": True, "message": data.get("message"), "marker": data.get("marker")}
+        return {"success": False, "error": data.get("error") or "Failed to submit attendance."}
+    except Exception as err:
+        return {"success": False, "error": str(err)}
+
+
+def _review_attendance_submission(marker_id: str, action: str, reason: str = "") -> Dict[str, Any]:
+    import requests
+    endpoint = "approve" if action == "approve" else "reject"
+    url = f"{BACKEND_API_INTERNAL_URL}/api/attendance/submissions/{marker_id}/{endpoint}"
+    body = {"reason": reason} if endpoint == "reject" else {}
+    try:
+        resp = requests.post(url, json=body, timeout=20)
+        data = resp.json()
+        if resp.status_code == 200 and data.get("success"):
+            return {"success": True, "message": data.get("message")}
+        return {"success": False, "error": data.get("error") or "Review action failed."}
+    except Exception as err:
+        return {"success": False, "error": str(err)}
+
+
+# ================== ATTENDANCE SUBMISSION FLOW ==================
+
+ATTENDANCE_SUBMISSION_FIELDS = [
+    {
+        "key": "period",
+        "label": "Month",
+        "prompt": "Which month should I submit? (e.g., 'March 2026' or '03/2026')",
+        "required": True,
+    },
+]
+
+
+def handle_attendance_submission_flow(
+    user_message: str,
+    state: 'ConversationState',
+    user_employee_id: Optional[str] = None,
+) -> Tuple[str, 'ConversationState', Optional[Dict[str, Any]]]:
+    if state.active_flow != "attendance_submit":
+        state.active_flow = "attendance_submit"
+        state.current_step = 0
+        state.collected_data = {}
+        return ATTENDANCE_SUBMISSION_FIELDS[0]["prompt"], state, None
+
+    # Support cancel
+    if user_message.strip().lower() in {"cancel", "stop", "quit"}:
+        state.reset()
+        return "Attendance submission cancelled.", state, None
+
+    if state.current_step == 0:
+        parsed = _parse_month_year(user_message)
+        if not parsed:
+            return "Please specify the month and year (e.g., 'March 2026').", state, None
+        year, month = parsed
+        state.collected_data["year"] = year
+        state.collected_data["month"] = month
+        state.current_step = 1
+
+        if not user_employee_id:
+            return "I couldn't determine your employee ID. Please specify it.", state, None
+
+        result = _submit_attendance_report(user_employee_id, year, month)
+        state.reset()
+        if result.get("success"):
+            period_name = _format_month_name(year, month)
+            return f"✅ Attendance report for **{period_name}** has been submitted for approval!", state, None
+        return f"❌ Failed to submit attendance: {result.get('error')}", state, None
+
+    state.reset()
+    return "I didn't understand that. Please try again.", state, None
+
+
+def handle_attendance_review_flow(
+    user_message: str,
+    state: 'ConversationState',
+    reviewer_employee_id: Optional[str] = None,
+) -> Tuple[str, 'ConversationState', Optional[Dict[str, Any]]]:
+    if state.active_flow != "attendance_review":
+        state.active_flow = "attendance_review"
+        state.current_step = 0
+        state.collected_data = {}
+        return "Please provide the marker ID (e.g., SUBMIT-EMP001-2026-03).", state, None
+
+    text = user_message.strip()
+    if text.lower() in {"cancel", "stop", "quit"}:
+        state.reset()
+        return "Attendance review cancelled.", state, None
+
+    if state.current_step == 0:
+        if not text.upper().startswith("SUBMIT-"):
+            return "Marker ID should look like SUBMIT-EMP001-2026-03.", state, None
+        state.collected_data["marker_id"] = text.upper()
+        state.current_step = 1
+        return "Type 'approve' to approve or 'reject: reason' to reject.", state, None
+
+    if state.current_step == 1:
+        marker_id = state.collected_data.get("marker_id")
+        if text.lower().startswith("approve"):
+            result = _review_attendance_submission(marker_id, "approve")
+            state.reset()
+            if result.get("success"):
+                return f"✅ Attendance submission {marker_id} approved!", state, None
+            return f"❌ Approval failed: {result.get('error')}", state, None
+        if text.lower().startswith("reject"):
+            reason = ""
+            if ":" in text:
+                reason = text.split(":", 1)[1].strip()
+            result = _review_attendance_submission(marker_id, "reject", reason)
+            state.reset()
+            if result.get("success"):
+                return f"✅ Attendance submission {marker_id} rejected.", state, None
+            return f"❌ Rejection failed: {result.get('error')}", state, None
+        return "Please type 'approve' or 'reject: reason'.", state, None
+
+    state.reset()
+    return "I didn't understand that input.", state, None
+
+
+# ================== TASK CREATION FLOW ==================
+
+TASK_CREATION_FIELDS = [
+    {
+        "key": "project_code",
+        "label": "Project Code",
+        "prompt": "Which **project code** should this task belong to? (e.g., VTAB001)",
+        "required": True,
+        "validate": _validate_project_code,
+        "error": "Please provide a valid project code such as VTAB001."
+    },
+    {
+        "key": "board_name",
+        "label": "Board/List",
+        "prompt": "Which board or column should it appear under? (e.g., Development, QA)",
+        "required": True,
+        "validate": lambda x: len(x.strip()) >= 2,
+        "error": "Board name must be at least 2 characters."
+    },
+    {
+        "key": "task_name",
+        "label": "Task Name",
+        "prompt": "What's the **task name**?",
+        "required": True,
+        "validate": lambda x: len(x.strip()) >= 3,
+        "error": "Task name must be at least 3 characters."
+    },
+    {
+        "key": "task_description",
+        "label": "Description",
+        "prompt": "Provide a short description (or type 'skip').",
+        "required": False,
+        "validate": lambda x: True,
+        "error": ""
+    },
+    {
+        "key": "task_priority",
+        "label": "Priority",
+        "prompt": "Priority? (High / Medium / Low)",
+        "required": True,
+        "validate": lambda x: x.strip().lower() in {"high", "medium", "low"},
+        "error": "Priority must be High, Medium, or Low."
+    },
+    {
+        "key": "assigned_to",
+        "label": "Assigned To",
+        "prompt": "Employee ID to assign (or type 'skip' to leave unassigned)",
+        "required": False,
+        "validate": lambda x: True,
+        "error": ""
+    },
+    {
+        "key": "due_date",
+        "label": "Due Date",
+        "prompt": "Due date? (YYYY-MM-DD, 'today', 'tomorrow', or 'skip')",
+        "required": False,
+        "validate": lambda x: True,
+        "error": ""
+    },
+]
+
+
+def handle_task_creation_flow(
+    user_message: str,
+    state: 'ConversationState'
+) -> Tuple[str, 'ConversationState', Optional[Dict[str, Any]]]:
+    if state.active_flow != "task_creation":
+        state.active_flow = "task_creation"
+        state.current_step = 0
+        state.collected_data = {}
+        state.awaiting_confirmation = False
+        first_field = TASK_CREATION_FIELDS[0]
+        return f"Sure, let's create a new task.\n\n**Step 1 of {len(TASK_CREATION_FIELDS)}:** {first_field['prompt']}", state, None
+
+    if user_message.strip().lower() in {"cancel", "stop", "quit"}:
+        state.reset()
+        return "Task creation cancelled.", state, None
+
+    if state.awaiting_confirmation:
+        answer = user_message.strip().lower()
+        if answer in {"yes", "y", "confirm", "ok", "proceed"}:
+            data = state.collected_data.copy()
+            action = {
+                "type": "create_project_task",
+                "project_code": data.get("project_code"),
+                "payload": {
+                    "task_name": data.get("task_name"),
+                    "task_description": data.get("task_description"),
+                    "task_priority": data.get("task_priority"),
+                    "task_status": "New",
+                    "assigned_to": data.get("assigned_to"),
+                    "due_date": data.get("due_date"),
+                    "board_id": data.get("board_name"),
+                    "board_name": data.get("board_name"),
+                }
+            }
+            state.reset()
+            return "✅ Creating the task now...", state, action
+        if answer in {"no", "n"}:
+            state.awaiting_confirmation = False
+            state.current_step = 0
+            state.collected_data = {}
+            return f"Okay, let's restart.\n\n**Step 1 of {len(TASK_CREATION_FIELDS)}:** {TASK_CREATION_FIELDS[0]['prompt']}", state, None
+        return "Please type 'yes' to confirm or 'no' to start over.", state, None
+
+    current_field = TASK_CREATION_FIELDS[state.current_step]
+    if current_field.get("required") and not current_field["validate"](user_message):
+        return f"❌ {current_field['error']}\n\n{current_field['prompt']}", state, None
+
+    state.collected_data[current_field["key"]] = _normalize_task_field(current_field["key"], user_message)
+    state.current_step += 1
+
+    if state.current_step >= len(TASK_CREATION_FIELDS):
+        state.awaiting_confirmation = True
+        summary = _build_task_summary(state.collected_data)
+        return f"Great! Here's a quick summary:\n\n{summary}\n\nType **'yes'** to create it or **'no'** to restart.", state, None
+
+    next_field = TASK_CREATION_FIELDS[state.current_step]
+    return f"✓ Got it.\n\n**Step {state.current_step + 1} of {len(TASK_CREATION_FIELDS)}:** {next_field['prompt']}", state, None
+
+
+# ================== ASSET ASSIGNMENT FLOW ==================
+
+ASSET_ASSIGNMENT_FIELDS = [
+    {
+        "key": "asset_id",
+        "label": "Asset ID",
+        "prompt": "What's the asset ID? (e.g., LP-001)",
+        "required": True,
+        "validate": lambda x: len(x.strip()) >= 3,
+        "error": "Asset ID is required."
+    },
+    {
+        "key": "employee_id",
+        "label": "Employee ID",
+        "prompt": "Employee ID to assign (EMP###).",
+        "required": True,
+        "validate": lambda x: len(x.strip()) >= 3,
+        "error": "Employee ID is required."
+    },
+    {
+        "key": "employee_name",
+        "label": "Employee Name",
+        "prompt": "Employee name (optional, or type 'skip').",
+        "required": False,
+        "validate": lambda x: True,
+        "error": ""
+    },
+    {
+        "key": "asset_status",
+        "label": "Asset Status",
+        "prompt": "Status? (In Use / Not Use / Repair)",
+        "required": True,
+        "validate": lambda x: x.strip().lower() in {"in use", "not use", "available", "repair"},
+        "error": "Status must be In Use, Not Use, or Repair."
+    },
+    {
+        "key": "assigned_on",
+        "label": "Assigned On",
+        "prompt": "Assignment date (YYYY-MM-DD, 'today', 'tomorrow', or 'skip')",
+        "required": False,
+        "validate": lambda x: True,
+        "error": ""
+    },
+]
+
+
+def handle_asset_assignment_flow(
+    user_message: str,
+    state: 'ConversationState'
+) -> Tuple[str, 'ConversationState', Optional[Dict[str, Any]]]:
+    if state.active_flow != "asset_assignment":
+        state.active_flow = "asset_assignment"
+        state.current_step = 0
+        state.collected_data = {}
+        state.awaiting_confirmation = False
+        prompt = ASSET_ASSIGNMENT_FIELDS[0]['prompt']
+        return f"Let's update the asset assignment.\n\n**Step 1 of {len(ASSET_ASSIGNMENT_FIELDS)}:** {prompt}", state, None
+
+    if user_message.strip().lower() in {"cancel", "stop", "quit"}:
+        state.reset()
+        return "Asset assignment cancelled.", state, None
+
+    if state.awaiting_confirmation:
+        answer = user_message.strip().lower()
+        if answer in {"yes", "y", "confirm", "ok", "proceed"}:
+            payload = {
+                "crc6f_employeeid": state.collected_data.get("employee_id"),
+                "crc6f_assignedto": state.collected_data.get("employee_name") or state.collected_data.get("employee_id"),
+                "crc6f_assetstatus": state.collected_data.get("asset_status"),
+                "crc6f_assignedon": state.collected_data.get("assigned_on"),
+            }
+            action = {
+                "type": "update_asset_assignment",
+                "asset_id": state.collected_data.get("asset_id"),
+                "data": payload,
+            }
+            state.reset()
+            return "✅ Updating the asset assignment...", state, action
+        if answer in {"no", "n"}:
+            state.awaiting_confirmation = False
+            state.current_step = 0
+            state.collected_data = {}
+            return f"Okay, let's restart.\n\n**Step 1 of {len(ASSET_ASSIGNMENT_FIELDS)}:** {ASSET_ASSIGNMENT_FIELDS[0]['prompt']}", state, None
+        return "Please respond with 'yes' to confirm or 'no' to restart.", state, None
+
+    current_field = ASSET_ASSIGNMENT_FIELDS[state.current_step]
+    if current_field.get("required") and not current_field["validate"](user_message):
+        return f"❌ {current_field['error']}\n\n{current_field['prompt']}", state, None
+
+    state.collected_data[current_field["key"]] = _normalize_asset_assignment_field(current_field["key"], user_message)
+    state.current_step += 1
+
+    if state.current_step >= len(ASSET_ASSIGNMENT_FIELDS):
+        state.awaiting_confirmation = True
+        summary = "\n".join([
+            f"• **Asset:** {state.collected_data.get('asset_id')}",
+            f"• **Assigned To:** {state.collected_data.get('employee_id')}",
+            f"• **Status:** {state.collected_data.get('asset_status')}",
+            f"• **Assigned On:** {state.collected_data.get('assigned_on') or 'Not set'}",
+        ])
+        return f"Here's the assignment summary:\n\n{summary}\n\nType **'yes'** to update or **'no'** to restart.", state, None
+
+    next_field = ASSET_ASSIGNMENT_FIELDS[state.current_step]
+    return f"✓ Noted.\n\n**Step {state.current_step + 1} of {len(ASSET_ASSIGNMENT_FIELDS)}:** {next_field['prompt']}", state, None
+
+
+# ================== TIMESHEET SUBMISSION FLOW ==================
+
+TIMESHEET_SUBMISSION_FIELDS = [
+    {
+        "key": "summary",
+        "label": "Summary",
+        "prompt": "Please list the tasks and hours you'd like to submit (e.g., '2h on VTAB001 frontend, 1h on research').",
+        "required": True,
+    }
+]
+
+
+def _parse_timesheet_summary(text: str) -> List[Dict[str, Any]]:
+    # Very basic parser: split by commas and look for numbers.
+    entries = []
+    segments = [seg.strip() for seg in (text or "").split(',') if seg.strip()]
+    for seg in segments:
+        parts = seg.split(' on ')
+        if len(parts) < 2:
+            continue
+        hours_part = parts[0].strip()
+        project_part = parts[1].strip()
+        hours = 0.0
+        for token in hours_part.split():
+            try:
+                if token.lower().endswith('h'):
+                    hours = float(token[:-1])
+                else:
+                    hours = float(token)
+            except Exception:
+                continue
+        if hours <= 0:
+            continue
+        entries.append(
+            {
+                "project_id": project_part.split()[0],
+                "project_name": project_part,
+                "task_id": "AI-TASK",
+                "task_name": project_part,
+                "date": datetime.now().strftime("%Y-%m-%d"),
+                "seconds": int(hours * 3600),
+                "description": seg,
+            }
+        )
+    return entries
+
+
+def handle_timesheet_submission_flow(
+    user_message: str,
+    state: 'ConversationState',
+    user_employee_id: Optional[str] = None,
+    user_employee_name: Optional[str] = None,
+) -> Tuple[str, 'ConversationState', Optional[Dict[str, Any]]]:
+    if state.active_flow != "timesheet_submit":
+        state.active_flow = "timesheet_submit"
+        state.current_step = 0
+        state.collected_data = {}
+        return TIMESHEET_SUBMISSION_FIELDS[0]["prompt"], state, None
+
+    if user_message.strip().lower() in {"cancel", "stop", "quit"}:
+        state.reset()
+        return "Timesheet submission cancelled.", state, None
+
+    entries = _parse_timesheet_summary(user_message)
+    if not entries:
+        return "Please describe the work with hours (e.g., '2h on VTAB001 frontend').", state, None
+
+    import requests
+    payload = {
+        "employee_id": user_employee_id,
+        "employee_name": user_employee_name,
+        "entries": entries,
+    }
+    try:
+        resp = requests.post(f"{BACKEND_API_INTERNAL_URL}/time-tracker/timesheet/submit", json=payload, timeout=20)
+        data = resp.json()
+        state.reset()
+        if resp.status_code in (200, 201) and data.get("success"):
+            return f"✅ Submitted {len(data.get('items') or [])} timesheet entr{'y' if len(entries)==1 else 'ies'} for review!", state, None
+        return f"❌ Failed to submit timesheet: {data.get('error') or resp.status_code}", state, None
+    except Exception as err:
+        state.reset()
+        return f"❌ Error submitting timesheet: {err}", state, None
+
+
+def handle_timesheet_review_flow(
+    user_message: str,
+    state: 'ConversationState',
+    reviewer_employee_id: Optional[str] = None,
+) -> Tuple[str, 'ConversationState', Optional[Dict[str, Any]]]:
+    if state.active_flow != "timesheet_review":
+        state.active_flow = "timesheet_review"
+        state.current_step = 0
+        state.collected_data = {}
+        return "Provide the timesheet entry ID (e.g., TS-1708601234567).", state, None
+
+    text = user_message.strip()
+    if text.lower() in {"cancel", "stop", "quit"}:
+        state.reset()
+        return "Timesheet review cancelled.", state, None
+
+    if state.current_step == 0:
+        state.collected_data["entry_id"] = text
+        state.current_step = 1
+        return "Type 'approve' to approve or 'reject: reason' to reject.", state, None
+
+    entry_id = state.collected_data.get("entry_id")
+    if not entry_id:
+        state.reset()
+        return "Missing entry ID.", state, None
+
+    import requests
+    try:
+        if text.lower().startswith("approve"):
+            resp = requests.post(
+                f"{BACKEND_API_INTERNAL_URL}/time-tracker/timesheet/{entry_id}/approve",
+                json={"decided_by": reviewer_employee_id},
+                timeout=20,
+            )
+        elif text.lower().startswith("reject"):
+            reason = ""
+            if ":" in text:
+                reason = text.split(":", 1)[1].strip()
+            resp = requests.post(
+                f"{BACKEND_API_INTERNAL_URL}/time-tracker/timesheet/{entry_id}/reject",
+                json={"decided_by": reviewer_employee_id, "comment": reason},
+                timeout=20,
+            )
+        else:
+            return "Please type 'approve' or 'reject: reason'.", state, None
+
+        data = resp.json()
+        state.reset()
+        if resp.status_code == 200 and data.get("success"):
+            return f"✅ Timesheet {entry_id} updated successfully!", state, None
+        return f"❌ Timesheet review failed: {data.get('error') or resp.status_code}", state, None
+    except Exception as err:
+        state.reset()
+        return f"❌ Timesheet review error: {err}", state, None
+
+
 # ================== ASSET CREATION FLOW ==================
 
 ASSET_CATEGORY_OPTIONS = ["Laptop", "Monitor", "Charger", "Keyboard", "Headset", "Accessory"]
@@ -529,6 +1204,14 @@ AUTOMATION_INTENTS = {
         "flow": "employee_delete",
         "description": "Delete an existing employee record"
     },
+    "create_task_record": {
+        "keywords": [
+            "create task", "add new task", "log a task", "open task", "new project task",
+            "create project task", "add task card"
+        ],
+        "flow": "task_creation",
+        "description": "Create a project task"
+    },
     "apply_leave": {
         "keywords": [
             "apply leave", "apply for leave", "request leave", "take leave",
@@ -574,6 +1257,14 @@ AUTOMATION_INTENTS = {
         ],
         "flow": "task_stop",
         "description": "Stop/pause the currently running task timer"
+    },
+    "assign_asset": {
+        "keywords": [
+            "assign asset", "reassign asset", "update asset owner", "move laptop",
+            "transfer asset", "asset assignment"
+        ],
+        "flow": "asset_assignment",
+        "description": "Assign an asset to an employee"
     },
     # Chat Automation
     "send_message": {
@@ -1724,7 +2415,8 @@ def process_automation(
     conversation_state: Optional[Dict[str, Any]] = None,
     user_employee_id: Optional[str] = None,
     user_employee_name: Optional[str] = None,
-    user_employee_email: Optional[str] = None
+    user_employee_email: Optional[str] = None,
+    user_access: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     Main entry point for processing automation flows.
@@ -1750,10 +2442,30 @@ def process_automation(
     else:
         state = ConversationState()
     
+    def _deny_flow(flow_name: str, required_role: str) -> Dict[str, Any]:
+        human_name = flow_name.replace("_", " ").title()
+        state.reset()
+        return {
+            "is_automation": True,
+            "response": f"⚠️ The automation '{human_name}' requires {required_role} access. Please contact an L{required_role[-1]} approver.",
+            "state": state.to_dict(),
+            "action": None,
+        }
+
+    def _ensure_flow(flow_name: str) -> Optional[Dict[str, Any]]:
+        allowed, required = _is_flow_allowed(flow_name, user_access)
+        if not allowed:
+            return _deny_flow(flow_name, required)
+        return None
+
     # If there's an active flow, continue it
     if state.active_flow:
         if state.active_flow == "employee_creation":
+            denied = _ensure_flow("employee_creation")
+            if denied:
+                return denied
             response, state, action = handle_employee_creation_flow(user_message, state)
+            _log_automation_event("employee_creation", user_employee_id, {"success": True, "message": response})
             return {
                 "is_automation": True,
                 "response": response,
@@ -1761,7 +2473,11 @@ def process_automation(
                 "action": action
             }
         elif state.active_flow == "employee_edit":
+            denied = _ensure_flow("employee_edit")
+            if denied:
+                return denied
             response, state, action = handle_employee_edit_flow(user_message, state)
+            _log_automation_event("employee_edit", user_employee_id, {"success": True, "message": response})
             return {
                 "is_automation": True,
                 "response": response,
@@ -1769,7 +2485,11 @@ def process_automation(
                 "action": action
             }
         elif state.active_flow == "employee_delete":
+            denied = _ensure_flow("employee_delete")
+            if denied:
+                return denied
             response, state, action = handle_employee_delete_flow(user_message, state)
+            _log_automation_event("employee_delete", user_employee_id, {"success": True, "message": response})
             return {
                 "is_automation": True,
                 "response": response,
@@ -1777,7 +2497,11 @@ def process_automation(
                 "action": action
             }
         elif state.active_flow == "leave_application":
+            denied = _ensure_flow("leave_application")
+            if denied:
+                return denied
             response, state, action = handle_leave_application_flow(user_message, state, user_employee_id)
+            _log_automation_event("leave_application", user_employee_id, {"success": True, "message": response})
             return {
                 "is_automation": True,
                 "response": response,
@@ -1785,7 +2509,23 @@ def process_automation(
                 "action": action
             }
         elif state.active_flow == "asset_creation":
+            denied = _ensure_flow("asset_creation")
+            if denied:
+                return denied
             response, state, action = handle_asset_creation_flow(user_message, state)
+            _log_automation_event("asset_creation", user_employee_id, {"success": True, "message": response})
+            return {
+                "is_automation": True,
+                "response": response,
+                "state": state.to_dict(),
+                "action": action
+            }
+        elif state.active_flow == "asset_assignment":
+            denied = _ensure_flow("asset_assignment")
+            if denied:
+                return denied
+            response, state, action = handle_asset_assignment_flow(user_message, state)
+            _log_automation_event("asset_assignment", user_employee_id, {"success": True, "message": response})
             return {
                 "is_automation": True,
                 "response": response,
@@ -1793,16 +2533,60 @@ def process_automation(
                 "action": action
             }
         elif state.active_flow == "task_start":
+            denied = _ensure_flow("task_start")
+            if denied:
+                return denied
             response, state, action = handle_task_start_flow(user_message, state, user_employee_id, user_employee_name, user_employee_email)
+            _log_automation_event("task_start", user_employee_id, {"success": True, "message": response})
             return {
                 "is_automation": True,
                 "response": response,
                 "state": state.to_dict(),
                 "action": action
             }
+        elif state.active_flow == "task_creation":
+            denied = _ensure_flow("task_creation")
+            if denied:
+                return denied
+            response, state, action = handle_task_creation_flow(user_message, state)
+            _log_automation_event("task_creation", user_employee_id, {"success": True, "message": response})
+            return {
+                "is_automation": True,
+                "response": response,
+                "state": state.to_dict(),
+                "action": action
+            }
+        elif state.active_flow == "attendance_submit":
+            denied = _ensure_flow("attendance_submit")
+            if denied:
+                return denied
+            response, state, action = handle_attendance_submission_flow(user_message, state, user_employee_id)
+            _log_automation_event("attendance_submit", user_employee_id, {"success": True, "message": response})
+            return {
+                "is_automation": True,
+                "response": response,
+                "state": state.to_dict(),
+                "action": action,
+            }
+        elif state.active_flow == "attendance_review":
+            denied = _ensure_flow("attendance_review")
+            if denied:
+                return denied
+            response, state, action = handle_attendance_review_flow(user_message, state, user_employee_id)
+            _log_automation_event("attendance_review", user_employee_id, {"success": True, "message": response})
+            return {
+                "is_automation": True,
+                "response": response,
+                "state": state.to_dict(),
+                "action": action,
+            }
         # Chat automation flows
         elif state.active_flow == "chat_send_message":
+            denied = _ensure_flow("chat_send_message")
+            if denied:
+                return denied
             response, state, action = handle_chat_send_message_flow(user_message, state, user_employee_id)
+            _log_automation_event("chat_send_message", user_employee_id, {"success": True, "message": response})
             return {
                 "is_automation": True,
                 "response": response,
@@ -1810,6 +2594,9 @@ def process_automation(
                 "action": action
             }
         elif state.active_flow == "chat_read_conversation":
+            denied = _ensure_flow("chat_read_conversation")
+            if denied:
+                return denied
             response, state, action = handle_chat_read_conversation_flow(user_message, state, user_employee_id)
             return {
                 "is_automation": True,
@@ -1818,6 +2605,9 @@ def process_automation(
                 "action": action
             }
         elif state.active_flow == "chat_reply":
+            denied = _ensure_flow("chat_reply")
+            if denied:
+                return denied
             response, state, action = handle_chat_reply_flow(user_message, state, user_employee_id)
             return {
                 "is_automation": True,
@@ -1830,6 +2620,9 @@ def process_automation(
     intent = detect_automation_intent(user_message)
     if intent:
         if intent["flow"] == "employee_creation":
+            denied = _ensure_flow("employee_creation")
+            if denied:
+                return denied
             response, state, action = handle_employee_creation_flow(user_message, state)
             return {
                 "is_automation": True,
@@ -1838,6 +2631,9 @@ def process_automation(
                 "action": action
             }
         elif intent["flow"] == "employee_edit":
+            denied = _ensure_flow("employee_edit")
+            if denied:
+                return denied
             response, state, action = handle_employee_edit_flow(user_message, state)
             return {
                 "is_automation": True,
@@ -1846,6 +2642,9 @@ def process_automation(
                 "action": action
             }
         elif intent["flow"] == "employee_delete":
+            denied = _ensure_flow("employee_delete")
+            if denied:
+                return denied
             response, state, action = handle_employee_delete_flow(user_message, state)
             return {
                 "is_automation": True,
@@ -1854,6 +2653,9 @@ def process_automation(
                 "action": action
             }
         elif intent["flow"] == "leave_application":
+            denied = _ensure_flow("leave_application")
+            if denied:
+                return denied
             response, state, action = handle_leave_application_flow(user_message, state, user_employee_id)
             return {
                 "is_automation": True,
@@ -1862,6 +2664,9 @@ def process_automation(
                 "action": action
             }
         elif intent["flow"] == "asset_creation":
+            denied = _ensure_flow("asset_creation")
+            if denied:
+                return denied
             response, state, action = handle_asset_creation_flow(user_message, state)
             return {
                 "is_automation": True,
@@ -1869,7 +2674,21 @@ def process_automation(
                 "state": state.to_dict(),
                 "action": action
             }
+        elif intent["flow"] == "asset_assignment":
+            denied = _ensure_flow("asset_assignment")
+            if denied:
+                return denied
+            response, state, action = handle_asset_assignment_flow(user_message, state)
+            return {
+                "is_automation": True,
+                "response": response,
+                "state": state.to_dict(),
+                "action": action
+            }
         elif intent["flow"] == "check_in":
+            denied = _ensure_flow("check_in")
+            if denied:
+                return denied
             response, state, action = _handle_check_action("check_in", state, user_employee_id)
             return {
                 "is_automation": True,
@@ -1878,6 +2697,9 @@ def process_automation(
                 "action": action
             }
         elif intent["flow"] == "check_out":
+            denied = _ensure_flow("check_out")
+            if denied:
+                return denied
             response, state, action = _handle_check_action("check_out", state, user_employee_id)
             return {
                 "is_automation": True,
@@ -1886,6 +2708,9 @@ def process_automation(
                 "action": action
             }
         elif intent["flow"] == "task_start":
+            denied = _ensure_flow("task_start")
+            if denied:
+                return denied
             response, state, action = handle_task_start_flow(user_message, state, user_employee_id, user_employee_name, user_employee_email)
             return {
                 "is_automation": True,
@@ -1894,6 +2719,9 @@ def process_automation(
                 "action": action
             }
         elif intent["flow"] == "task_stop":
+            denied = _ensure_flow("task_stop")
+            if denied:
+                return denied
             response, state, action = handle_task_stop_flow(user_message, state, user_employee_id)
             return {
                 "is_automation": True,
@@ -1901,8 +2729,44 @@ def process_automation(
                 "state": state.to_dict(),
                 "action": action
             }
+        elif intent["flow"] == "task_creation":
+            denied = _ensure_flow("task_creation")
+            if denied:
+                return denied
+            response, state, action = handle_task_creation_flow(user_message, state)
+            return {
+                "is_automation": True,
+                "response": response,
+                "state": state.to_dict(),
+                "action": action
+            }
+        elif intent["flow"] == "attendance_submit":
+            denied = _ensure_flow("attendance_submit")
+            if denied:
+                return denied
+            response, state, action = handle_attendance_submission_flow(user_message, state, user_employee_id)
+            return {
+                "is_automation": True,
+                "response": response,
+                "state": state.to_dict(),
+                "action": action,
+            }
+        elif intent["flow"] == "attendance_review":
+            denied = _ensure_flow("attendance_review")
+            if denied:
+                return denied
+            response, state, action = handle_attendance_review_flow(user_message, state, user_employee_id)
+            return {
+                "is_automation": True,
+                "response": response,
+                "state": state.to_dict(),
+                "action": action,
+            }
         # Chat automation intents
         elif intent["flow"] == "chat_send_message":
+            denied = _ensure_flow("chat_send_message")
+            if denied:
+                return denied
             response, state, action = handle_chat_send_message_flow(user_message, state, user_employee_id)
             return {
                 "is_automation": True,
@@ -1911,6 +2775,9 @@ def process_automation(
                 "action": action
             }
         elif intent["flow"] == "chat_read_messages":
+            denied = _ensure_flow("chat_read_messages")
+            if denied:
+                return denied
             response, state, action = handle_chat_read_messages_flow(user_message, state, user_employee_id)
             return {
                 "is_automation": True,
@@ -1919,6 +2786,9 @@ def process_automation(
                 "action": action
             }
         elif intent["flow"] == "chat_read_conversation":
+            denied = _ensure_flow("chat_read_conversation")
+            if denied:
+                return denied
             response, state, action = handle_chat_read_conversation_flow(user_message, state, user_employee_id)
             return {
                 "is_automation": True,
@@ -1927,6 +2797,9 @@ def process_automation(
                 "action": action
             }
         elif intent["flow"] == "chat_reply":
+            denied = _ensure_flow("chat_reply")
+            if denied:
+                return denied
             response, state, action = handle_chat_reply_flow(user_message, state, user_employee_id)
             return {
                 "is_automation": True,
@@ -3579,8 +4452,50 @@ Please review in HR Tool.
                 "error": f"Error sending reply: {str(e)}"
             }
     
+    if action["type"] == "create_project_task":
+        try:
+            project_code = action.get("project_code")
+            payload = action.get("payload") or {}
+            if not project_code:
+                return {"success": False, "error": "Project code is required."}
+            url = f"{BACKEND_API_INTERNAL_URL}/api/projects/{project_code}/tasks"
+            resp = requests.post(url, json=payload, timeout=30)
+            data = resp.json() if resp.content else {}
+            if resp.status_code in (200, 201) and data.get("success", True):
+                return {
+                    "success": True,
+                    "message": data.get("message") or f"Task **{payload.get('task_name')}** created under {project_code}.",
+                    "task_id": data.get("task_id") or payload.get("task_name"),
+                }
+            return {
+                "success": False,
+                "error": data.get("error") or resp.text or "Task creation failed"
+            }
+        except Exception as e:
+            return {"success": False, "error": f"Error creating task: {e}"}
+
+    if action["type"] == "update_asset_assignment":
+        try:
+            asset_id = action.get("asset_id")
+            payload = {k: v for k, v in (action.get("data") or {}).items() if v not in (None, "")}
+            if not asset_id:
+                return {"success": False, "error": "Asset ID is required."}
+            url = f"{BACKEND_API_INTERNAL_URL}/api/assets/update/{asset_id}"
+            resp = requests.patch(url, json=payload, timeout=20)
+            data = resp.json() if resp.content else {}
+            if resp.status_code == 200 and (data.get("success") or data.get("message")):
+                return {
+                    "success": True,
+                    "message": data.get("message") or f"Asset {asset_id} updated successfully.",
+                }
+            return {
+                "success": False,
+                "error": data.get("error") or resp.text or "Asset update failed"
+            }
+        except Exception as e:
+            return {"success": False, "error": f"Error updating asset: {e}"}
+
     return {
         "success": False,
         "error": f"Unknown action type: {action.get('type')}"
     }
-

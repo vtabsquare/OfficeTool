@@ -8,6 +8,9 @@ from dataverse_helper import get_access_token
 # Load from environment
 RESOURCE = os.getenv("RESOURCE", "").rstrip("/")
 BASE_URL = f"{RESOURCE}/api/data/v9.2" if RESOURCE else ""
+TASKS_ENTITY = os.getenv("TASKS_ENTITY", "crc6f_hr_taskdetailses")
+TIMESHEET_ENTITY = os.getenv("TIMESHEET_ENTITY", "crc6f_hr_timesheets")
+LOGIN_ACTIVITY_ENTITY = os.getenv("LOGIN_ACTIVITY_ENTITY", "crc6f_hr_loginactivitytbs")
 
 # Entity configurations (from unified_server.py)
 ENTITIES = {
@@ -22,7 +25,40 @@ ENTITIES = {
     "interns": "crc6f_hr_interndetailses",
     "login": "crc6f_hr_login_detailses",
     "inbox": "crc6f_hr_inboxes",
+    "tasks": TASKS_ENTITY,
+    "timesheets": TIMESHEET_ENTITY,
+    "login_activity": LOGIN_ACTIVITY_ENTITY,
 }
+
+
+def _normalize_access_level(value: Optional[str]) -> str:
+    level = (value or "").strip().upper()
+    if level in {"L1", "L2", "L3"}:
+        return level
+    if level in {"ADMIN", "SUPERADMIN"}:
+        return "L3"
+    if level in {"MANAGER"}:
+        return "L2"
+    return "L1"
+
+
+def _derive_role_flags(user_meta: dict) -> Dict[str, bool]:
+    access_level = _normalize_access_level(
+        user_meta.get("access_level")
+        or user_meta.get("role")
+        or (user_meta.get("designation") or "")
+    )
+    is_admin = bool(user_meta.get("is_admin"))
+    is_manager = bool(user_meta.get("is_manager")) or access_level == "L2"
+    is_l3 = is_admin or access_level == "L3"
+    is_l2 = is_l3 or is_manager
+    return {
+        "access_level": access_level,
+        "is_admin": is_admin,
+        "is_l3": is_l3,
+        "is_l2": is_l2,
+        "is_l1": True,
+    }
 
 
 def _get_headers(token: str) -> dict:
@@ -55,6 +91,10 @@ def _fetch_entity(entity: str, token: str, select: str = "", filter_query: str =
     except Exception as e:
         print(f"[AI Service] Error fetching {entity}: {e}")
         return []
+
+
+def _safe_lower(val: Optional[str]) -> str:
+    return str(val or "").strip().lower()
 
 
 def get_employee_overview(token: str, emp_id: str) -> dict:
@@ -271,6 +311,183 @@ def get_interns_summary(token: str) -> dict:
     }
 
 
+def get_tasks_summary(token: str, emp_id: Optional[str] = None, limit: int = 200) -> dict:
+    """Summarize project tasks, optionally scoped to an employee."""
+    entity = ENTITIES.get("tasks")
+    if not entity:
+        return {}
+
+    select_fields = ",".join(
+        [
+            "crc6f_hr_taskdetailsid",
+            "crc6f_taskid",
+            "crc6f_taskname",
+            "crc6f_taskstatus",
+            "crc6f_taskpriority",
+            "crc6f_duedate",
+            "crc6f_assignedto",
+            "crc6f_projectid",
+        ]
+    )
+
+    records = _fetch_entity(entity, token, select=select_fields, top=limit)
+    if not records:
+        return {"total_tasks": 0}
+
+    by_status = {}
+    by_priority = {}
+    my_tasks = []
+    upcoming = []
+    emp_id_lower = _safe_lower(emp_id)
+
+    for rec in records:
+        status = (rec.get("crc6f_taskstatus") or "Unknown").strip()
+        priority = (rec.get("crc6f_taskpriority") or "Normal").strip()
+        by_status[status] = by_status.get(status, 0) + 1
+        by_priority[priority] = by_priority.get(priority, 0) + 1
+
+        assigned = rec.get("crc6f_assignedto")
+        if emp_id_lower and emp_id_lower in _safe_lower(assigned):
+            my_tasks.append(
+                {
+                    "task_id": rec.get("crc6f_taskid"),
+                    "task_name": rec.get("crc6f_taskname"),
+                    "status": status,
+                    "priority": priority,
+                    "due_date": rec.get("crc6f_duedate"),
+                }
+            )
+
+        due = rec.get("crc6f_duedate")
+        if due:
+            upcoming.append(
+                {
+                    "task_id": rec.get("crc6f_taskid"),
+                    "task_name": rec.get("crc6f_taskname"),
+                    "due_date": due,
+                    "status": status,
+                }
+            )
+
+    upcoming = sorted(upcoming, key=lambda r: r.get("due_date") or "")[:5]
+
+    return {
+        "total_tasks": len(records),
+        "by_status": by_status,
+        "by_priority": by_priority,
+        "my_tasks": my_tasks[:10],
+        "upcoming_due": upcoming,
+    }
+
+
+def get_timesheet_summary(token: str, emp_id: Optional[str] = None, days: int = 30) -> dict:
+    """Summarize timesheet entries for org or individual."""
+    entity = ENTITIES.get("timesheets")
+    if not entity:
+        return {}
+
+    start_date = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+    filter_query = f"crc6f_workdate ge {start_date}"
+    if emp_id:
+        filter_query += f" and crc6f_employeeid eq '{emp_id}'"
+
+    select_fields = ",".join(
+        [
+            "crc6f_employeeid",
+            "crc6f_projectid",
+            "crc6f_taskid",
+            "crc6f_taskname",
+            "crc6f_workdate",
+            "crc6f_hours",
+            "crc6f_seconds",
+        ]
+    )
+
+    records = _fetch_entity(entity, token, select=select_fields, filter_query=filter_query, top=500)
+    if not records:
+        return {"total_logs": 0, "period_days": days}
+
+    total_hours = 0.0
+    by_project = {}
+    recent_entries = []
+
+    for rec in records:
+        hours = rec.get("crc6f_hours")
+        seconds = rec.get("crc6f_seconds")
+        try:
+            if hours is not None:
+                total_hours += float(hours)
+            elif seconds is not None:
+                total_hours += float(seconds) / 3600.0
+        except Exception:
+            pass
+
+        project = rec.get("crc6f_projectid") or "Unknown"
+        by_project[project] = by_project.get(project, 0) + 1
+
+        recent_entries.append(
+            {
+                "date": rec.get("crc6f_workdate"),
+                "task": rec.get("crc6f_taskname") or rec.get("crc6f_taskid"),
+                "hours": rec.get("crc6f_hours") or rec.get("crc6f_seconds"),
+            }
+        )
+
+    recent_entries = sorted(recent_entries, key=lambda e: e.get("date") or "", reverse=True)[:10]
+
+    return {
+        "period_days": days,
+        "total_logs": len(records),
+        "total_hours": round(total_hours, 2),
+        "by_project": by_project,
+        "recent_entries": recent_entries,
+    }
+
+
+def get_login_activity_summary(token: str, emp_id: Optional[str] = None, days: int = 14) -> dict:
+    """Summarize login activity for users."""
+    entity = ENTITIES.get("login_activity")
+    if not entity:
+        return {}
+
+    start_date = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+    filter_query = f"crc6f_date ge {start_date}"
+    if emp_id:
+        filter_query += f" and crc6f_employeeid eq '{emp_id}'"
+
+    select_fields = ",".join(
+        [
+            "crc6f_employeeid",
+            "crc6f_date",
+            "crc6f_checkintime",
+            "crc6f_checkouttime",
+            "crc6f_checkinlocation",
+            "crc6f_checkoutlocation",
+        ]
+    )
+
+    records = _fetch_entity(entity, token, select=select_fields, filter_query=filter_query, top=500)
+    if not records:
+        return {"total_events": 0}
+
+    total_events = len(records)
+    recent = sorted(records, key=lambda r: r.get("crc6f_date") or "", reverse=True)[:10]
+
+    return {
+        "period_days": days,
+        "total_events": total_events,
+        "recent_activity": [
+            {
+                "employee_id": r.get("crc6f_employeeid"),
+                "date": r.get("crc6f_date"),
+                "check_in": r.get("crc6f_checkintime"),
+                "check_out": r.get("crc6f_checkouttime"),
+            }
+            for r in recent
+        ],
+    }
+
+
 def build_ai_context(token: str, user_meta: dict, scope: str = "general") -> dict:
     """
     Build comprehensive context for AI based on user role and scope.
@@ -283,14 +500,16 @@ def build_ai_context(token: str, user_meta: dict, scope: str = "general") -> dic
     Returns:
         Dict with relevant data summaries
     """
+    role_flags = _derive_role_flags(user_meta)
     context = {
         "timestamp": datetime.now().isoformat(),
-        "user_role": "Admin" if user_meta.get("is_admin") else "L3" if user_meta.get("is_l3") else "Employee",
+        "user_access": role_flags,
     }
     
     emp_id = user_meta.get("employee_id")
-    is_admin = user_meta.get("is_admin", False)
-    is_l3 = user_meta.get("is_l3", False)
+    is_admin = role_flags.get("is_admin")
+    is_l3 = role_flags.get("is_l3")
+    is_l2 = role_flags.get("is_l2")
     
     try:
         # Always include basic employee info for the current user
@@ -299,39 +518,59 @@ def build_ai_context(token: str, user_meta: dict, scope: str = "general") -> dic
         
         # Scope-based data fetching with L3 permissions
         if scope in ["general", "employee", "all"]:
-            if is_admin or is_l3:  # L3 gets same access as admin
+            if is_admin or is_l3:  # L3/Admin access
                 context["employees_summary"] = get_all_employees_summary(token)
             elif emp_id:
                 context["my_profile"] = get_employee_overview(token, emp_id)
         
         if scope in ["general", "attendance", "all"]:
-            if is_admin or is_l3:  # L3 gets same access as admin
+            if is_admin or is_l3:
                 context["attendance_summary"] = get_attendance_summary(token, days=30)
             elif emp_id:
                 context["my_attendance"] = get_attendance_summary(token, emp_id=emp_id, days=30)
         
         if scope in ["general", "leave", "all"]:
-            if is_admin or is_l3:  # L3 gets same access as admin
+            if is_admin or is_l3:
                 context["leave_summary"] = get_leave_summary(token)
             elif emp_id:
                 context["my_leaves"] = get_leave_summary(token, emp_id=emp_id)
         
         if scope in ["general", "assets", "all"]:
-            if is_admin or is_l3:  # L3 gets same access as admin
+            if is_admin or is_l3:
                 context["assets_summary"] = get_assets_summary(token)
+            elif emp_id:
+                context["my_assets"] = context.get("my_assets") or {"total_assets": 0}
         
         if scope in ["general", "holidays", "all"]:
             context["holidays"] = get_holidays_list(token)
         
         if scope in ["general", "projects", "all"]:
-            if is_admin or is_l3:  # L3 gets same access as admin
+            if is_admin or is_l3:
                 context["projects_summary"] = get_projects_summary(token)
         
         if scope in ["general", "interns", "all"]:
-            if is_admin or is_l3:  # L3 gets same access as admin
+            if is_admin or is_l3:
                 context["interns_summary"] = get_interns_summary(token)
-            
+        
+        if scope in ["general", "tasks", "projects", "all"]:
+            if is_admin or is_l3:
+                context["tasks_summary"] = get_tasks_summary(token)
+            elif emp_id:
+                context["my_tasks_summary"] = get_tasks_summary(token, emp_id=emp_id)
+        
+        if scope in ["general", "timesheets", "time", "all"]:
+            if is_admin or is_l3 or is_l2:
+                context["timesheet_summary"] = get_timesheet_summary(token)
+            elif emp_id:
+                context["my_timesheets"] = get_timesheet_summary(token, emp_id=emp_id)
+        
+        if scope in ["general", "login", "attendance", "all"]:
+            if is_admin or is_l3:
+                context["login_activity_summary"] = get_login_activity_summary(token)
+            elif emp_id:
+                context["my_login_activity"] = get_login_activity_summary(token, emp_id=emp_id)
+        
     except Exception as e:
-        context["error"] = f"Error fetching some data: {str(e)}"
+        print(f"[AI Service] Error building context: {e}")
     
     return context
