@@ -296,175 +296,122 @@ const renderAttendanceTrackerPage = async (mode) => {
 
         const todayLogData = todayDay && myAttendance[todayDay] ? [myAttendance[todayDay]] : [];
 
-        // Get filtered attendance data based on current filter for week/month box
-        const currentFilter = state.attendanceFilter || 'week';
-        let filteredAttendanceData = [];
+        const formatLoginTime = (isoValue, fallback = '--:--:--') => {
+            if (!isoValue) return fallback;
+            const parsed = new Date(isoValue);
+            if (Number.isNaN(parsed.getTime())) return fallback;
+            return parsed.toTimeString().split(' ')[0].substring(0, 8);
+        };
 
-        if (currentFilter === 'week') {
-            // Get current week data based on the DISPLAYED month/year, not current date
+        const buildWeekMonthRows = async () => {
+            const filter = state.attendanceFilter || 'week';
             const today = new Date();
-            
-            // Create a date object for the displayed month/year
-            const displayedDate = new Date(year, month, 1); // month is 0-indexed in JS Date
-            
-            // Find the current week in the displayed month
-            // First, get the first day of the displayed month
-            const firstDayOfMonth = new Date(year, month, 1);
-            
-            // Calculate which week of the month we're currently in
-            // If viewing current month, use current date, otherwise use middle of month
-            const referenceDate = (today.getFullYear() === year && today.getMonth() === month) 
-                ? today 
-                : new Date(year, month, 15); // Use middle of month as reference for non-current months
-            
-            // Calculate start of week (Sunday) for the reference date
-            const startOfWeek = new Date(referenceDate);
-            startOfWeek.setDate(referenceDate.getDate() - referenceDate.getDay());
-            
-            // Calculate end of week (Saturday)
-            const endOfWeek = new Date(startOfWeek);
-            endOfWeek.setDate(startOfWeek.getDate() + 6);
+            const viewingCurrentMonth = year === today.getFullYear() && month === today.getMonth();
+            const monthStart = new Date(year, month, 1);
+            const monthEnd = new Date(year, month, daysInMonth);
 
-            const allAttendanceData = Object.values(myAttendance)
-                .filter(d => d && ((d.checkIn || d.checkOut) || d.leaveType));
-            
-            // Also show all days with attendance in the month
-            const allDaysWithAttendance = Object.values(myAttendance).filter(d => d && d.day);
+            let rangeStart;
+            let rangeEnd;
 
-            filteredAttendanceData = allAttendanceData.filter(d => {
-                    // Create date for the attendance day using the DISPLAYED year/month
-                    const dayDate = new Date(year, month, d.day);
-                    const inRange = dayDate >= startOfWeek && dayDate <= endOfWeek;
-                    return inRange;
-                })
-                .sort((a, b) => (b.day || 0) - (a.day || 0));
-        } else if (currentFilter === 'month') {
-            // Get all attendance data for the DISPLAYED month
-            filteredAttendanceData = Object.values(myAttendance)
-                .filter(d => d && ((d.checkIn || d.checkOut) || d.leaveType))
-                .sort((a, b) => (b.day || 0) - (a.day || 0));
-        }
+            if (filter === 'week') {
+                const referenceDate = viewingCurrentMonth
+                    ? today
+                    : new Date(year, month, state.selectedAttendanceDay || Math.min(daysInMonth, 15));
+                rangeStart = new Date(referenceDate);
+                rangeStart.setDate(referenceDate.getDate() - referenceDate.getDay());
+                rangeEnd = new Date(rangeStart);
+                rangeEnd.setDate(rangeStart.getDate() + 6);
+            } else {
+                rangeStart = new Date(monthStart);
+                rangeEnd = new Date(monthEnd);
+            }
 
-        // Generate table rows for filtered week/month data
-        let entryExitDetailsHTML = '';
-        if (filteredAttendanceData.length > 0) {
-            // Fetch login activity for the filtered dates to get accurate checkout times
-            const loginActivityMap = new Map();
+            if (rangeStart < monthStart) rangeStart = new Date(monthStart);
+            if (rangeEnd > monthEnd) rangeEnd = new Date(monthEnd);
+
+            const fromStr = rangeStart.toISOString().split('T')[0];
+            const toStr = rangeEnd.toISOString().split('T')[0];
+
             try {
-                // Always include today in the date range if we're viewing current month
-                const today = new Date();
-                const isCurrentMonth = year === today.getFullYear() && month === today.getMonth();
-                
-                const startDate = new Date(Math.min(...filteredAttendanceData.map(d => new Date(year, month, d.day || 1))));
-                const endDate = new Date(Math.max(...filteredAttendanceData.map(d => new Date(year, month, d.day || 1))));
-                
-                // If current month, ensure we include today's date
-                if (isCurrentMonth) {
-                    if (endDate < today) {
-                        endDate = today;
-                    }
-                }
-                
-                const fromStr = startDate.toISOString().split('T')[0];
-                const toStr = endDate.toISOString().split('T')[0];
-                
-                console.log(`Fetching login activity from ${fromStr} to ${toStr}`);
-                
                 const loginData = await fetchLoginEvents({
                     employee_id: String(state.user.id || '').toUpperCase(),
                     from: fromStr,
-                    to: toStr
+                    to: toStr,
                 });
-                
-                if (loginData.success && loginData.daily_summary) {
-                    loginData.daily_summary.forEach(day => {
-                        loginActivityMap.set(day.date, day);
-                    });
-                    console.log('Login activity data loaded:', loginData.daily_summary.length, 'days');
+
+                const summaryMap = new Map();
+                (loginData.daily_summary || []).forEach((entry) => {
+                    if (entry?.date) summaryMap.set(entry.date, entry);
+                });
+
+                const rows = [];
+                for (let cursor = new Date(rangeEnd); cursor >= rangeStart; cursor.setDate(cursor.getDate() - 1)) {
+                    const dateStr = cursor.toISOString().split('T')[0];
+                    const dayNumber = cursor.getDate();
+                    const summary = summaryMap.get(dateStr) || {};
+                    const attendanceFallback = myAttendance[dayNumber] || {};
+
+                    const checkInTime = summary.check_in_time
+                        ? formatLoginTime(summary.check_in_time)
+                        : attendanceFallback.checkIn || '--:--:--';
+
+                    const checkOutTime = summary.check_out_time
+                        ? formatLoginTime(summary.check_out_time)
+                        : attendanceFallback.checkOut || '--:--:--';
+
+                    let totalTimeHTML = '--';
+                    const { duration } = attendanceFallback;
+                    if (typeof duration === 'number' && Number.isFinite(duration) && duration >= 0) {
+                        const totalMins = Math.round(duration * 60);
+                        const hrs = Math.floor(totalMins / 60);
+                        const mins = totalMins % 60;
+                        totalTimeHTML = `${String(hrs).padStart(2, '0')}h ${String(mins).padStart(2, '0')}m`;
+                    } else if (summary.check_in_time && summary.check_out_time) {
+                        const start = new Date(summary.check_in_time);
+                        const end = new Date(summary.check_out_time);
+                        const diffMs = end.getTime() - start.getTime();
+                        if (!Number.isNaN(diffMs) && diffMs > 0) {
+                            const hrs = Math.floor(diffMs / 3600000);
+                            const mins = Math.floor((diffMs % 3600000) / 60000);
+                            totalTimeHTML = `${String(hrs).padStart(2, '0')}h ${String(mins).padStart(2, '0')}m`;
+                        }
+                    } else if (attendanceFallback.checkIn && attendanceFallback.checkOut) {
+                        const dayStr = String(dayNumber).padStart(2, '0');
+                        const start = new Date(`${yearMonth}-${dayStr}T${attendanceFallback.checkIn}`);
+                        const end = new Date(`${yearMonth}-${dayStr}T${attendanceFallback.checkOut}`);
+                        const diffMs = end.getTime() - start.getTime();
+                        if (!Number.isNaN(diffMs) && diffMs > 0) {
+                            const hrs = Math.floor(diffMs / 3600000);
+                            const mins = Math.floor((diffMs % 3600000) / 60000);
+                            totalTimeHTML = `${String(hrs).padStart(2, '0')}h ${String(mins).padStart(2, '0')}m`;
+                        }
+                    } else if (attendanceFallback.leaveType) {
+                        totalTimeHTML = 'Leave';
+                    }
+
+                    rows.push(`
+                        <tr>
+                            <td>${String(dayNumber).padStart(2, '0')} ${cursor.toLocaleString('default', { month: 'short' })} ${cursor.getFullYear()}</td>
+                            <td>${checkInTime}</td>
+                            <td>${checkOutTime}</td>
+                            <td>${totalTimeHTML}</td>
+                        </tr>`);
                 }
+
+                if (rows.length === 0) {
+                    const filterText = filter === 'week' ? 'this week' : 'this month';
+                    return `<tr><td colspan="4" class="placeholder-text">No login data for ${filterText}</td></tr>`;
+                }
+
+                return rows.join('');
             } catch (err) {
                 console.warn('⚠️ Failed to fetch login activity for week/month:', err);
+                const filterText = (state.attendanceFilter || 'week') === 'week' ? 'this week' : 'this month';
+                return `<tr><td colspan="4" class="placeholder-text">Unable to load login data for ${filterText}</td></tr>`;
             }
-            
-            entryExitDetailsHTML = filteredAttendanceData.map(d => {
-                // Validate the day property
-                const day = d.day || 1;
-                const dayStr = String(day).padStart(2, '0');
-                const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${dayStr}`;
-                
-                // Get check-in/check-out from login activity if available (more accurate)
-                let checkInTime = d.checkIn || '--:--:--';
-                let checkOutTime = d.checkOut || '--:--:--';
-                
-                const loginActivity = loginActivityMap.get(dateStr);
-                if (loginActivity) {
-                    // Use login activity data as the primary source
-                    if (loginActivity.check_in_time) {
-                        const checkInDate = new Date(loginActivity.check_in_time);
-                        if (!isNaN(checkInDate.getTime())) {
-                            checkInTime = checkInDate.toTimeString().split(' ')[0].substring(0, 8);
-                        }
-                    }
-                    if (loginActivity.check_out_time) {
-                        const checkOutDate = new Date(loginActivity.check_out_time);
-                        if (!isNaN(checkOutDate.getTime())) {
-                            checkOutTime = checkOutDate.toTimeString().split(' ')[0].substring(0, 8);
-                        }
-                    }
-                    
-                    // For debugging
-                    if (dateStr === '2026-02-12') {
-                        console.log(`Login activity for ${dateStr}:`, {
-                            checkIn: checkInTime,
-                            checkOut: checkOutTime,
-                            original: { checkIn: d.checkIn, checkOut: d.checkOut }
-                        });
-                    }
-                }
-                
-                // Calculate total time:
-                // 1) Prefer duration (backend-provided) when numeric
-                // 2) Else compute from checkIn/checkOut when both exist
-                let totalTimeHTML = '--';
+        };
 
-                const dur = d.duration;
-                if (typeof dur === 'number' && isFinite(dur) && dur >= 0) {
-                    const totalMins = Math.round(dur * 60);
-                    const hrs = Math.floor(totalMins / 60);
-                    const mins = totalMins % 60;
-                    totalTimeHTML = `${String(hrs).padStart(2, '0')}h ${String(mins).padStart(2, '0')}m`;
-                } else if (d.checkIn && d.checkOut) {
-                    try {
-                        const start = new Date(`${yearMonth}-${dayStr}T${d.checkIn}`);
-                        const end = new Date(`${yearMonth}-${dayStr}T${d.checkOut}`);
-                        const totalMs = end.getTime() - start.getTime();
-                        
-                        if (!isNaN(totalMs) && totalMs > 0) {
-                            const totalHours = Math.floor(totalMs / 3600000);
-                            const totalMins = Math.floor((totalMs % 3600000) / 60000);
-                            totalTimeHTML = `${String(totalHours).padStart(2, '0')}h ${String(totalMins).padStart(2, '0')}m`;
-                        }
-                    } catch (err) {
-                        console.warn('Error calculating time for day', day, ':', err);
-                        totalTimeHTML = 'Invalid time';
-                    }
-                } else if (d.leaveType) {
-                    totalTimeHTML = 'Leave';
-                }
-
-                return `
-                <tr>
-                    <td>${day} ${date.toLocaleString('default', { month: 'short' })} ${year}</td>
-                    <td>${checkInTime}</td>
-                    <td>${checkOutTime}</td>
-                    <td>${totalTimeHTML}</td>
-                </tr>`;
-            }).join('');
-        } else {
-            // Provide more informative message based on filter
-            const filterText = currentFilter === 'week' ? 'this week' : 'this month';
-            entryExitDetailsHTML = `<tr><td colspan="4" class="placeholder-text">No attendance data found for ${filterText}</td></tr>`;
-        }
+        const entryExitDetailsHTML = await buildWeekMonthRows();
 
         const recentLogDays = todayLogData;
 
