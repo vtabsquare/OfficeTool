@@ -345,8 +345,12 @@ const renderAttendanceTrackerPage = async (mode) => {
                 });
 
                 const rows = [];
+                const formatLocalDate = (dateObj) => {
+                    return `${dateObj.getFullYear()}-${String(dateObj.getMonth() + 1).padStart(2, '0')}-${String(dateObj.getDate()).padStart(2, '0')}`;
+                };
+
                 for (let cursor = new Date(rangeEnd); cursor >= rangeStart; cursor.setDate(cursor.getDate() - 1)) {
-                    const dateStr = cursor.toISOString().split('T')[0];
+                    const dateStr = formatLocalDate(cursor);
                     const dayNumber = cursor.getDate();
                     const summary = summaryMap.get(dateStr) || {};
                     const attendanceFallback = myAttendance[dayNumber] || {};
