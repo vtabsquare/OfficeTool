@@ -2301,7 +2301,8 @@ export const renderInboxPage = async () => {
     await updateNotificationBadge();
 
     const isAdmin = isAdminUser();
-    console.log('👤 User is admin:', isAdmin);
+    const canViewTeamQueues = isManagerOrAdmin();
+    console.log('👤 User is admin:', isAdmin, '| can view team queues:', canViewTeamQueues);
 
     // Initial static content
     const content = `
@@ -2313,8 +2314,8 @@ export const renderInboxPage = async () => {
         </div>
         <div class="inbox-content">
             <div class="inbox-tabs">
-                ${isAdmin ? '<div class="inbox-tab active" data-tab="awaiting">Awaiting approval</div>' : ''}
-                <div class="inbox-tab ${!isAdmin ? 'active' : ''}" data-tab="requests">My requests</div>
+                ${canViewTeamQueues ? '<div class="inbox-tab active" data-tab="awaiting">Awaiting approval</div>' : ''}
+                <div class="inbox-tab ${canViewTeamQueues ? '' : 'active'}" data-tab="requests">My requests</div>
                 <div class="inbox-tab" data-tab="completed">Completed</div>
             </div>
             <div class="inbox-list">
@@ -2334,9 +2335,7 @@ export const renderInboxPage = async () => {
     document.getElementById('app-content').innerHTML = getPageContentHTML('Inbox', content);
 
     // Set initial tab
-    if (!isAdmin) {
-        currentInboxTab = 'requests';
-    }
+    currentInboxTab = canViewTeamQueues ? 'awaiting' : 'requests';
 
     // Add event listeners
     setTimeout(async () => {

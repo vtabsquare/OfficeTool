@@ -1,9 +1,10 @@
 import { state } from '../state.js';
-import { isAdminUser, isL3User } from '../utils/accessControl.js';
+import { isAdminUser, isL3User, isManagerOrAdmin } from '../utils/accessControl.js';
 
 export const getSidebarHTML = () => {
     const isAdmin = isAdminUser();
     const isL3 = isL3User();
+    const canManage = isManagerOrAdmin();
     
     return `
     <div class="sidebar-header">
@@ -41,7 +42,7 @@ export const getSidebarHTML = () => {
         </a></li>
         <li><a href="javascript:void(0)" class="nav-link nav-link-disabled" data-page="meet" title="Coming Soon" onclick="event.preventDefault(); return false;"><i class="fa-solid fa-video"></i> Meet <span class="badge-coming-soon">Coming Soon</span></a></li>
         ${
-          isL3
+          canManage
             ? '<li><a href="#/onboarding" class="nav-link" data-page="onboarding"><i class="fa-solid fa-user-plus"></i> Onboarding</a></li>'
             : ""
         }

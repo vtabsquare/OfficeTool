@@ -1,4 +1,4 @@
-import { isAdminUser, isManagerOrAdmin, isL3User } from './utils/accessControl.js';
+import { isAdminUser, isManagerOrAdmin } from './utils/accessControl.js';
 
 // Access denied page for non-admin users
 const renderAccessDenied = (redirectPath = '#/') => {
@@ -124,7 +124,7 @@ export const router = async () => {
     }
   }
   if (path === '/onboarding') {
-    if (!isL3User()) {
+    if (!isManagerOrAdmin()) {
       renderAccessDenied("#/");
       return;
     }
