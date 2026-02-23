@@ -2301,7 +2301,7 @@ export const renderInboxPage = async () => {
     await updateNotificationBadge();
 
     const isAdmin = isAdminUser();
-    const isManager = isManagerOrAdmin();
+    const isManager = isManagerOrAdmin() && !isAdmin;
     console.log('👤 User is admin:', isAdmin, 'manager:', isManager);
 
     // Initial static content
@@ -3909,19 +3909,11 @@ const loadInboxLeaves = async () => {
             const rejectionReason = leave.rejection_reason || leave.crc6f_rejectionreason || '';
             const leaveReason = leave.reason || leave.rejection_reason || leave.crc6f_rejectionreason || '';
 
-            // Debug logging for rejected leaves
-            if (status.toLowerCase() === 'rejected') {
-                console.log(`🔍 Rejected leave ${leaveId}:`, {
-                    status,
-                    rejection_reason: rejectionReason,
-                    fullLeaveData: leave
-                });
-            }
-
             const statusClass = status.toLowerCase();
             const showActions = currentInboxTab === 'awaiting' && isAdmin; // managers view-only
             const isRejected = status.toLowerCase() === 'rejected';
             const isCompOff = leave._source === 'compoff' || (String(leaveType).toLowerCase() === 'comp off');
+            const isManagerViewOnly = currentInboxTab === 'awaiting' && isManager;
 
             return `
                 <div class="inbox-item">
@@ -3951,6 +3943,13 @@ const loadInboxLeaves = async () => {
                             </button>
                             <button class="btn btn-danger btn-sm inbox-reject-btn" data-leave-id="${leaveId}" data-source="${isCompOff ? 'compoff' : 'leave'}" data-compoff-id="${isCompOff ? (leave._raw?.id || '') : ''}">
                                 <i class="fa-solid fa-times"></i> Reject
+                            </button>
+                        </div>
+                    ` : ''}
+                    ${isManagerViewOnly ? `
+                        <div class="inbox-item-actions">
+                            <button class="btn btn-secondary btn-sm inbox-view-btn" data-leave-id="${leaveId}" data-source="${isCompOff ? 'compoff' : 'leave'}" data-compoff-id="${isCompOff ? (leave._raw?.id || '') : ''}">
+                                <i class="fa-solid fa-eye"></i> View
                             </button>
                         </div>
                     ` : ''}
