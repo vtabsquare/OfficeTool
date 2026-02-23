@@ -3779,13 +3779,10 @@ const handleAddProject = async (projectId, triggerBtn) => {
                         </div>
                     `;
                 }
-            }
-        })();
-    }, 0);
-};
-
 const loadInboxLeaves = async () => {
     const isAdmin = isAdminUser();
+    const canViewTeamQueues = isManagerOrAdmin();
+
     const listContainer = document.querySelector('.inbox-list');
 
     if (!listContainer) return;
@@ -3824,13 +3821,13 @@ const loadInboxLeaves = async () => {
             _raw: r,
         });
 
-        if (currentInboxTab === 'awaiting' && isAdmin) {
+        if (currentInboxTab === 'awaiting' && canViewTeamQueues) {
             // Fetch all pending leaves for admin
             const pendingLeaves = await fetchPendingLeaves();
             const compPending = compAll.filter(r => (r.status || 'pending').toLowerCase() === 'pending').map(normalizeComp);
             leaves = (pendingLeaves || []).concat(compPending);
             console.log(`📋 Loaded ${leaves.length} pending leave requests`);
-        } else if (currentInboxTab === 'completed' && isAdmin) {
+        } else if (currentInboxTab === 'completed' && canViewTeamQueues) {
             // For admin in completed tab, fetch all employees' completed leaves
             try {
                 const allEmployees = await listEmployees(1, 5000);
@@ -4001,6 +3998,7 @@ const loadInboxLeaves = async () => {
 
 const loadInboxTimesheets = async () => {
     const isAdmin = isAdminUser();
+    const canViewTeamQueues = isManagerOrAdmin();
     const listContainer = document.querySelector('.inbox-list');
 
     if (!listContainer) return;
@@ -4024,19 +4022,24 @@ const loadInboxTimesheets = async () => {
 
         // Build query string based on role and tab
         const params = new URLSearchParams();
-        if (!isAdmin) {
-            const empId = await resolveCurrentEmployeeId();
-            if (!empId) {
-                listContainer.innerHTML = `
-                    <div class="placeholder-text">
-                        <i class="fa-solid fa-user-slash fa-3x" style="color:#ddd; margin-bottom: 1rem;"></i>
-                        <p>Unable to resolve your employee ID.</p>
-                    </div>
-                `;
-                return;
-            }
+        const empId = await resolveCurrentEmployeeId();
+
+        if (!empId && (currentInboxTab === 'requests' || !canViewTeamQueues)) {
+            listContainer.innerHTML = `
+                <div class="placeholder-text">
+                    <i class="fa-solid fa-user-slash fa-3x" style="color:#ddd; margin-bottom: 1rem;"></i>
+                    <p>Unable to resolve your employee ID.</p>
+                </div>
+            `;
+            return;
+        }
+
+        if (currentInboxTab === 'requests' && empId) {
             params.set('employee_id', empId);
-            if (currentInboxTab === 'requests') {
+            params.set('status', 'pending');
+        } else if (!canViewTeamQueues && empId) {
+            params.set('employee_id', empId);
+            if (currentInboxTab === 'awaiting') {
                 params.set('status', 'pending');
             }
         } else if (currentInboxTab === 'awaiting') {
@@ -4154,268 +4157,9 @@ const loadInboxTimesheets = async () => {
     }
 };
 
-const loadInboxCompOff = async () => {
-    const isAdmin = isAdminUser();
-    const listContainer = document.querySelector('.inbox-list');
-    if (!listContainer) return;
-    listContainer.innerHTML = `
-        <div class="placeholder-text">
-            <i class="fa-solid fa-spinner fa-spin fa-3x" style="color:#ddd; margin-bottom: 1rem;"></i>
-            <p>Loading comp off requests...</p>
-        </div>
-    `;
-
-    try {
-        const empId = await resolveCurrentEmployeeId();
-        const all = JSON.parse(localStorage.getItem('compoff_requests') || '[]');
-        let items = all;
-
-        if (isAdmin) {
-            if (currentInboxTab === 'awaiting') {
-                items = all.filter(r => (r.status || 'pending').toLowerCase() === 'pending');
-            } else if (currentInboxTab === 'completed') {
-                items = all.filter(r => ['approved', 'rejected'].includes((r.status || '').toLowerCase()));
-            }
-        } else {
-            if (currentInboxTab === 'requests') {
-                items = all.filter(r => String(r.employeeId).toUpperCase() === String(empId).toUpperCase() && (r.status || 'pending').toLowerCase() === 'pending');
-            } else if (currentInboxTab === 'completed') {
-                items = all.filter(r => String(r.employeeId).toUpperCase() === String(empId).toUpperCase() && ['approved', 'rejected'].includes((r.status || '').toLowerCase()));
-            }
-        }
-
-        items.sort((a, b) => new Date(b.appliedDate || b.timestamp || 0) - new Date(a.appliedDate || a.timestamp || 0));
-
-        if (items.length === 0) {
-            listContainer.innerHTML = `
-                <div class="placeholder-text">
-                    <i class="fa-solid fa-envelope-open fa-3x" style="color:#ddd; margin-bottom: 1rem;"></i>
-                    <p>No comp off requests found.</p>
-                </div>
-            `;
-            return;
-        }
-
-        const cards = items.map(req => {
-            const status = req.status || 'Pending';
-            const statusClass = status.toLowerCase();
-            const showActions = isAdmin && currentInboxTab === 'awaiting';
-            return `
-                <div class="inbox-item">
-                    <div class="inbox-item-header">
-                        <div>
-                            <h4 style="font-size: 1.25rem; margin-bottom: 4px;">${req.employeeName || req.employeeId}</h4>
-                            <span class="inbox-item-meta" style="font-size: 0.875rem; color: #666;">Comp Off • ${req.employeeId}</span>
-                        </div>
-                        <span class="status-badge ${statusClass}">${status}</span>
-                    </div>
-                    <div class="inbox-item-body">
-                        <p><strong>Date Worked:</strong> ${req.dateWorked}</p>
-                        <p><strong>Reason:</strong> ${req.reason || '-'}</p>
-                        <p><strong>Applied:</strong> ${req.appliedDate || '-'}</p>
-                        ${statusClass === 'rejected' && req.rejectionReason ? `
-                            <div class="rejection-reason-box" style="background: #fff3cd; border-left: 4px solid #ffc107; padding: 12px; margin-top: 12px; border-radius: 4px;">
-                                <strong style="color: #856404;"><i class="fa-solid fa-info-circle"></i> Rejection Reason:</strong>
-                                <p style="margin: 8px 0 0 0; color: #856404;">${req.rejectionReason}</p>
-                            </div>` : ''}
-                    </div>
-                    ${showActions ? `
-                        <div class="inbox-item-actions">
-                            <button class="btn btn-success btn-sm compoff-approve-btn" data-id="${req.id}"><i class="fa-solid fa-check"></i> Grant</button>
-                            <button class="btn btn-danger btn-sm compoff-reject-btn" data-id="${req.id}"><i class="fa-solid fa-times"></i> Reject</button>
-                        </div>` : ''}
-                </div>`;
-        }).join('');
-
-        listContainer.innerHTML = cards;
-
-        if (isAdmin && currentInboxTab === 'awaiting') {
-            document.querySelectorAll('.compoff-approve-btn').forEach(btn => {
-                btn.addEventListener('click', async (e) => {
-                    const requestId = e.currentTarget.getAttribute('data-id');
-                    await handleCompOffApprove(requestId);
-                });
-            });
-            document.querySelectorAll('.compoff-reject-btn').forEach(btn => {
-                btn.addEventListener('click', (e) => {
-                    const requestId = e.currentTarget.getAttribute('data-id');
-                    showCompOffRejectModal(requestId);
-                });
-            });
-        }
-    } catch (err) {
-        console.error('❌ Error loading comp off requests:', err);
-        listContainer.innerHTML = `
-            <div class="placeholder-text">
-                <i class="fa-solid fa-exclamation-triangle fa-3x" style="color:#e74c3c; margin-bottom: 1rem;"></i>
-                <p>Error loading comp off requests.</p>
-            </div>
-        `;
-    }
-};
-
-const handleCompOffApprove = async (requestId) => {
-    if (!confirm('Grant this Comp Off request?')) return;
-    try {
-        const list = JSON.parse(localStorage.getItem('compoff_requests') || '[]');
-        const idx = list.findIndex(r => String(r.id) === String(requestId));
-        if (idx >= 0) {
-            const req = { ...list[idx], status: 'Approved' };
-            list[idx] = req;
-            localStorage.setItem('compoff_requests', JSON.stringify(list));
-
-            // Credit the comp off balance in the backend
-            const employeeId = req.employeeId;
-            if (employeeId) {
-                try {
-                    // Fetch current comp off balance
-                    const balResp = await fetch(`${apiBase}/api/comp-off`);
-                    if (balResp.ok) {
-                        const balData = await balResp.json();
-                        const empData = (balData.data || []).find(
-                            e => (e.employee_id || '').toUpperCase() === employeeId.toUpperCase()
-                        );
-                        const currentBalance = empData ? (empData.raw_compoff || 0) : 0;
-                        const newBalance = currentBalance + 1;
-                        // Update the comp off balance
-                        const updateResp = await fetch(`${apiBase}/api/comp-off/${encodeURIComponent(employeeId)}`, {
-                            method: 'PUT',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ available_compoff: newBalance })
-                        });
-                        if (updateResp.ok) {
-                            console.log(`✅ Comp Off balance updated for ${employeeId}: ${currentBalance} -> ${newBalance}`);
-                        } else {
-                            console.error(`❌ Failed to update comp off balance for ${employeeId}`);
-                        }
-                    }
-                } catch (balErr) {
-                    console.error('❌ Error updating comp off balance:', balErr);
-                }
-            }
-
-            try { await notifyEmployeeCompOffGranted(req.id, req.employeeId); } catch { }
-        }
-        alert('✅ Comp Off granted');
-        await loadInboxCompOff();
-    } catch (err) {
-        console.error('❌ Error granting comp off:', err);
-        alert('❌ Failed to grant comp off');
-    }
-};
-
-const showCompOffRejectModal = (requestId) => {
-    const formHTML = `
-        <div class="form-group">
-            <label for="compoffRejectionReason">Rejection Reason (Optional)</label>
-            <textarea id="compoffRejectionReason" name="rejectionReason" rows="4" placeholder="Enter reason for rejection..."></textarea>
-        </div>
-        <input type="hidden" id="compoffRejectId" value="${requestId}">
-    `;
-    renderModal('Reject Comp Off Request', formHTML, 'compoff-submit-reject-btn', 'normal', 'Reject');
-};
-
-export const handleCompOffReject = async (e) => {
-    e.preventDefault();
-    const requestId = document.getElementById('compoffRejectId').value;
-    const reason = document.getElementById('compoffRejectionReason')?.value || '';
-    if (!requestId) { alert('Error: Request ID not found'); return; }
-    try {
-        const list = JSON.parse(localStorage.getItem('compoff_requests') || '[]');
-        const idx = list.findIndex(r => String(r.id) === String(requestId));
-        if (idx >= 0) {
-            const req = { ...list[idx], status: 'Rejected', rejectionReason: reason };
-            list[idx] = req;
-            localStorage.setItem('compoff_requests', JSON.stringify(list));
-            try { await notifyEmployeeCompOffRejected(req.id, req.employeeId, reason); } catch { }
-        }
-        closeModal();
-        alert('✅ Comp Off rejected');
-        await loadInboxCompOff();
-    } catch (err) {
-        console.error('❌ Error rejecting comp off:', err);
-        alert('❌ Failed to reject comp off');
-    }
-};
-
-const handleTimesheetApprove = async (entryId) => {
-    if (!confirm('Are you sure you want to APPROVE this timesheet entry?')) {
-        return;
-    }
-
-    try {
-        const adminId = await resolveCurrentEmployeeId();
-        const resp = await fetch(
-            `${apiBase}/api/time-tracker/timesheet/${encodeURIComponent(entryId)}/approve`,
-            {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ decided_by: adminId }),
-            }
-        );
-        const data = await resp.json().catch(() => ({}));
-
-        if (!resp.ok || !data.success) {
-            throw new Error(data.error || resp.status);
-        }
-
-        alert('✅ Timesheet entry approved successfully!');
-        await loadInboxTimesheets();
-    } catch (err) {
-        console.error('❌ Error approving timesheet entry:', err);
-        alert(`❌ Failed to approve timesheet entry: ${err.message || err}`);
-    }
-};
-
-const showTimesheetRejectModal = (entryId) => {
-    const formHTML = `
-        <div class="form-group">
-            <label for="timesheetRejectionReason">Rejection Reason (Optional)</label>
-            <textarea id="timesheetRejectionReason" name="rejectionReason" rows="4" placeholder="Enter reason for rejection..."></textarea>
-        </div>
-        <input type="hidden" id="timesheetRejectId" value="${entryId}">
-    `;
-    renderModal('Reject Timesheet Entry', formHTML, 'timesheet-submit-reject-btn', 'normal', 'Reject Timesheet');
-};
-
-export const handleTimesheetReject = async (e) => {
-    e.preventDefault();
-
-    const entryId = document.getElementById('timesheetRejectId')?.value;
-    const reason = document.getElementById('timesheetRejectionReason')?.value || '';
-
-    if (!entryId) {
-        alert('Error: Timesheet entry ID not found');
-        return;
-    }
-
-    try {
-        const adminId = await resolveCurrentEmployeeId();
-        const resp = await fetch(
-            `${apiBase}/api/time-tracker/timesheet/${encodeURIComponent(entryId)}/reject`,
-            {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ decided_by: adminId, comment: reason }),
-            }
-        );
-        const data = await resp.json().catch(() => ({}));
-
-        if (!resp.ok || !data.success) {
-            throw new Error(data.error || resp.status);
-        }
-
-        closeModal();
-        alert('✅ Timesheet entry rejected successfully!');
-        await loadInboxTimesheets();
-    } catch (err) {
-        console.error('❌ Error rejecting timesheet entry:', err);
-        alert(`❌ Failed to reject timesheet entry: ${err.message || err}`);
-    }
-};
-
 const loadInboxAttendance = async () => {
     const isAdmin = isAdminUser();
+    const canViewTeamQueues = isManagerOrAdmin();
     const listContainer = document.querySelector('.inbox-list');
 
     if (!listContainer) return;
@@ -4430,12 +4174,13 @@ const loadInboxAttendance = async () => {
     try {
         // Build query for submissions based on current tab
         let qs = '';
-        if (currentInboxTab === 'awaiting' && isAdmin) {
+        if (currentInboxTab === 'awaiting' && canViewTeamQueues) {
             qs = '?status=pending';
         } else if (currentInboxTab === 'completed') {
             // Completed = approved or rejected. We'll fetch all and client-filter.
             qs = '';
         }
+
         const response = await fetch(`${apiBase}/api/attendance/submissions${qs}`);
         const data = await response.json();
 
@@ -4455,14 +4200,19 @@ const loadInboxAttendance = async () => {
         // Data format: [{ marker_id, employee_id, year, month, status, rejection_reason, created_date }]
         let attendanceReports = data.items || [];
         // Client-side filter for requests/completed when not admin
-        if (!isAdmin) {
+        if (!canViewTeamQueues) {
             const empId = await resolveCurrentEmployeeId();
             if (currentInboxTab === 'requests') {
                 attendanceReports = attendanceReports.filter(r => r.employee_id === empId && r.status === 'pending');
             } else if (currentInboxTab === 'completed') {
                 attendanceReports = attendanceReports.filter(r => r.employee_id === empId && (r.status === 'approved' || r.status === 'rejected'));
             }
-        } else if (currentInboxTab === 'completed') {
+        } else if (currentInboxTab === 'requests') {
+            const empId = await resolveCurrentEmployeeId();
+            attendanceReports = attendanceReports.filter(r => r.employee_id === empId && r.status === 'pending');
+        }
+
+        if (currentInboxTab === 'completed') {
             attendanceReports = attendanceReports.filter(r => r.status === 'approved' || r.status === 'rejected');
         }
 
