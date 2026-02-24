@@ -504,11 +504,6 @@ def list_my_tasks():
                     if pid in inactive_projects or proj_status.lower() in ("cancelled", "canceled", "inactive"):
                         rec["task_status"] = proj_status
 
-            # Exclude tasks with 'Completed' status from My Tasks view
-            task_status = (rec.get("task_status") or "").strip().lower()
-            if task_status == "completed":
-                continue
-
             # If task record is inactive, reflect it in task_status (but do not remove).
             try:
                 if int(rec.get("_task_statecode") or 0) != 0:
