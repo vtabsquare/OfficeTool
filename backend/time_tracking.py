@@ -565,13 +565,22 @@ def start_timer():
         return jsonify({"success": False, "error": "task_guid and user_id required"}), 400
 
     entries = _read_entries()
-    # stop any other active entries for this user (single active guard)
-    changed = False
     now_iso = _now_iso()
+    
+    # Debug: Show all active entries before start
+    active_entries = [e for e in entries if e.get("user_id") == user_id and not e.get("end")]
+    print(f"[BACKEND START] Active entries for user {user_id} before start: {len(active_entries)}")
+    for e in active_entries:
+        print(f"  - task_guid: {e.get('task_guid')}, start: {e.get('start')}")
+    
+    # Stop all existing timers for this user (existing logic)
+    changed = False
     for e in entries:
         if e.get("user_id") == user_id and not e.get("end"):
             e["end"] = now_iso
             changed = True
+            print(f"[BACKEND START] Stopped existing timer: task_guid={e.get('task_guid')}")
+    
     new_entry = {
         "id": f"TE-{int(datetime.now().timestamp()*1000)}",
         "task_guid": task_guid,
@@ -580,7 +589,18 @@ def start_timer():
         "end": None,
     }
     entries.append(new_entry)
+    
+    print(f"[BACKEND START] Created new timer: task_guid={task_guid}, user_id={user_id}")
+    
     _write_entries(entries)
+    
+    # Debug: Show all active entries after start
+    entries_after = _read_entries()
+    active_after = [e for e in entries_after if e.get("user_id") == user_id and not e.get("end")]
+    print(f"[BACKEND START] Active entries for user {user_id} after start: {len(active_after)}")
+    for e in active_after:
+        print(f"  - task_guid: {e.get('task_guid')}, start: {e.get('start')}")
+    
     return jsonify({"success": True, "entry": new_entry})
 
 
