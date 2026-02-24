@@ -96,6 +96,7 @@ DATA_DIR = os.path.join(os.path.dirname(__file__), "_data")
 ENTRIES_FILE = os.path.join(DATA_DIR, "time_entries.json")
 LOGS_FILE = os.path.join(DATA_DIR, "timesheet_logs.json")
 TS_ENTRIES_FILE = os.path.join(DATA_DIR, "timesheet_entries.json")
+TS_WEEKS_FILE = os.path.join(DATA_DIR, "timesheet_week_locks.json")
 
 os.makedirs(DATA_DIR, exist_ok=True)
 
@@ -146,8 +147,80 @@ def _write_ts_entries(entries):
     os.replace(tmp, TS_ENTRIES_FILE)
 
 
+def _read_ts_week_locks():
+    try:
+        with open(TS_WEEKS_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return []
+
+
+def _write_ts_week_locks(records):
+    tmp = TS_WEEKS_FILE + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(records, f)
+    os.replace(tmp, TS_WEEKS_FILE)
+
+
 def _now_iso():
     return datetime.now(timezone.utc).isoformat()
+
+
+def _start_of_week(date_str: str):
+    d = datetime.strptime(date_str, "%Y-%m-%d").date()
+    return d - timedelta(days=d.weekday())  # Monday as start of week
+
+
+def _week_key(employee_id: str, week_start):
+    emp = (employee_id or "").strip().upper()
+    week = week_start if isinstance(week_start, str) else week_start.isoformat()
+    return f"{emp}|{week}"
+
+
+LOCKED_WEEK_STATUSES = {"pending", "accepted"}
+
+
+def _get_week_lock(employee_id: str, week_start_str: str):
+    key = _week_key(employee_id, week_start_str)
+    for rec in _read_ts_week_locks():
+        if _week_key(rec.get("employee_id"), rec.get("week_start")) == key:
+            return rec
+    return None
+
+
+def _set_week_lock(employee_id: str, week_start_str: str, status: str, extra=None):
+    records = _read_ts_week_locks()
+    key = _week_key(employee_id, week_start_str)
+    updated = None
+    for rec in records:
+        if _week_key(rec.get("employee_id"), rec.get("week_start")) == key:
+            rec.update(extra or {})
+            rec["status"] = status
+            rec["updated_at"] = _now_iso()
+            updated = rec
+            break
+    if not updated:
+        updated = {
+            "employee_id": employee_id,
+            "week_start": week_start_str,
+            "status": status,
+            "created_at": _now_iso(),
+        }
+        if extra:
+            updated.update(extra)
+        records.append(updated)
+    _write_ts_week_locks(records)
+    return updated
+
+
+def _is_week_locked(employee_id: str, date_str: str):
+    if not employee_id or not date_str:
+        return False
+    week_start = _start_of_week(date_str).isoformat()
+    rec = _get_week_lock(employee_id, week_start)
+    if not rec:
+        return False
+    return str(rec.get("status", "")).strip().lower() in LOCKED_WEEK_STATUSES
 
 
 def _sum_seconds_for_task(entries, task_guid, user_id=None):
@@ -301,6 +374,9 @@ def set_exact_log():
         desc_for_save = description
         if manual_marker not in desc_for_save:
             desc_for_save = f"{desc_for_save} {manual_marker}".strip()
+
+        if _is_week_locked(employee_id, work_date):
+            return jsonify({"success": False, "error": "Timesheet week is locked"}), 423
 
         # If no dv_id from frontend, search Dataverse for existing record
         if not dv_id:
@@ -641,6 +717,8 @@ def create_task_log():
             return jsonify({"success": False, "error": "No time segments to log"}), 400
         
         def upsert_segment(seg_work_date: str, seg_seconds: int):
+            if _is_week_locked(employee_id, seg_work_date):
+                raise ValueError("Timesheet week is locked")
             # Convert seconds to hours (decimal)
             hours_worked = round(seg_seconds / 3600, 2)
 
@@ -773,6 +851,10 @@ def create_task_log():
 
         return jsonify({"success": True, "logs": recs, "dataverse_saved": True}), 201
             
+    except ValueError as ve:
+        if "locked" in str(ve).lower():
+            return jsonify({"success": False, "error": str(ve)}), 423
+        return jsonify({"success": False, "error": str(ve)}), 400
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
 
@@ -878,7 +960,13 @@ def list_logs():
                 out.append(log_entry)
             
             print(f"[TIME_TRACKER] Successfully fetched {len(out)} logs from Dataverse")
-            return jsonify({"success": True, "logs": out, "source": "dataverse"}), 200
+            week_status = {}
+            for entry in out:
+                wk = _start_of_week(entry.get("work_date", "") or datetime.utcnow().date().isoformat()).isoformat()
+                key = _week_key(employee_id if employee_id != "ALL" else entry.get("employee_id"), wk)
+                week_status[key] = (_get_week_lock(entry.get("employee_id"), wk) or {}).get("status")
+
+            return jsonify({"success": True, "logs": out, "source": "dataverse", "week_status": week_status}), 200
         else:
             print(f"[TIME_TRACKER] Dataverse returned {resp.status_code}: {resp.text}")
             raise Exception(f"Dataverse returned {resp.status_code}")
@@ -905,7 +993,12 @@ def list_logs():
             else:
                 print(f"[TIME_TRACKER] Filtered to {len(out)} logs for employee {employee_id}")
             
-            return jsonify({"success": True, "logs": out, "source": "local"}), 200
+            week_status = {}
+            for entry in out:
+                wk = _start_of_week(entry.get("work_date", "") or datetime.utcnow().date().isoformat()).isoformat()
+                key = _week_key(entry.get("employee_id"), wk)
+                week_status[key] = (_get_week_lock(entry.get("employee_id"), wk) or {}).get("status")
+            return jsonify({"success": True, "logs": out, "source": "local", "week_status": week_status}), 200
         except Exception as e2:
             print(f"[TIME_TRACKER] Error reading logs: {e2}")
             return jsonify({"success": False, "error": str(e2)}), 500
@@ -1020,6 +1113,7 @@ def submit_timesheet():
         created = []
         base_ts = int(datetime.now().timestamp() * 1000)
 
+        seen_weeks = set()
         for idx, item in enumerate(raw_entries):
             date = (item.get("date") or "").strip()
             if not date:
@@ -1027,6 +1121,10 @@ def submit_timesheet():
             seconds = int(item.get("seconds") or 0)
             if seconds <= 0:
                 continue
+            week_start = _start_of_week(date).isoformat()
+            if _is_week_locked(employee_id, date):
+                return jsonify({"success": False, "error": "Timesheet already submitted for this week"}), 409
+            seen_weeks.add(week_start)
             hours = item.get("hours_worked")
             try:
                 hours_val = float(hours) if hours is not None else round(seconds / 3600, 2)
@@ -1059,9 +1157,32 @@ def submit_timesheet():
             return jsonify({"success": False, "error": "No valid entries to submit"}), 400
 
         _write_ts_entries(entries)
-        return jsonify({"success": True, "items": created, "count": len(created)}), 201
+        for ws in seen_weeks:
+            _set_week_lock(employee_id, ws, "pending", {"submitted_at": _now_iso()})
+        return jsonify({"success": True, "created": created}), 201
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
+
+
+@bp_time.route("/time-tracker/timesheet/week-status", methods=["GET"])
+def timesheet_week_status():
+    employee_id = (request.args.get("employee_id") or "").strip()
+    start_date = (request.args.get("start") or "").strip()
+    end_date = (request.args.get("end") or "").strip()
+    if not employee_id or not start_date or not end_date:
+        return jsonify({"success": False, "error": "employee_id, start, end required"}), 400
+    records = _read_ts_week_locks()
+    start = _start_of_week(start_date)
+    end = _start_of_week(end_date)
+    out = {}
+    for rec in records:
+        if (rec.get("employee_id") or "").strip().upper() != employee_id.strip().upper():
+            continue
+        wk = datetime.strptime(rec.get("week_start"), "%Y-%m-%d").date()
+        if wk < start or wk > end:
+            continue
+        out[rec.get("week_start")] = rec.get("status")
+    return jsonify({"success": True, "weeks": out}), 200
 
 
 @bp_time.route("/time-tracker/timesheet/submissions", methods=["GET"])

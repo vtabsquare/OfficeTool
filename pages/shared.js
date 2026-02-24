@@ -439,482 +439,9 @@ export const renderMyTasksPage = async () => {
         try { empId = await resolveCurrentEmployeeId(); } catch { }
         if (empId) { try { state.user = { ...(state.user || {}), id: empId }; } catch { } }
     }
-    const isPrivileged = !!user.is_admin || ['EMP001'].includes((empId || '').toUpperCase()) || /\b(bala|vignesh)\b/i.test(empName || email);
 
-    // Projects cache for client column
-    let projectsIdx = {};
-    try {
-        const raw = localStorage.getItem('tt_projects_v1');
-        const arr = raw ? JSON.parse(raw) : [];
-        (arr || []).forEach(p => { projectsIdx[(p.id || p.crc6f_projectid)] = p; });
-    } catch { }
-
-    const API = `${apiBase}/api`;
-    let tasks = [];
-    let search = '';
-
-    // Initial lightweight skeleton while tasks and indexes are loading
-    try {
-        const skeleton = `
-            <div class="card">
-                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.75rem;">
-                    <div class="skeleton skeleton-heading-md"></div>
-                    <div class="skeleton skeleton-pill" style="width:140px; height:32px;"></div>
-                </div>
-                <div class="skeleton skeleton-chart-line"></div>
-            </div>
-        `;
-        const app = document.getElementById('app-content');
-        if (app) app.innerHTML = getPageContentHTML('My Tasks', skeleton);
-    } catch { }
-
-    const loadTasks = async () => {
-        const params = new URLSearchParams();
-        // Use /my-tasks so backend matches by employee id, name, or email depending on what is stored.
-        if (empId) params.set('user_id', String(empId).trim());
-        if (empName) params.set('user_name', String(empName).trim());
-        if (email) params.set('user_email', String(email).trim());
-        params.set('role', isPrivileged ? 'l3' : 'l1');
-        const res = await fetch(`${API}/my-tasks?${params.toString()}`);
-        const data = await res.json().catch(() => ({ success: false }));
-        let fetched = (res.ok && data.success ? (data.tasks || []) : []);
-        // Merge manual tasks stored locally so they show up in My Tasks
-        try {
-            const key = 'tt_manual_tasks_v1';
-            const local = JSON.parse(localStorage.getItem(key) || '[]');
-            const empKey = String(empId || '').toUpperCase();
-            const normalizeStatus = (v) => {
-                const s = String(v || '').trim();
-                if (!s) return '';
-                const low = s.toLowerCase();
-                if (low === 'canceled' || low === 'cancelled') return 'Cancelled';
-                if (low === 'inactive') return 'Inactive';
-                if (low === 'deleted') return 'Deleted';
-                return s;
-            };
-
-            // Clean up stale manual tasks (so deleted project/task doesn't keep showing in My Tasks)
-            // - If assigned to this employee and project is missing from projects cache -> remove
-            // - If assigned to this employee and status is Deleted -> remove
-            let cleaned = Array.isArray(local) ? [...local] : [];
-            cleaned = cleaned.filter(t => {
-                const assigned = String(t?.assigned_to || '').toUpperCase();
-                if (assigned !== empKey) return true; // keep other users' manual tasks
-                const st = normalizeStatus(t?.task_status);
-                if (st.toLowerCase() === 'deleted') return false;
-                const pid = String(t?.project_id || '').trim();
-                if (pid && projectsIdx && !projectsIdx[pid]) return false;
-                return true;
-            });
-            try { localStorage.setItem(key, JSON.stringify(cleaned)); } catch { }
-
-            const mine = (cleaned || []).filter(t => String(t.assigned_to || '').toUpperCase() === empKey);
-            const normalized = mine.map(t => ({
-                guid: t.guid || t.task_guid || t.id || `man-${t.task_id || Date.now()}`,
-                task_id: t.task_id || '',
-                task_name: t.task_name || 'Manual Task',
-                project_id: t.project_id || '',
-                task_status: normalizeStatus(t.task_status || 'New') || 'New',
-                task_priority: t.task_priority || 'Normal',
-                due_date: t.due_date || ''
-            }));
-            // Deduplicate by guid
-            const merged = [...fetched, ...normalized];
-            const uniq = merged.filter((v, i, a) => a.findIndex(x => String(x.guid || '') === String(v.guid || '')) === i);
-            fetched = uniq;
-        } catch { }
-
-        tasks = fetched.filter(t => {
-            if (!search) return true;
-            const hay = `${t.task_id || ''} ${t.task_name || ''} ${t.task_status || ''} ${t.project_id || ''}`.toLowerCase();
-            return hay.includes(search.toLowerCase());
-        });
-    };
-
-    const fmt = (secs) => {
-        const h = Math.floor(secs / 3600), m = Math.floor((secs % 3600) / 60), s = secs % 60; return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
-    };
-
-    const ACTIVE_KEY = (id) => `tt_active_${id}`;
-    const todayStr = () => { const t = new Date(); return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`; };
-    const PER_TASK_KEY = (emp, guid, date) => `tt_accum_${String(emp || '').toUpperCase()}_${guid}_${date}`;
-    const getActive = () => { try { return JSON.parse(localStorage.getItem(ACTIVE_KEY(empId)) || 'null'); } catch { return null; } };
-    const setActive = (obj) => { try { localStorage.setItem(ACTIVE_KEY(empId), JSON.stringify(obj)); } catch { } };
-    const clearActive = () => { try { localStorage.removeItem(ACTIVE_KEY(empId)); } catch { } };
-
-    const getPersistedSecs = (guid) => { try { return Number(localStorage.getItem(PER_TASK_KEY(empId, guid, todayStr())) || '0') || 0; } catch { return 0; } };
-    const setPersistedSecs = (guid, secs) => { try { localStorage.setItem(PER_TASK_KEY(empId, guid, todayStr()), String(Math.max(0, secs | 0))); } catch { } };
-
-    const postTimesheetLog = async ({ seconds, task, started_at = null, ended_at = null }) => {
-        console.log('[MY_TASKS] postTimesheetLog called with:', { seconds, task, started_at, ended_at });
-        const body = {
-            employee_id: empId,
-            project_id: task.project_id,
-            task_guid: task.guid,
-            task_id: task.task_id,
-            task_name: task.task_name,
-            seconds: Math.max(1, seconds | 0),
-            work_date: todayStr(), // legacy fallback
-            description: '',
-            session_start_ms: started_at || null,
-            session_end_ms: ended_at || Date.now(),
-            tz_offset_minutes: new Date().getTimezoneOffset()
-        };
-        console.log('[MY_TASKS] Posting to:', `${API}/time-tracker/task-log`);
-        console.log('[MY_TASKS] Request body:', body);
-        try {
-            const res = await fetch(`${API}/time-tracker/task-log`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-            console.log('[MY_TASKS] Response status:', res.status);
-            const result = await res.json().catch(() => ({ success: false }));
-            console.log('[MY_TASKS] Response data:', result);
-            if (res.ok) {
-                try { sessionStorage.setItem('tt_last_log', JSON.stringify(body)); } catch { }
-                if (window.location.hash === '#/time-my-timesheet') { try { await renderMyTimesheetPage(); } catch { } }
-                return true;
-            }
-            console.error('[MY_TASKS] Timesheet upsert failed:', result.error || res.status);
-        } catch (err) { console.error('[MY_TASKS] Timesheet upsert network error:', err); }
-        return false;
-    };
-
-    const startTaskTimer = async (task) => {
-        try {
-            const res = await fetch(`${API}/time-entries/start`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    task_guid: task.guid,
-                    user_id: empId
-                })
-            });
-            const result = await res.json().catch(() => ({ success: false }));
-            if (result.success) {
-                console.log('[MY_TASKS] Task timer started on backend:', result);
-                return true;
-            } else {
-                console.error('[MY_TASKS] Failed to start task timer:', result.error);
-                return false;
-            }
-        } catch (err) {
-            console.error('[MY_TASKS] Error starting task timer:', err);
-            return false;
-        }
-    };
-
-    const stopTaskTimer = async (task) => {
-        try {
-            const res = await fetch(`${API}/time-entries/stop`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    task_guid: task.guid,
-                    user_id: empId
-                })
-            });
-            const result = await res.json().catch(() => ({ success: false }));
-            if (result.success) {
-                console.log('[MY_TASKS] Task timer stopped on backend:', result);
-                return true;
-            } else {
-                console.error('[MY_TASKS] Failed to stop task timer:', result.error);
-                return false;
-            }
-        } catch (err) {
-            console.error('[MY_TASKS] Error stopping task timer:', err);
-            return false;
-        }
-    };
-
-    const updateTaskStatus = async (task, newStatus) => {
-        try {
-            const target = String(newStatus || '').trim();
-            if (!target) return;
-            const current = String(task.task_status || '').trim().toLowerCase();
-            if (current === target.toLowerCase()) return;
-
-            const guidStr = String(task.guid || '');
-            if (guidStr.startsWith('man-')) {
-                task.task_status = target;
-                try {
-                    const key = 'tt_manual_tasks_v1';
-                    const cur = JSON.parse(localStorage.getItem(key) || '[]');
-                    const idx = cur.findIndex(x => String(x.guid || x.task_guid || x.id) === guidStr);
-                    if (idx >= 0) {
-                        cur[idx].task_status = target;
-                        localStorage.setItem(key, JSON.stringify(cur));
-                    }
-                } catch { }
-                return;
-            }
-
-            if (!guidStr) return;
-
-            const res = await fetch(`${API}/tasks/${guidStr}`, {
-                method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ task_status: target })
-            });
-            const data = await res.json().catch(() => ({ success: false }));
-            if (!res.ok || data.success === false) {
-                console.error('Task status update failed:', data.error || res.status);
-                return;
-            }
-            task.task_status = target;
-        } catch (err) {
-            console.error('Task status update error:', err);
-        }
-    };
-
-    const toggleTimer = async (t) => {
-        const cur = getActive();
-        // If timer is running for this task, pause it
-        if (cur && cur.task_guid === t.guid && !cur.paused) {
-            const elapsed = Math.floor((Date.now() - Number(cur.started_at)) / 1000);
-            const totalAccumulated = (cur.accumulated || 0) + elapsed;
-            setActive({ ...cur, accumulated: totalAccumulated, paused: true, started_at: null });
-            setPersistedSecs(t.guid, totalAccumulated);
-            await postTimesheetLog({ seconds: totalAccumulated, task: t, started_at: cur.started_at, ended_at: Date.now() });
-            render();
-            return;
-        }
-        // If another task is running, stop it first
-        if (cur && cur.task_guid && cur.task_guid !== t.guid && !cur.paused) {
-            // Auto-pause current and upsert
-            const elapsed = Math.floor((Date.now() - Number(cur.started_at)) / 1000);
-            const totalAccumulated = (cur.accumulated || 0) + elapsed;
-            // Persist for the old task
-            setPersistedSecs(cur.task_guid, totalAccumulated);
-            await postTimesheetLog({
-                seconds: totalAccumulated,
-                task: { guid: cur.task_guid, task_id: cur.task_id, task_name: cur.task_name, project_id: cur.project_id },
-                started_at: cur.started_at,
-                ended_at: Date.now()
-            });
-            // Clear active
-            clearActive();
-        }
-        // Start or resume this task
-        if (cur && cur.task_guid === t.guid && cur.paused) {
-            // Resume from paused state
-            setActive({ ...cur, started_at: Date.now(), paused: false });
-        } else {
-            // Start fresh
-            // Seed with persisted seconds for today so it continues from stored value
-            const persisted = getPersistedSecs(t.guid);
-            setActive({ task_guid: t.guid, task_id: t.task_id, task_name: t.task_name, project_id: t.project_id, started_at: Date.now(), accumulated: persisted, paused: false });
-        }
-        await updateTaskStatus(t, 'In Progress');
-        render();
-    };
-
-    const stopLocalTimer = async (t) => {
-        const cur = getActive();
-        if (!cur || cur.task_guid !== t.guid) return;
-
-        // Calculate total seconds (accumulated + current session if running)
-        let totalSeconds = cur.accumulated || 0;
-        if (!cur.paused && cur.started_at) {
-            totalSeconds += Math.floor((Date.now() - Number(cur.started_at)) / 1000);
-        }
-        totalSeconds = Math.max(1, totalSeconds);
-
-        // persist and upsert
-        setPersistedSecs(t.guid, totalSeconds);
-        const ok = await postTimesheetLog({ seconds: totalSeconds, task: t, started_at: cur.started_at, ended_at: Date.now() });
-        if (ok) {
-            clearActive();
-        }
-    };
-
-    let timerInterval = null;
-
-    const updateTimers = () => {
-        const active = getActive();
-        if (!active) return;
-
-        document.querySelectorAll('tr[data-guid] .tt-time').forEach(cell => {
-            const tr = cell.closest('tr');
-            const guid = tr?.getAttribute('data-guid');
-            if (guid === active.task_guid) {
-                let totalSecs = active.accumulated || 0;
-                if (!active.paused && active.started_at) {
-                    totalSecs += Math.floor((Date.now() - Number(active.started_at)) / 1000);
-                }
-                const color = active.paused ? '#f39c12' : '#d63031';
-                cell.innerHTML = `<span class="running" style="color:${color}; font-weight:600;">${fmt(totalSecs)}</span>`;
-            }
-        });
-    };
-
-    const render = async () => {
-        await loadTasks();
-        const active = getActive();
-        const rows = tasks.map(t => {
-            const proj = projectsIdx[t.project_id] || {};
-            const clientName = proj.client || '';
-            const projectName = proj.name || (t.project_id || '');
-            const isRunning = active && active.task_guid === t.guid && !active.paused;
-            const isPaused = active && active.task_guid === t.guid && active.paused;
-
-            let runSecs = getPersistedSecs(t.guid);
-            if (active && active.task_guid === t.guid) {
-                runSecs = (active.accumulated || 0);
-                if (!active.paused && active.started_at) {
-                    runSecs += Math.floor((Date.now() - Number(active.started_at)) / 1000);
-                }
-            }
-            const color = isPaused ? '#f39c12' : '#d63031';
-            const timeText = (isRunning || isPaused || runSecs > 0) ? `<span class="running" style="color:${color}; font-weight:600;">${fmt(runSecs)}</span>` : '-';
-            const toggleIcon = isRunning ? 'fa-pause' : 'fa-play';
-            const toggleTitle = isRunning ? 'Pause' : (isPaused ? 'Resume' : 'Start');
-            const canNavigate = !!t.project_id;
-
-            const taskLabel = `
-              <div style="display:flex; align-items:center; gap:10px;">
-                <i class="fa-regular fa-calendar"></i>
-                <div>
-                  ${canNavigate
-                    ? `<button type="button"
-                               class="task-link"
-                               data-project="${encodeURIComponent(t.project_id)}"
-                               ${t.board_id ? `data-board="${encodeURIComponent(t.board_id)}"` : ''}
-                               title="Open project page">
-                          ${t.task_name || ''}
-                       </button>`
-                    : `<div style="font-weight:600;">${t.task_name || ''}</div>`}
-                  <div style="color:#64748b; font-size:12px;">${t.task_id || ''}</div>
-                </div>
-              </div>`;
-            return `
-            <tr data-guid="${t.guid}" ${canNavigate ? `data-project="${encodeURIComponent(t.project_id)}" ${t.board_id ? `data-board="${encodeURIComponent(t.board_id)}"` : ''} class="task-row-clickable"` : ''}>
-              <td class="actions-cell" style="width:50px; text-align:left;">
-                <button class="action-btn toggle-timer" title="${toggleTitle}"><i class="fa-solid ${toggleIcon}"></i></button>
-              </td>
-
-              <td>${taskLabel}</td>
-              <td>${projectName}</td>
-              <td>${clientName}</td>
-              <td><span class="status-badge ${String(t.task_status || '').toLowerCase()}">${t.task_status || ''}</span></td>
-              <td>${t.due_date || '-'}</td>
-              <td>${t.task_priority || '-'}</td>
-
-              <td class="tt-time" style="color:#d63031; font-weight:600;">${timeText}</td>
-            </tr>`;
-        }).join('');
-
-        const controls = `
-            <div class="mt-controls">
-            <input id="mt-search" placeholder="Search tasks" />
-            <button id="mt-refresh" class="icon-btn"><i class="fa-solid fa-rotate"></i></button>
-            <button class="icon-btn"><i class="fa-solid fa-chevron-left"></i></button>
-            <button class="icon-btn"><i class="fa-solid fa-chevron-right"></i></button>
-            </div>
-            `;
-
-
-        const content = `
-                        <div class="mytasks-card">
-                        <div class="mytasks-header">
-                            <div></div>
-                            ${controls}
-                        </div>
-
-                        <div class="table-container">
-                            <table class="table">
-                            <thead>
-                                <tr>
-                                <th style="width:50px;">Run</th>
-                                <th>Work item id & name</th>
-                                <th>Project</th>
-                                <th>Client</th>
-                                <th>Status</th>
-                                <th>Due date</th>
-                                <th>Priority</th>
-                                <th>Time spent</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                ${rows ||
-            `<tr><td colspan="8" class="placeholder-text">No tasks</td></tr>`
-            }
-                            </tbody>
-                            </table>
-                        </div>
-                        </div>
-                        `;
-
-
-        document.getElementById('app-content').innerHTML = getPageContentHTML('My Tasks', content);
-
-        // events
-        const searchEl = document.getElementById('mt-search');
-        if (searchEl) {
-            searchEl.value = search;
-            searchEl.addEventListener('input', (e) => { search = e.target.value || ''; render(); });
-        }
-        const refreshBtn = document.getElementById('mt-refresh');
-        refreshBtn && refreshBtn.addEventListener('click', () => render());
-
-        document.querySelectorAll('tr[data-guid] .action-btn.toggle-timer').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                const tr = e.currentTarget.closest('tr');
-                const guid = tr?.getAttribute('data-guid');
-                const t = tasks.find(x => x.guid === guid);
-                if (!t) return;
-                // Always toggle (start/pause/resume) - never save or navigate
-                toggleTimer(t);
-            });
-        });
-
-        document.querySelectorAll('.task-link').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                const projectId = e.currentTarget.getAttribute('data-project');
-                const boardId = e.currentTarget.getAttribute('data-board');
-                if (!projectId) return;
-                const boardPart = boardId ? `&tab=crm&board=${boardId}` : '';
-                const tabPart = boardId ? '' : '&tab=crm';
-                window.location.hash = `#/time-projects?id=${projectId}${tabPart}${boardPart}`;
-            });
-        });
-
-        document.querySelectorAll('tr.task-row-clickable').forEach(tr => {
-            tr.style.cursor = 'pointer';
-            tr.addEventListener('click', () => {
-                const projectId = tr.getAttribute('data-project');
-                const boardId = tr.getAttribute('data-board');
-                if (!projectId) return;
-                const boardPart = boardId ? `&tab=crm&board=${boardId}` : '';
-                const tabPart = boardId ? '' : '&tab=crm';
-                window.location.hash = `#/time-projects?id=${projectId}${tabPart}${boardPart}`;
-            });
-        });
-
-
-        // Start timer interval if there's an active timer (running or paused)
-        if (timerInterval) clearInterval(timerInterval);
-        if (active && active.task_guid) {
-            timerInterval = setInterval(updateTimers, 1000);
-            updateTimers(); // Update immediately
-        }
-    };
-
-    await render();
-};
-
-export const renderMyTimesheetPage = async () => {
-    const API = `${apiBase}/api`;
-    const user = state?.user || window.state?.user || {};
-    let empId = String((user.id || user.employee_id || user.employeeId || '')).trim();
-    let userNameLc = String((user.name || user.fullName || user.username || '')).trim().toLowerCase();
-    if (!empId) {
-        try { empId = await resolveCurrentEmployeeId(); } catch { }
-        if (empId) { try { state.user = { ...(state.user || {}), id: empId }; } catch { } }
-    }
-
-    console.log('My Timesheet - User:', user);
-    console.log('My Timesheet - Employee ID:', empId);
+    console.log('My Tasks - User:', user);
+    console.log('My Tasks - Employee ID:', empId);
 
     // Week navigation helpers
     const startOfWeek = (d) => { const x = new Date(d); const day = x.getDay(); const diff = (day === 0 ? -6 : 1) - day; x.setDate(x.getDate() + diff); x.setHours(0, 0, 0, 0); return x; };
@@ -945,8 +472,8 @@ export const renderMyTimesheetPage = async () => {
     // Fetch in parallel if not cached
     if (!projects.length || !tasks.length) {
         const [projRes, taskRes] = await Promise.allSettled([
-            fetch(`${API}/projects`).then(r => r.json()),
-            fetch(`${API}/tasks`).then(r => r.json())
+            fetch(`${apiBase}/projects`).then(r => r.json()),
+            fetch(`${apiBase}/tasks`).then(r => r.json())
         ]);
         if (projRes.status === 'fulfilled' && projRes.value?.success) {
             projects = projRes.value.projects || [];
@@ -986,13 +513,13 @@ export const renderMyTimesheetPage = async () => {
     } catch { }
 
     const load = async (s, e) => {
-        const url = `${API}/time-tracker/logs?employee_id=${encodeURIComponent(empId)}&start_date=${fmt(s)}&end_date=${fmt(e)}`;
+        const url = `${apiBase}/time-tracker/logs?employee_id=${encodeURIComponent(empId)}&start_date=${fmt(s)}&end_date=${fmt(e)}`;
         console.log('Fetching logs from:', url);
         const res = await fetch(url);
         console.log('Fetch response status:', res.status);
         const data = await res.json().catch(() => ({ success: false }));
         console.log('Fetch response data:', data);
-        return (res.ok && data.success) ? (data.logs || []) : [];
+        return (res.ok && data.success) ? data : { success: false, logs: [], week_status: {} };
     };
 
     const GLOBAL_MANUAL_LOG_KEY = 'tt_manual_logs_v1';
@@ -1023,11 +550,19 @@ export const renderMyTimesheetPage = async () => {
         const s = startOfWeek(anchor);
         const e = endOfWeek(anchor);
         const initialHash = window.location.hash;
-        let logs = await load(s, e);
+        const loadResult = await load(s, e);
+        let logs = loadResult.logs || [];
+        const weekStatusMap = loadResult.week_status || {};
         // If the user has navigated away while logs were loading, abort rendering
         if (initialHash !== '#/time-my-timesheet' || window.location.hash !== '#/time-my-timesheet') {
             return;
         }
+
+        const weekStartIso = fmt(s);
+        const weekLockKey = `${String(empId || '').toUpperCase()}|${weekStartIso}`;
+        const lockStateRaw = String(weekStatusMap[weekLockKey] || '').toLowerCase();
+        const isWeekLocked = ['pending', 'accepted', 'approved'].includes(lockStateRaw);
+        const lockStatusDisplay = lockStateRaw ? lockStateRaw.charAt(0).toUpperCase() + lockStateRaw.slice(1) : 'Pending approval';
 
         // Filter out future dates (use local date, not UTC)
         const today = new Date();
@@ -1154,8 +689,7 @@ export const renderMyTimesheetPage = async () => {
             // Only process if log date is not in the future (using local date)
             if (logDate <= todayStr) {
                 for (let i = 0; i < 7; i++) {
-                    const dayDate = new Date(s);
-                    dayDate.setDate(s.getDate() + i);
+                    const dayDate = new Date(s); dayDate.setDate(s.getDate() + i);
                     const dayDateStr = `${dayDate.getFullYear()}-${String(dayDate.getMonth() + 1).padStart(2, '0')}-${String(dayDate.getDate()).padStart(2, '0')}`;
                     if (logDate === dayDateStr) {
                         const seconds = Number(l.seconds || 0);
@@ -1280,7 +814,7 @@ export const renderMyTimesheetPage = async () => {
                                    data-key="${key}"
                                    value="${displayVal}" 
                                    placeholder="${placeholderVal}" 
-                                   ${(isSunday || isFuture) ? 'disabled' : ''} 
+                                   ${(isSunday || isFuture || isWeekLocked) ? 'disabled' : ''} 
                                    readonly />
                             ${icon}
                         </div>
@@ -1312,7 +846,7 @@ export const renderMyTimesheetPage = async () => {
                         <div style="padding: 8px; color: #334155 !important;">${taskId}</div>
                     </td>
                     <td>
-                        <select class="ts-select ts-billing" data-row="${idx}">
+                        <select class="ts-select ts-billing" data-row="${idx}" ${isWeekLocked ? 'disabled' : ''}>
                             <option value="Non-billable" ${row.billing === 'Non-billable' ? 'selected' : ''}>Non-billable</option>
                             <option value="Billable" ${row.billing === 'Billable' ? 'selected' : ''}>Billable</option>
                         </select>
@@ -1320,7 +854,7 @@ export const renderMyTimesheetPage = async () => {
                     ${dayInputs}
                     <td class="ts-total">${rowTotal}</td>
                     <td class="ts-actions">
-                        ${row._manual ? `<button class="icon-btn ts-delete-row" data-row="${idx}" title="Delete row"><i class="fa-regular fa-circle-xmark"></i></button>` : ''}
+                        ${(!isWeekLocked && row._manual) ? `<button class="icon-btn ts-delete-row" data-row="${idx}" title="Delete row"><i class="fa-regular fa-circle-xmark"></i></button>` : ''}
                     </td>
                 </tr>`;
         }).join('');
@@ -1329,6 +863,13 @@ export const renderMyTimesheetPage = async () => {
             <div class="ts-status-banner success">
                 <i class="fa-solid fa-circle-check"></i>
                 <span>${submissionStatusMsg}</span>
+            </div>
+        ` : '';
+
+        const lockedBanner = isWeekLocked ? `
+            <div class="ts-status-banner" style="background:#fff1f2; border:1px solid #fecdd3; color:#b91c1c;">
+                <i class="fa-solid fa-lock"></i>
+                <span>Week locked (${lockStatusDisplay}). Wait for admin decision or move to next week.</span>
             </div>
         ` : '';
 
@@ -1413,7 +954,7 @@ export const renderMyTimesheetPage = async () => {
             .ts-action-btns .btn { border-radius:10px; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.25); }
         </style>
         <div class="card" style="padding: 0; border-radius: 10px;">
-            <div class="ts-header">
+            <div class="ts-header ${isWeekLocked ? 'ts-locked' : ''}">
                 <div></div>
                 <div class="ts-week-nav">
                     <button id="ts-prev-week"><i class="fa-solid fa-chevron-left"></i></button>
@@ -1421,10 +962,10 @@ export const renderMyTimesheetPage = async () => {
                     <button id="ts-next-week"><i class="fa-solid fa-chevron-right"></i></button>
                 </div>
                 <div class="ts-action-btns">
-                    <button id="ts-submit" class="btn" style="background: #fff; color: var(--primary-color); border: none; padding: 8px 20px;">SUBMIT</button>
+                    <button id="ts-submit" class="btn" style="background: #fff; color: var(--primary-color); border: none; padding: 8px 20px;" ${isWeekLocked ? 'disabled' : ''}>${isWeekLocked ? lockStatusDisplay.toUpperCase() : 'SUBMIT'}</button>
                 </div>
             </div>
-            ${statusBanner}
+            ${lockedBanner || statusBanner}
             <div class="ts-summary">
                 <div>Total logged: <strong>${formatTimeDisplay(totalLoggedSecs)}</strong></div>
                 <div>Total billable: <strong>${formatTimeDisplay(totalBillableSecs)}</strong></div>
@@ -1447,7 +988,7 @@ export const renderMyTimesheetPage = async () => {
                 </table>
             </div>
             <div class="ts-footer">
-                <button id="ts-add-row" class="ts-add-btn">
+                <button id="ts-add-row" class="ts-add-btn" ${isWeekLocked ? 'disabled' : ''}>
                     <i class="fa-solid fa-plus"></i>
                     <span>Add row</span>
                 </button>
@@ -1466,7 +1007,8 @@ export const renderMyTimesheetPage = async () => {
             render();
         };
 
-        document.getElementById('ts-add-row').onclick = () => {
+        const addRowBtnEl = document.getElementById('ts-add-row');
+        const handleAddRow = () => {
             const projOpts = ['<option value="">Select project</option>'].concat(projects.map(p => `<option value="${p.crc6f_projectid || p.id}">${p.crc6f_projectname || p.name || p.crc6f_projectid || p.id}</option>`)).join('');
             const taskOpts = ['<option value="">Select task</option>'].concat(tasks.map(t => `<option value="${t.guid}">${t.task_name || t.task_id}</option>`)).join('');
             const body = `
@@ -1531,123 +1073,126 @@ export const renderMyTimesheetPage = async () => {
             }, 30);
         };
 
-        document.querySelectorAll('.ts-delete-row').forEach(btn => {
-            btn.onclick = async (e) => {
-                const rowIdx = parseInt(e.currentTarget.getAttribute('data-row'));
-                if (confirm('Delete this row?')) {
-                    // Only manual rows have delete buttons; remove from manualRows store
-                    const toDelete = gridRows[rowIdx];
-                    manualRows = manualRows.filter(r => r.id !== toDelete.id);
-                    try { sessionStorage.setItem(weekKey, JSON.stringify(manualRows)); } catch { }
-                    render();
-                }
-            };
-        });
+        if (!isWeekLocked) {
+            document.querySelectorAll('.ts-delete-row').forEach(btn => {
+                btn.onclick = async (e) => {
+                    const rowIdx = parseInt(e.currentTarget.getAttribute('data-row'));
+                    if (confirm('Delete this row?')) {
+                        // Only manual rows have delete buttons; remove from manualRows store
+                        const toDelete = gridRows[rowIdx];
+                        manualRows = manualRows.filter(r => r.id !== toDelete.id);
+                        try { sessionStorage.setItem(weekKey, JSON.stringify(manualRows)); } catch { }
+                        render();
+                    }
+                });
+            });
+        }
 
         const submitBtn = document.getElementById('ts-submit');
         if (submitBtn) {
-            submitBtn.onclick = async () => {
-                const s = startOfWeek(anchor);
-                const e = endOfWeek(anchor);
-                const weekKey = `ts_manual_${fmt(s)}_${fmt(e)}`;
-                const overridesKey = `${weekKey}_overrides`;
-                let overridesMap = {};
-                try { overridesMap = JSON.parse(sessionStorage.getItem(overridesKey) || '{}'); } catch { overridesMap = {}; }
+            if (isWeekLocked) {
+                submitBtn.onclick = () => showToast(`Week locked (${lockStatusDisplay}). Wait for admin approval.`);
+            } else {
+                submitBtn.onclick = async () => {
+                    const s = startOfWeek(anchor);
+                    const e = endOfWeek(anchor);
+                    const weekKey = `ts_manual_${fmt(s)}_${fmt(e)}`;
+                    const overridesKey = `${weekKey}_overrides`;
+                    let overridesMap = {};
+                    try { overridesMap = JSON.parse(sessionStorage.getItem(overridesKey) || '{}'); } catch { overridesMap = {}; }
 
-                const today = new Date();
-                const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+                    const today = new Date();
+                    const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
 
-                const entries = [];
-                const ensureSeconds = (v) => {
-                    if (v === null || v === undefined) return 0;
-                    const n = Number(v);
-                    return Number.isFinite(n) ? n : 0;
-                };
+                    const entries = [];
+                    const ensureSeconds = (v) => {
+                        if (v === null || v === undefined) return 0;
+                        const n = Number(v);
+                        return Number.isFinite(n) ? n : 0;
+                    };
 
-                gridRows.forEach(row => {
-                    const key = rowKeyFor(row);
-                    const ov = overridesMap[key] || [];
-                    for (let i = 0; i < 7; i++) {
-                        const d = new Date(s); d.setDate(s.getDate() + i);
-                        const yyyy = d.getFullYear();
-                        const mm = String(d.getMonth() + 1).padStart(2, '0');
-                        const dd = String(d.getDate()).padStart(2, '0');
-                        const workDate = `${yyyy}-${mm}-${dd}`;
-                        if (workDate > todayStr) continue;
-                        const baseSecs = ensureSeconds(row.hours[i]);
-                        const overrideSecs = (ov[i] === null || ov[i] === undefined) ? null : ensureSeconds(ov[i]);
-                        const secs = overrideSecs !== null ? overrideSecs : baseSecs;
-                        if (!secs) continue;
+                    gridRows.forEach(row => {
+                        const key = rowKeyFor(row);
+                        const ov = overridesMap[key] || [];
+                        for (let i = 0; i < 7; i++) {
+                            const d = new Date(s); d.setDate(s.getDate() + i);
+                            const dStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+                            if (dStr > todayStr) continue;
+                            const baseSecs = ensureSeconds(row.hours[i]);
+                            const overrideSecs = (ov[i] === null || ov[i] === undefined) ? null : ensureSeconds(ov[i]);
+                            const secs = overrideSecs !== null ? overrideSecs : baseSecs;
+                            if (!secs) continue;
 
-                        const project = projects.find(p => (p.crc6f_projectid || p.id) === row.project_id) || {};
-                        const projectId = row.project_id || project.crc6f_projectid || project.id || '';
-                        const projectName = project.crc6f_projectname || project.name || row.project_name || projectId;
+                            const project = projects.find(p => (p.crc6f_projectid || p.id) === row.project_id) || {};
+                            const projectId = row.project_id || project.crc6f_projectid || project.id || '';
+                            const projectName = project.crc6f_projectname || project.name || row.project_name || projectId;
 
-                        entries.push({
-                            date: workDate,
-                            project_id: projectId,
-                            project_name: projectName || '',
-                            task_id: row.task_id || '',
-                            task_guid: row.task_guid || '',
-                            task_name: row.task_name || '',
-                            seconds: secs,
-                            hours_worked: Math.round((secs / 3600) * 100) / 100,
-                            description: ''
-                        });
-                    }
-                });
-
-                if (!entries.length) {
-                    showToast('No time entries to submit for this week.');
-                    return;
-                }
-
-                const fullName = `${user.first_name || user.firstName || ''} ${user.last_name || user.lastName || ''}`.trim();
-                const employeeName = fullName || user.name || user.displayName || '';
-
-                const payload = {
-                    employee_id: empId,
-                    employee_name: employeeName,
-                    entries
-                };
-
-                try {
-                    const res = await fetch(`${API}/time-tracker/timesheet/submit`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(payload)
+                            entries.push({
+                                date: dStr,
+                                project_id: projectId,
+                                project_name: projectName || '',
+                                task_id: row.task_id || '',
+                                task_guid: row.task_guid || '',
+                                task_name: row.task_name || '',
+                                seconds: secs,
+                                hours_worked: Math.round((secs / 3600) * 100) / 100,
+                                description: ''
+                            });
+                        }
                     });
-                    const data = await res.json().catch(() => ({}));
-                    if (!res.ok || !data.success) {
-                        showToast(`Failed to submit timesheet: ${data.error || res.status}`);
+
+                    if (!entries.length) {
+                        showToast('No time entries to submit for this week.');
                         return;
                     }
-                    try { sessionStorage.removeItem(weekKey); } catch { }
-                    try { sessionStorage.removeItem(overridesKey); } catch { }
-                    if (submissionStatusTimer) {
-                        clearTimeout(submissionStatusTimer);
-                        submissionStatusTimer = null;
-                    }
-                    submissionStatusMsg = 'Timesheet submitted.';
-                    submissionStatusTimer = setTimeout(() => {
-                        submissionStatusMsg = '';
-                        if (window.location.hash === '#/time-my-timesheet') {
-                            try { render(); } catch { }
+
+                    const fullName = `${user.first_name || user.firstName || ''} ${user.last_name || user.lastName || ''}`.trim();
+                    const employeeName = fullName || user.name || user.displayName || '';
+
+                    const payload = {
+                        employee_id: empId,
+                        employee_name: employeeName,
+                        entries
+                    };
+
+                    try {
+                        const res = await fetch(`${apiBase}/time-tracker/timesheet/submit`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(payload)
+                        });
+                        const data = await res.json().catch(() => ({}));
+                        if (!res.ok || !data.success) {
+                            showToast(`Failed to submit timesheet: ${data.error || res.status}`);
+                            return;
                         }
-                    }, 5000);
+                        try { sessionStorage.removeItem(weekKey); } catch { }
+                        try { sessionStorage.removeItem(overridesKey); } catch { }
+                        if (submissionStatusTimer) {
+                            clearTimeout(submissionStatusTimer);
+                            submissionStatusTimer = null;
+                        }
+                        submissionStatusMsg = 'Timesheet submitted.';
+                        submissionStatusTimer = setTimeout(() => {
+                            submissionStatusMsg = '';
+                            if (window.location.hash === '#/time-my-timesheet') {
+                                try { render(); } catch { }
+                            }
+                        }, 5000);
 
-                    // Show the submission summary popup
-                    showTimesheetSubmissionSummary(entries);
+                        // Show the submission summary popup
+                        showTimesheetSubmissionSummary(entries);
 
-                    // Notify admin/manager about the new timesheet submission
-                    try { await updateNotificationBadge(); } catch (e) { console.warn('Notification badge update failed', e); }
+                        // Notify admin/manager about the new timesheet submission
+                        try { await updateNotificationBadge(); } catch (e) { console.warn('Notification badge update failed', e); }
 
-                    await render();
-                } catch (err) {
-                    console.error('Timesheet submit failed', err);
-                    showToast('Failed to submit timesheet. Please try again.');
-                }
-            };
+                        await render();
+                    } catch (err) {
+                        console.error('Timesheet submit failed', err);
+                        showToast('Failed to submit timesheet. Please try again.');
+                    }
+                };
+            }
         }
 
         // Enable edit via modal on double-click; save to backend and refresh
@@ -1697,7 +1242,7 @@ export const renderMyTimesheetPage = async () => {
             };
 
             try {
-                const res = await fetch(`${API}/time-tracker/logs/exact`, {
+                const res = await fetch(`${apiBase}/time-tracker/logs/exact`, {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload),
@@ -1780,14 +1325,16 @@ export const renderMyTimesheetPage = async () => {
             }, 20);
         };
 
-        document.querySelectorAll('.ts-hour-input').forEach(inp => {
-            inp.addEventListener('dblclick', () => {
-                if (inp.hasAttribute('disabled')) return;
-                const rowIdx = parseInt(inp.getAttribute('data-row'), 10);
-                const dayIdx = parseInt(inp.getAttribute('data-day'), 10);
-                openCellEditModal(rowIdx, dayIdx);
+        if (!isWeekLocked) {
+            document.querySelectorAll('.ts-hour-input').forEach(inp => {
+                inp.addEventListener('dblclick', () => {
+                    if (inp.hasAttribute('disabled')) return;
+                    const rowIdx = parseInt(inp.getAttribute('data-row'), 10);
+                    const dayIdx = parseInt(inp.getAttribute('data-day'), 10);
+                    openCellEditModal(rowIdx, dayIdx);
+                });
             });
-        });
+        }
 
         // Make entire timesheet rows navigate to their project page (ignore clicks on form controls)
         document.querySelectorAll('tr.ts-row-clickable').forEach(tr => {
@@ -1803,11 +1350,10 @@ export const renderMyTimesheetPage = async () => {
         });
 
         const addRowBtn = document.getElementById('ts-add-row');
-        if (addRowBtn) {
+        if (addRowBtn && !isWeekLocked) {
             if (canManageMyTimesheetRows()) {
                 addRowBtn.removeAttribute('disabled');
                 addRowBtn.style.opacity = '';
-
                 addRowBtn.style.cursor = '';
             } else {
                 addRowBtn.setAttribute('disabled', 'disabled');
