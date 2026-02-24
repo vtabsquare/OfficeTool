@@ -577,6 +577,71 @@ export const renderMyTasksPage = async () => {
         return false;
     };
 
+    const activeDateKey = (active) => {
+        if (!active) return '';
+        if (active.session_date) return String(active.session_date);
+        const started = Number(active.started_at || 0);
+        if (!started) return '';
+        const dt = new Date(started);
+        if (Number.isNaN(dt.getTime())) return '';
+        return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+    };
+
+    const normalizeActiveTimer = async () => {
+        const active = getActive();
+        if (!active || !active.task_guid) return;
+        const today = todayStr();
+        const activeDay = activeDateKey(active);
+        if (!activeDay || activeDay === today) return;
+
+        // Stale paused timers should never carry over days.
+        if (active.paused) {
+            clearActive();
+            return;
+        }
+
+        const startedAt = Number(active.started_at || 0);
+        if (!startedAt) {
+            clearActive();
+            return;
+        }
+
+        const startDt = new Date(startedAt);
+        if (Number.isNaN(startDt.getTime())) {
+            clearActive();
+            return;
+        }
+
+        // Close stale running session at end of its original local day.
+        const endOfStartDay = new Date(startDt);
+        endOfStartDay.setHours(23, 59, 59, 999);
+        const endedAt = Math.max(startedAt, endOfStartDay.getTime());
+        const elapsed = Math.max(1, Math.floor((endedAt - startedAt) / 1000));
+        const task = {
+            guid: active.task_guid,
+            task_id: active.task_id,
+            task_name: active.task_name,
+            project_id: active.project_id,
+        };
+
+        try {
+            await postTimesheetLog({
+                seconds: elapsed,
+                task,
+                started_at: startedAt,
+                ended_at: endedAt,
+            });
+        } catch (err) {
+            console.warn('[MY_TASKS] Failed stale timer auto-log:', err);
+        }
+
+        try {
+            await stopTaskTimer(task);
+        } catch { }
+
+        clearActive();
+    };
+
     const startTaskTimer = async (task) => {
         try {
             const res = await fetch(`${API}/time-entries/start`, {
@@ -674,6 +739,7 @@ export const renderMyTasksPage = async () => {
             setActive({ ...cur, accumulated: totalAccumulated, paused: true, started_at: null });
             setPersistedSecs(t.guid, totalAccumulated);
             await postTimesheetLog({ seconds: totalAccumulated, task: t, started_at: cur.started_at, ended_at: Date.now() });
+            await stopTaskTimer(t);
             render();
             return;
         }
@@ -690,18 +756,23 @@ export const renderMyTasksPage = async () => {
                 started_at: cur.started_at,
                 ended_at: Date.now()
             });
+            await stopTaskTimer({ guid: cur.task_guid });
             // Clear active
             clearActive();
         }
         // Start or resume this task
         if (cur && cur.task_guid === t.guid && cur.paused) {
             // Resume from paused state
-            setActive({ ...cur, started_at: Date.now(), paused: false });
+            const now = Date.now();
+            setActive({ ...cur, started_at: now, paused: false, session_date: todayStr() });
+            await startTaskTimer(t);
         } else {
             // Start fresh
             // Seed with persisted seconds for today so it continues from stored value
             const persisted = getPersistedSecs(t.guid);
-            setActive({ task_guid: t.guid, task_id: t.task_id, task_name: t.task_name, project_id: t.project_id, started_at: Date.now(), accumulated: persisted, paused: false });
+            const now = Date.now();
+            setActive({ task_guid: t.guid, task_id: t.task_id, task_name: t.task_name, project_id: t.project_id, started_at: now, accumulated: persisted, paused: false, session_date: todayStr() });
+            await startTaskTimer(t);
         }
         await updateTaskStatus(t, 'In Progress');
         render();
@@ -721,6 +792,7 @@ export const renderMyTasksPage = async () => {
         // persist and upsert
         setPersistedSecs(t.guid, totalSeconds);
         const ok = await postTimesheetLog({ seconds: totalSeconds, task: t, started_at: cur.started_at, ended_at: Date.now() });
+        await stopTaskTimer(t);
         if (ok) {
             clearActive();
         }
@@ -730,7 +802,22 @@ export const renderMyTasksPage = async () => {
 
     const updateTimers = () => {
         const active = getActive();
-        if (!active) return;
+        if (!active) {
+            document.querySelectorAll('tr[data-guid] .tt-time').forEach(cell => {
+                const tr = cell.closest('tr');
+                const guid = tr?.getAttribute('data-guid');
+                if (!guid) return;
+                const secs = getPersistedSecs(guid);
+                cell.innerHTML = secs > 0
+                    ? `<span class="running" style="color:#f39c12; font-weight:600;">${fmt(secs)}</span>`
+                    : '-';
+            });
+            if (timerInterval) {
+                clearInterval(timerInterval);
+                timerInterval = null;
+            }
+            return;
+        }
 
         document.querySelectorAll('tr[data-guid] .tt-time').forEach(cell => {
             const tr = cell.closest('tr');
@@ -747,6 +834,7 @@ export const renderMyTasksPage = async () => {
     };
 
     const render = async () => {
+        await normalizeActiveTimer();
         await loadTasks();
         const active = getActive();
         const rows = tasks.map(t => {
@@ -1017,7 +1105,17 @@ export const renderMyTimesheetPage = async () => {
         return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
     };
 
-    const rowKeyFor = (row) => `${row.project_id || ''}|${row.task_guid || row.task_id || ''}`;
+    const taskIdentityFor = (row) => {
+        return String(
+            row?.task_guid ||
+            row?.taskGuid ||
+            row?.task_id ||
+            row?.taskId ||
+            ''
+        ).trim();
+    };
+
+    const rowKeyFor = (row) => `${row?.project_id || row?.projectId || ''}|${taskIdentityFor(row)}`;
 
     const render = async () => {
         const s = startOfWeek(anchor);
@@ -1052,6 +1150,11 @@ export const renderMyTimesheetPage = async () => {
         const overridesKey = `${weekKey}_overrides`;
         let overrides = {};
         try { overrides = JSON.parse(sessionStorage.getItem(overridesKey) || '{}'); } catch { overrides = {}; }
+
+        const hiddenRowsKey = `${weekKey}_hidden_rows`;
+        let hiddenRowKeys = [];
+        try { hiddenRowKeys = JSON.parse(sessionStorage.getItem(hiddenRowsKey) || '[]'); } catch { hiddenRowKeys = []; }
+        const hiddenRowSet = new Set((hiddenRowKeys || []).map(String));
 
         const loadOverrides = () => {
             try { return JSON.parse(sessionStorage.getItem(overridesKey) || '{}'); } catch { return {}; }
@@ -1137,18 +1240,21 @@ export const renderMyTimesheetPage = async () => {
         // Group logs by project/task
         const grouped = {};
         logs.forEach(l => {
-            const key = `${l.project_id || ''}|${l.task_guid || ''}`;
+            const taskIdentity = taskIdentityFor(l);
+            const key = `${l.project_id || ''}|${taskIdentity}`;
             if (!grouped[key]) {
                 grouped[key] = {
                     project_id: l.project_id,
-                    task_guid: l.task_guid,
+                    task_guid: l.task_guid || '',
                     task_id: l.task_id,
                     task_name: l.task_name,
                     billing: 'Non-billable',
                     hours: Array(7).fill(0),
-                    manualFlags: Array(7).fill(false)
+                    manualFlags: Array(7).fill(false),
+                    _logRefs: []
                 };
             }
+            if (l.id) grouped[key]._logRefs.push(String(l.id));
             // Match log date to day column using string comparison (YYYY-MM-DD)
             const logDate = (l.work_date || '').slice(0, 10);
             // Only process if log date is not in the future (using local date)
@@ -1178,7 +1284,8 @@ export const renderMyTimesheetPage = async () => {
             });
             const existingKeys = new Set(Object.keys(grouped));
             assignedTasks.forEach(t => {
-                const key = `${t.project_id || ''}|${t.guid || t.task_id || ''}`;
+                const key = `${t.project_id || ''}|${taskIdentityFor({ task_guid: t.guid, task_id: t.task_id })}`;
+                if (hiddenRowSet.has(key)) return;
                 if (!existingKeys.has(key)) {
                     gridRows.push({
                         project_id: t.project_id || '',
@@ -1195,7 +1302,11 @@ export const renderMyTimesheetPage = async () => {
         // Append any manual rows that don't already exist by key
         if (Array.isArray(manualRows) && manualRows.length) {
             const existingKeys = new Set(Object.keys(grouped));
-            const toAppend = manualRows.filter(r => !existingKeys.has(`${r.project_id || ''}|${r.task_guid || ''}`));
+            const toAppend = manualRows.filter(r => {
+                const key = rowKeyFor(r);
+                if (hiddenRowSet.has(key)) return false;
+                return !existingKeys.has(key);
+            });
             gridRows = gridRows.concat(toAppend);
         }
         console.log('My Timesheet - Grid rows:', gridRows);
@@ -1320,7 +1431,7 @@ export const renderMyTimesheetPage = async () => {
                     ${dayInputs}
                     <td class="ts-total">${rowTotal}</td>
                     <td class="ts-actions">
-                        ${row._manual ? `<button class="icon-btn ts-delete-row" data-row="${idx}" title="Delete row"><i class="fa-regular fa-circle-xmark"></i></button>` : ''}
+                        ${rowKeyFor(row) !== '|' ? `<button class="icon-btn ts-delete-row" data-row="${idx}" title="Delete row"><i class="fa-regular fa-trash-can"></i></button>` : ''}
                     </td>
                 </tr>`;
         }).join('');
@@ -1515,6 +1626,12 @@ export const renderMyTimesheetPage = async () => {
                         hours: Array(7).fill(0)
                     };
                     manualRows.push(newRow);
+                    try {
+                        const key = rowKeyFor(newRow);
+                        const next = new Set(hiddenRowSet);
+                        next.delete(key);
+                        sessionStorage.setItem(hiddenRowsKey, JSON.stringify(Array.from(next)));
+                    } catch { }
                     try { sessionStorage.setItem(weekKey, JSON.stringify(manualRows)); } catch { }
                     // Persist a local task so it appears in My Tasks
                     try {
@@ -1534,11 +1651,59 @@ export const renderMyTimesheetPage = async () => {
         document.querySelectorAll('.ts-delete-row').forEach(btn => {
             btn.onclick = async (e) => {
                 const rowIdx = parseInt(e.currentTarget.getAttribute('data-row'));
+                const row = gridRows[rowIdx];
+                if (!row) return;
                 if (confirm('Delete this row?')) {
-                    // Only manual rows have delete buttons; remove from manualRows store
-                    const toDelete = gridRows[rowIdx];
-                    manualRows = manualRows.filter(r => r.id !== toDelete.id);
-                    try { sessionStorage.setItem(weekKey, JSON.stringify(manualRows)); } catch { }
+                    const rowKey = rowKeyFor(row);
+                    const nextHidden = new Set(hiddenRowSet);
+
+                    // 1) Manual row cleanup
+                    if (row._manual) {
+                        manualRows = manualRows.filter(r => r.id !== row.id && rowKeyFor(r) !== rowKey);
+                        try { sessionStorage.setItem(weekKey, JSON.stringify(manualRows)); } catch { }
+                    }
+
+                    // 2) Remove any override edits for this row key
+                    try {
+                        const ovMap = loadOverrides();
+                        if (Object.prototype.hasOwnProperty.call(ovMap, rowKey)) {
+                            delete ovMap[rowKey];
+                            saveOverrides(ovMap);
+                        }
+                    } catch { }
+
+                    // 3) Backend row deletion for persisted logs
+                    const hasPersisted = (row._logRefs && row._logRefs.length) || (row.hours || []).some(v => Number(v || 0) > 0);
+                    if (hasPersisted && (row.task_guid || row.task_id)) {
+                        try {
+                            const payload = {
+                                employee_id: String(empId || '').toUpperCase(),
+                                project_id: row.project_id || '',
+                                task_guid: row.task_guid || '',
+                                task_id: row.task_id || '',
+                                start_date: fmt(s),
+                                end_date: fmt(e),
+                            };
+                            const resp = await fetch(`${API}/time-tracker/logs/row`, {
+                                method: 'DELETE',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify(payload),
+                            });
+                            const data = await resp.json().catch(() => ({}));
+                            if (!resp.ok || !data.success) {
+                                showToast(data.error || 'Failed to delete timesheet row');
+                                return;
+                            }
+                        } catch (err) {
+                            console.error('Timesheet row delete failed', err);
+                            showToast('Failed to delete timesheet row');
+                            return;
+                        }
+                    }
+
+                    // 4) Keep this row hidden for current week so auto-sync doesn't re-add it immediately
+                    nextHidden.add(rowKey);
+                    try { sessionStorage.setItem(hiddenRowsKey, JSON.stringify(Array.from(nextHidden))); } catch { }
                     render();
                 }
             };

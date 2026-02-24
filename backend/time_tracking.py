@@ -115,6 +115,28 @@ def _write_entries(entries):
     os.replace(tmp, ENTRIES_FILE)
 
 
+def stop_active_task_entries_for_user(user_id, stop_iso=None):
+    """Force-stop all active task entries for a user (best-effort helper)."""
+    uid = str(user_id or "").strip().upper()
+    if not uid:
+        return {"stopped": 0}
+
+    entries = _read_entries()
+    stopped = 0
+    stop_value = stop_iso or _now_iso()
+
+    for rec in entries:
+        rec_uid = str(rec.get("user_id") or "").strip().upper()
+        if rec_uid == uid and not rec.get("end"):
+            rec["end"] = stop_value
+            stopped += 1
+
+    if stopped:
+        _write_entries(entries)
+
+    return {"stopped": stopped}
+
+
 def _read_logs():
     try:
         with open(LOGS_FILE, "r", encoding="utf-8") as f:
@@ -174,6 +196,11 @@ def _format_hms(seconds: int) -> str:
     m = (seconds % 3600) // 60
     s = seconds % 60
     return f"{h}h {m:02d}m {s:02d}s"
+
+
+def _safe_date_part(value):
+    """Return YYYY-MM-DD part from date/datetime-like strings."""
+    return str(value or "").strip()[:10]
 
 
 def _split_session_by_day(start_ms: int, end_ms: int, tz_offset_minutes: int = 0):
@@ -264,6 +291,112 @@ def proxy_tasks():
         return jsonify({"success": True, "tasks": items}), 200
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
+
+
+@bp_time.route("/time-tracker/logs/row", methods=["DELETE"])
+def delete_logs_row():
+    """
+    Delete all logs for one timesheet row in a date range.
+    Body: {
+      employee_id, project_id?, task_guid?, task_id?, start_date, end_date
+    }
+    """
+    b = request.get_json(force=True) or {}
+    employee_id = (b.get("employee_id") or "").strip()
+    project_id = (b.get("project_id") or "").strip()
+    task_guid = (b.get("task_guid") or "").strip()
+    task_id = (b.get("task_id") or "").strip()
+    start_date = _safe_date_part(b.get("start_date"))
+    end_date = _safe_date_part(b.get("end_date"))
+
+    if not employee_id:
+        return jsonify({"success": False, "error": "employee_id required"}), 400
+    if not (task_guid or task_id):
+        return jsonify({"success": False, "error": "task_guid or task_id required"}), 400
+    if not start_date or not end_date:
+        return jsonify({"success": False, "error": "start_date and end_date required"}), 400
+
+    dataverse_deleted = 0
+    dataverse_errors = []
+
+    # Dataverse deletion (best effort)
+    try:
+        token = get_access_token()
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json",
+            "OData-Version": "4.0",
+        }
+
+        safe_emp = employee_id.replace("'", "''")
+        parts = [
+            f"crc6f_employeeid eq '{safe_emp}'",
+            f"crc6f_workdate ge '{start_date}'",
+            f"crc6f_workdate le '{end_date}'",
+        ]
+        if project_id:
+            safe_project = project_id.replace("'", "''")
+            parts.append(f"crc6f_projectid eq '{safe_project}'")
+        if task_guid:
+            safe_task_guid = task_guid.replace("'", "''")
+            parts.append(f"crc6f_taskguid eq '{safe_task_guid}'")
+        else:
+            safe_task_id = task_id.replace("'", "''")
+            parts.append(f"crc6f_taskid eq '{safe_task_id}'")
+
+        filter_q = " and ".join(parts)
+        list_url = (
+            f"{RESOURCE}{DV_API}/crc6f_hr_timesheetlogs"
+            f"?$filter={filter_q}&$select=crc6f_hr_timesheetlogid&$top=5000"
+        )
+        list_resp = requests.get(list_url, headers=headers, timeout=30)
+        if list_resp.status_code == 200:
+            rows = list_resp.json().get("value", [])
+            for row in rows:
+                rid = row.get("crc6f_hr_timesheetlogid")
+                if not rid:
+                    continue
+                del_url = f"{RESOURCE}{DV_API}/crc6f_hr_timesheetlogs({rid})"
+                del_resp = requests.delete(del_url, headers=headers, timeout=30)
+                if del_resp.status_code in (200, 204):
+                    dataverse_deleted += 1
+                else:
+                    dataverse_errors.append(f"{rid}:{del_resp.status_code}")
+        else:
+            dataverse_errors.append(f"lookup_failed:{list_resp.status_code}")
+    except Exception as dv_err:
+        dataverse_errors.append(str(dv_err))
+
+    # Local deletion fallback/cleanup
+    logs = _read_logs()
+    before = len(logs)
+    match_task_key = (task_guid or task_id)
+
+    def _in_range(work_date):
+        d = _safe_date_part(work_date)
+        return bool(d) and start_date <= d <= end_date
+
+    filtered = []
+    for r in logs:
+        same_emp = str(r.get("employee_id") or "") == employee_id
+        same_project = (not project_id) or str(r.get("project_id") or "") == project_id
+        row_task_key = str(r.get("task_guid") or r.get("task_id") or "")
+        same_task = row_task_key == match_task_key
+        same_window = _in_range(r.get("work_date"))
+        if same_emp and same_project and same_task and same_window:
+            continue
+        filtered.append(r)
+
+    _write_logs(filtered)
+    local_deleted = before - len(filtered)
+
+    return jsonify({
+        "success": True,
+        "deleted": max(dataverse_deleted, local_deleted),
+        "dataverse_deleted": dataverse_deleted,
+        "local_deleted": local_deleted,
+        "warnings": dataverse_errors,
+    }), 200
 
 
 @bp_time.route("/time-tracker/logs/exact", methods=["PUT"])
@@ -647,14 +780,18 @@ def create_task_log():
         
         def upsert_segment(seg_work_date: str, seg_seconds: int):
             # Convert seconds to hours (decimal)
-            hours_worked = round(seg_seconds / 3600, 2)
+            hours_worked = round(seg_seconds / 3600, 4)
+            task_name = (b.get("task_name") or "").strip()
+            work_desc = (b.get("description") or task_name or "").strip()
 
             payload = {
                 "crc6f_employeeid": employee_id,
                 "crc6f_projectid": project_id,
                 "crc6f_taskid": task_id,
+                "crc6f_taskguid": task_guid,
+                "crc6f_taskname": task_name,
                 "crc6f_hoursworked": str(hours_worked),
-                "crc6f_workdescription": b.get("description") or b.get("task_name") or "",
+                "crc6f_workdescription": work_desc,
                 "crc6f_approvalstatus": "Pending",
                 # Dataverse work date field (Date Only)
                 "crc6f_workdate": seg_work_date if seg_work_date else None
@@ -670,24 +807,69 @@ def create_task_log():
                 "OData-Version": "4.0",
             }
 
-            url = f"{RESOURCE}{DV_API}/crc6f_hr_timesheetlogs"
-            print(f"[TIME_TRACKER] Posting to Dataverse: {url}")
-            print(f"[TIME_TRACKER] Payload: {payload}")
-            resp = requests.post(url, headers=headers, json=payload, timeout=30)
-            print(f"[TIME_TRACKER] Dataverse response status: {resp.status_code}")
-            if resp.status_code not in (200, 201, 204):
-                print(f"[TIME_TRACKER] Dataverse error ({resp.status_code}): {resp.text}")
-            else:
-                print(f"[TIME_TRACKER] Dataverse save successful")
-
             logs = _read_logs()
             dv_id = None
+
+            # Dataverse UPSERT by employee + date + task identity (+project if available)
             try:
-                ent = resp.headers.get('OData-EntityId') or resp.headers.get('odata-entityid')
-                if ent and ent.endswith(')') and '(' in ent:
-                    dv_id = ent.split('(')[-1].strip(')')
-            except Exception:
-                dv_id = None
+                safe_emp = employee_id.replace("'", "''")
+                safe_date = seg_work_date.replace("'", "''")
+                filter_parts = [
+                    f"crc6f_employeeid eq '{safe_emp}'",
+                    f"crc6f_workdate ge '{safe_date}'",
+                    f"crc6f_workdate le '{safe_date}'",
+                ]
+                if project_id:
+                    safe_project = project_id.replace("'", "''")
+                    filter_parts.append(f"crc6f_projectid eq '{safe_project}'")
+                if task_guid:
+                    safe_task_guid = task_guid.replace("'", "''")
+                    filter_parts.append(f"crc6f_taskguid eq '{safe_task_guid}'")
+                elif task_id:
+                    safe_task_id = task_id.replace("'", "''")
+                    filter_parts.append(f"crc6f_taskid eq '{safe_task_id}'")
+
+                lookup_q = " and ".join(filter_parts)
+                lookup_url = (
+                    f"{RESOURCE}{DV_API}/crc6f_hr_timesheetlogs"
+                    f"?$filter={lookup_q}&$select=crc6f_hr_timesheetlogid,crc6f_hoursworked&$top=1"
+                )
+                lookup_resp = requests.get(lookup_url, headers=headers, timeout=30)
+                existing_rows = lookup_resp.json().get("value", []) if lookup_resp.status_code == 200 else []
+
+                if existing_rows:
+                    row = existing_rows[0]
+                    dv_id = row.get("crc6f_hr_timesheetlogid")
+                    prev_hours = 0.0
+                    try:
+                        prev_hours = float(row.get("crc6f_hoursworked") or 0)
+                    except Exception:
+                        prev_hours = 0.0
+                    merged_hours = round(prev_hours + hours_worked, 4)
+                    update_payload = {
+                        **payload,
+                        "crc6f_hoursworked": str(merged_hours),
+                    }
+                    patch_url = f"{RESOURCE}{DV_API}/crc6f_hr_timesheetlogs({dv_id})"
+                    patch_resp = requests.patch(patch_url, headers=headers, json=update_payload, timeout=30)
+                    print(f"[TIME_TRACKER] Dataverse PATCH status: {patch_resp.status_code}")
+                    if patch_resp.status_code not in (200, 204):
+                        print(f"[TIME_TRACKER] Dataverse PATCH error ({patch_resp.status_code}): {patch_resp.text}")
+                else:
+                    post_url = f"{RESOURCE}{DV_API}/crc6f_hr_timesheetlogs"
+                    resp = requests.post(post_url, headers=headers, json=payload, timeout=30)
+                    print(f"[TIME_TRACKER] Dataverse POST status: {resp.status_code}")
+                    if resp.status_code in (200, 201, 204):
+                        try:
+                            ent = resp.headers.get('OData-EntityId') or resp.headers.get('odata-entityid')
+                            if ent and ent.endswith(')') and '(' in ent:
+                                dv_id = ent.split('(')[-1].strip(')')
+                        except Exception:
+                            dv_id = None
+                    else:
+                        print(f"[TIME_TRACKER] Dataverse POST error ({resp.status_code}): {resp.text}")
+            except Exception as dv_err:
+                print(f"[TIME_TRACKER] Dataverse UPSERT warning: {dv_err}")
 
             # UPSERT local log by employee + task + work_date
             idx = None
@@ -705,7 +887,7 @@ def create_task_log():
                 logs[idx] = {
                     **prev,
                     "seconds": new_secs,
-                    "description": b.get("description") or prev.get("description") or "",
+                    "description": work_desc or prev.get("description") or "",
                     "dv_id": prev.get("dv_id") or dv_id
                 }
                 rec_local = logs[idx]
@@ -717,58 +899,16 @@ def create_task_log():
                     "project_id": project_id,
                     "task_guid": task_guid or None,
                     "task_id": task_id or None,
-                    "task_name": b.get("task_name"),
+                    "task_name": task_name,
                     "seconds": seg_seconds,
                     "work_date": seg_work_date,
-                    "description": b.get("description") or "",
+                    "description": work_desc,
                     "dv_id": dv_id,
                     "created_at": _now_iso(),
                 }
                 logs.append(rec_local)
                 print(f"[TIME_TRACKER] Inserted new local log: {employee_id} {task_id} {seg_work_date} -> {seg_seconds}s")
             _write_logs(logs)
-            # Also save to timesheet logs for My Timesheet page
-            try:
-                logs = _read_logs()
-                
-                # Check if entry already exists for this employee/task/date
-                existing_idx = None
-                for i, r in enumerate(logs):
-                    if (
-                        r.get("employee_id") == employee_id
-                        and (r.get("task_guid") or r.get("task_id")) == (task_guid or task_id)
-                        and r.get("work_date") == seg_work_date
-                    ):
-                        existing_idx = i
-                        break
-                
-                log_entry = {
-                    "id": f"LOG-{int(datetime.now().timestamp()*1000)}",
-                    "employee_id": employee_id,
-                    "project_id": project_id,
-                    "task_guid": task_guid or None,
-                    "task_id": task_id or None,
-                    "task_name": b.get("task_name"),
-                    "seconds": seg_seconds,
-                    "work_date": seg_work_date,
-                    "description": b.get("description") or "",
-                    "dv_id": dv_id,
-                    "created_at": _now_iso(),
-                }
-                
-                if existing_idx is not None:
-                    # Update existing entry - add to existing seconds
-                    prev = logs[existing_idx]
-                    log_entry["seconds"] = int(prev.get("seconds", 0)) + seg_seconds
-                    logs[existing_idx] = log_entry
-                    print(f"[TIME_TRACKER] Updated existing timesheet log: {employee_id} {task_id} {seg_work_date} -> {log_entry['seconds']}s")
-                else:
-                    logs.append(log_entry)
-                    print(f"[TIME_TRACKER] Added new timesheet log: {employee_id} {task_id} {seg_work_date} -> {seg_seconds}s")
-                
-                _write_logs(logs)
-            except Exception as e:
-                print(f"[TIME_TRACKER] Warning: Failed to save to timesheet logs: {e}")
             
             return rec_local
 
@@ -941,7 +1081,10 @@ def delete_logs():
             if resp.status_code in (200, 204):
                 # Also delete from local cache
                 logs = _read_logs()
-                logs = [r for r in logs if r.get("id") != log_id]
+                logs = [
+                    r for r in logs
+                    if str(r.get("id") or "") != log_id and str(r.get("dv_id") or "") != log_id
+                ]
                 _write_logs(logs)
                 return jsonify({"success": True, "deleted": 1, "source": "dataverse"}), 200
             else:

@@ -18,6 +18,7 @@ except ImportError:
     from pytz import timezone as ZoneInfo
 
 from dataverse_helper import create_record, update_record, get_access_token
+from time_tracking import stop_active_task_entries_for_user
 
 # Blueprint for v2 attendance routes
 attendance_v2_bp = Blueprint('attendance_v2', __name__, url_prefix='/api/v2/attendance')
@@ -459,6 +460,12 @@ def checkout_v2():
             LA_FIELD_CHECKOUT_LOCATION: location_to_string(location)
         }
         upsert_login_activity(employee_id, today_date, la_payload)
+
+        # Force-stop any active task timers for this user to avoid overnight carry-over.
+        try:
+            stop_active_task_entries_for_user(employee_id, now_utc.isoformat())
+        except Exception as task_timer_err:
+            print(f"[ATTENDANCE-V2] Failed to force-stop task timers on checkout: {task_timer_err}")
         
         # Update attendance record
         existing_att = fetch_attendance_record(employee_id, today_date)

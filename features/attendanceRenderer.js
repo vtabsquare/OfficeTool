@@ -126,6 +126,86 @@ export async function performCheckIn(employeeId, location = null) {
     return data;
 }
 
+async function stopActiveTaskTimerOnCheckout(employeeId, checkoutUtc = null) {
+    const uid = String(employeeId || '').trim().toUpperCase();
+    if (!uid) return;
+
+    const activeKey = `tt_active_${uid}`;
+    let active = null;
+    try {
+        active = JSON.parse(localStorage.getItem(activeKey) || 'null');
+    } catch {
+        active = null;
+    }
+
+    if (!active || !active.task_guid) {
+        return;
+    }
+
+    const startedAt = Number(active.started_at || 0);
+    const checkoutMs = (() => {
+        if (!checkoutUtc) return Date.now();
+        const parsed = new Date(checkoutUtc).getTime();
+        return Number.isFinite(parsed) ? parsed : Date.now();
+    })();
+
+    // If task was running, log current run slice before force-stopping.
+    if (!active.paused && startedAt > 0) {
+        const endMs = Math.max(checkoutMs, startedAt);
+        const sessionSeconds = Math.max(1, Math.floor((endMs - startedAt) / 1000));
+        const body = {
+            employee_id: uid,
+            project_id: active.project_id || '',
+            task_guid: active.task_guid || '',
+            task_id: active.task_id || '',
+            task_name: active.task_name || active.task_id || '',
+            seconds: sessionSeconds,
+            work_date: new Date(endMs).toISOString().slice(0, 10),
+            description: '',
+            session_start_ms: startedAt,
+            session_end_ms: endMs,
+            tz_offset_minutes: new Date().getTimezoneOffset(),
+        };
+
+        try {
+            await fetch(`${BASE_URL}/api/time-tracker/task-log`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+            });
+        } catch (logErr) {
+            console.warn('[ATTENDANCE-RENDERER] Failed to auto-log task timer on checkout:', logErr);
+        }
+    }
+
+    // Stop backend task timer state (best effort).
+    try {
+        await fetch(`${BASE_URL}/api/time-entries/stop`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ task_guid: active.task_guid, user_id: uid }),
+        });
+    } catch (stopErr) {
+        console.warn('[ATTENDANCE-RENDERER] Failed backend task timer stop on checkout:', stopErr);
+    }
+
+    // Always clear local active task pointer so timer cannot continue next day.
+    try {
+        localStorage.removeItem(activeKey);
+    } catch { }
+
+    // Notify any open My Tasks view to repaint quickly.
+    try {
+        window.dispatchEvent(new CustomEvent('taskTimerStopped', {
+            detail: {
+                employee_id: uid,
+                task_guid: active.task_guid,
+                reason: 'attendance_checkout'
+            }
+        }));
+    } catch { }
+}
+
 /**
  * Send check-out request to backend.
  * Frontend does NOT stop timer - waits for backend confirmation.
@@ -176,6 +256,13 @@ export async function performCheckOut(employeeId, location = null) {
     
     // Trigger immediate UI update
     updateTimerDisplay();
+
+    // Keep task timer in sync with attendance checkout (prevents cross-day running timers).
+    try {
+        await stopActiveTaskTimerOnCheckout(employeeId, data.checkout_utc || data.server_now_utc);
+    } catch (syncErr) {
+        console.warn('[ATTENDANCE-RENDERER] Task timer sync on checkout failed:', syncErr);
+    }
     
     return data;
 }
