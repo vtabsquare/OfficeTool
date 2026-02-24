@@ -595,13 +595,29 @@ def stop_timer():
     entries = _read_entries()
     now_iso = _now_iso()
     stopped = None
+    
+    # Debug: Show all active entries for this user
+    active_entries = [e for e in entries if e.get("user_id") == user_id and not e.get("end")]
+    print(f"[BACKEND] Active entries for user {user_id}: {len(active_entries)}")
+    for e in active_entries:
+        print(f"  - task_guid: {e.get('task_guid')}, start: {e.get('start')}")
+    
     for e in entries:
         if e.get("user_id") == user_id and e.get("task_guid") == task_guid and not e.get("end"):
             e["end"] = now_iso
             stopped = e
+            print(f"[BACKEND] Stopped entry: task_guid={task_guid}, user_id={user_id}")
             break
     if not stopped:
+        print(f"[BACKEND] No active timer found for task_guid={task_guid}, user_id={user_id}")
         return jsonify({"success": False, "error": "No active timer for this task"}), 400
+    
+    # Debug: Check remaining active entries after stop
+    remaining_active = [e for e in entries if e.get("user_id") == user_id and not e.get("end")]
+    print(f"[BACKEND] Remaining active entries after stop: {len(remaining_active)}")
+    for e in remaining_active:
+        print(f"  - task_guid: {e.get('task_guid')}, start: {e.get('start')}")
+    
     _write_entries(entries)
     return jsonify({"success": True, "entry": stopped})
 
