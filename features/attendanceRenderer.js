@@ -144,12 +144,39 @@ export async function performCheckOut(employeeId, location = null) {
         const activeData = localStorage.getItem(activeKey);
         
         console.log('[ATTENDANCE-RENDERER] Checking for active task timers before checkout...');
+        console.log('[ATTENDANCE-RENDERER] User object:', user);
         console.log('[ATTENDANCE-RENDERER] Employee ID:', empId);
         console.log('[ATTENDANCE-RENDERER] Active key:', activeKey);
         console.log('[ATTENDANCE-RENDERER] Active data found:', !!activeData);
         
-        if (activeData) {
-            const activeTask = JSON.parse(activeData);
+        // Debug: Show all localStorage keys that contain 'tt_active'
+        console.log('[ATTENDANCE-RENDERER] All tt_active keys in localStorage:');
+        for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            if (key && key.includes('tt_active')) {
+                console.log(`  - ${key}: ${localStorage.getItem(key)}`);
+            }
+        }
+        
+        // Try both uppercase and lowercase versions
+        const empIdUpper = empId.toUpperCase();
+        const activeKeyUpper = `tt_active_${empIdUpper}`;
+        const activeDataUpper = localStorage.getItem(activeKeyUpper);
+        
+        console.log('[ATTENDANCE-RENDERER] Trying uppercase key:', activeKeyUpper);
+        console.log('[ATTENDANCE-RENDERER] Uppercase data found:', !!activeDataUpper);
+        
+        // Use whichever key has data
+        let finalActiveKey = activeKey;
+        let finalActiveData = activeData;
+        if (!activeData && activeDataUpper) {
+            finalActiveKey = activeKeyUpper;
+            finalActiveData = activeDataUpper;
+            console.log('[ATTENDANCE-RENDERER] Using uppercase key instead');
+        }
+        
+        if (finalActiveData) {
+            const activeTask = JSON.parse(finalActiveData);
             console.log('[ATTENDANCE-RENDERER] Active task data:', activeTask);
             
             // Check if there's a running task timer (not paused)
@@ -170,7 +197,7 @@ export async function performCheckOut(employeeId, location = null) {
                 
                 if (stopResponse.ok) {
                     // Clear the active task from localStorage
-                    localStorage.removeItem(activeKey);
+                    localStorage.removeItem(finalActiveKey);
                     console.log('[ATTENDANCE-RENDERER] Task timer paused successfully before checkout');
                 } else {
                     const errorData = await stopResponse.json().catch(() => ({}));
