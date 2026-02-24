@@ -96,7 +96,6 @@ DATA_DIR = os.path.join(os.path.dirname(__file__), "_data")
 ENTRIES_FILE = os.path.join(DATA_DIR, "time_entries.json")
 LOGS_FILE = os.path.join(DATA_DIR, "timesheet_logs.json")
 TS_ENTRIES_FILE = os.path.join(DATA_DIR, "timesheet_entries.json")
-TS_SUBMISSIONS_FILE = os.path.join(DATA_DIR, "timesheet_submissions.json")
 
 os.makedirs(DATA_DIR, exist_ok=True)
 
@@ -147,67 +146,8 @@ def _write_ts_entries(entries):
     os.replace(tmp, TS_ENTRIES_FILE)
 
 
-def _read_ts_submissions():
-    """Read timesheet submissions (for approval workflow)."""
-    try:
-        with open(TS_SUBMISSIONS_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            return data.get("submissions", [])
-    except Exception:
-        return []
-
-
-def _write_ts_submissions(submissions):
-    """Write timesheet submissions."""
-    data = {"submissions": submissions}
-    tmp = TS_SUBMISSIONS_FILE + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(data, f)
-    os.replace(tmp, TS_SUBMISSIONS_FILE)
-
-
 def _now_iso():
     return datetime.now(timezone.utc).isoformat()
-
-
-def _get_week_start_end(date_str=None):
-    """Get week start and end dates for a given date or current date."""
-    if date_str:
-        try:
-            date = datetime.fromisoformat(date_str.split('T')[0])
-        except:
-            date = datetime.now()
-    else:
-        date = datetime.now()
-    
-    # Get Monday (start of week)
-    week_start = date - timedelta(days=date.weekday())
-    week_end = week_start + timedelta(days=6)
-    
-    return {
-        "start": week_start.strftime("%Y-%m-%d"),
-        "end": week_end.strftime("%Y-%m-%d")
-    }
-
-
-def _get_timesheet_status(employee_id, week_start_date):
-    """Get timesheet status for an employee for a specific week."""
-    submissions = _read_ts_submissions()
-    emp_id = str(employee_id).strip().upper()
-    
-    for submission in submissions:
-        if (submission.get("employee_id", "").upper() == emp_id and 
-            submission.get("week_start_date") == week_start_date):
-            return submission.get("status", "DRAFT")
-    
-    return "DRAFT"
-
-
-def _is_week_locked(employee_id, work_date):
-    """Check if a week is locked for time logging."""
-    week_info = _get_week_start_end(work_date)
-    status = _get_timesheet_status(employee_id, week_info["start"])
-    return status in ["SUBMITTED", "APPROVED"]
 
 
 def _sum_seconds_for_task(entries, task_guid, user_id=None):
@@ -352,11 +292,6 @@ def set_exact_log():
 
         if not employee_id or not work_date or seconds < 0:
             return jsonify({"success": False, "error": "employee_id, work_date required; seconds>=0"}), 400
-
-        # Check if the week for work_date is locked for this employee (unless admin is editing)
-        if role == "l1" and _is_week_locked(employee_id, work_date):
-            return jsonify({"success": False, "error": "Timesheet for this week is locked and cannot be modified"}), 403
-
         if role == "l1":
             return jsonify({"success": False, "error": "forbidden"}), 403
 
@@ -624,11 +559,6 @@ def start_timer():
     if not task_guid or not user_id:
         return jsonify({"success": False, "error": "task_guid and user_id required"}), 400
 
-    # Check if current week is locked for this user
-    today = datetime.now().strftime("%Y-%m-%d")
-    if _is_week_locked(user_id, today):
-        return jsonify({"success": False, "error": "Timesheet for this week is locked and cannot be modified"}), 403
-
     entries = _read_entries()
     # stop any other active entries for this user (single active guard)
     changed = False
@@ -696,10 +626,6 @@ def create_task_log():
         if not employee_id or seconds <= 0:
             print(f"[TIME_TRACKER] Validation failed: employee_id={employee_id}, seconds={seconds}")
             return jsonify({"success": False, "error": "employee_id and seconds>0 required"}), 400
-
-        # Check if the week for work_date is locked for this employee
-        if _is_week_locked(employee_id, work_date):
-            return jsonify({"success": False, "error": "Timesheet for this week is locked and cannot be modified"}), 403
 
         # Build per-day segments
         segments = []
@@ -1201,207 +1127,4 @@ def reject_timesheet(entry_id):
             return jsonify({"success": False, "error": "Entry not found"}), 404
         return jsonify({"success": True, "item": updated}), 200
     except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
-
-
-# ---------- Timesheet Locking System ----------
-
-@bp_time.route("/timesheet/submit", methods=["POST"])
-def submit_timesheet():
-    """Submit timesheet for a specific week for approval."""
-    try:
-        body = request.get_json(force=True) or {}
-        employee_id = (body.get("employee_id") or "").strip()
-        week_start_date = (body.get("week_start_date") or "").strip()
-        submitted_by = (body.get("submitted_by") or employee_id).strip()
-        
-        if not employee_id or not week_start_date:
-            return jsonify({"success": False, "error": "employee_id and week_start_date required"}), 400
-        
-        # Validate week_start_date format (YYYY-MM-DD)
-        try:
-            datetime.strptime(week_start_date, "%Y-%m-%d")
-        except ValueError:
-            return jsonify({"success": False, "error": "week_start_date must be in YYYY-MM-DD format"}), 400
-        
-        submissions = _read_ts_submissions()
-        emp_id = str(employee_id).strip().upper()
-        
-        # Check if already submitted
-        for submission in submissions:
-            if (submission.get("employee_id", "").upper() == emp_id and 
-                submission.get("week_start_date") == week_start_date):
-                current_status = submission.get("status", "DRAFT")
-                if current_status in ["SUBMITTED", "APPROVED"]:
-                    return jsonify({"success": False, "error": "Timesheet already submitted"}), 400
-                # Update existing submission
-                submission["status"] = "SUBMITTED"
-                submission["submitted_at"] = _now_iso()
-                submission["submitted_by"] = submitted_by.upper()
-                break
-        else:
-            # Create new submission
-            week_info = _get_week_start_end(week_start_date)
-            new_submission = {
-                "id": f"TS-SUB-{int(datetime.now().timestamp() * 1000)}",
-                "employee_id": emp_id,
-                "week_start_date": week_start_date,
-                "week_end_date": week_info["end"],
-                "status": "SUBMITTED",
-                "submitted_at": _now_iso(),
-                "submitted_by": submitted_by.upper(),
-                "approved_at": None,
-                "approved_by": None,
-                "rejection_reason": None
-            }
-            submissions.append(new_submission)
-        
-        _write_ts_submissions(submissions)
-        
-        print(f"[TIMESHEET] Submitted timesheet: {emp_id} for week {week_start_date}")
-        return jsonify({"success": True, "message": "Timesheet submitted successfully"}), 200
-        
-    except Exception as e:
-        print(f"[TIMESHEET] Submit error: {e}")
-        return jsonify({"success": False, "error": str(e)}), 500
-
-
-@bp_time.route("/timesheet/approve", methods=["POST"])
-def approve_timesheet_week():
-    """Approve a submitted timesheet (admin only)."""
-    try:
-        body = request.get_json(force=True) or {}
-        employee_id = (body.get("employee_id") or "").strip()
-        week_start_date = (body.get("week_start_date") or "").strip()
-        approved_by = (body.get("approved_by") or "").strip()
-        
-        if not employee_id or not week_start_date or not approved_by:
-            return jsonify({"success": False, "error": "employee_id, week_start_date, and approved_by required"}), 400
-        
-        submissions = _read_ts_submissions()
-        emp_id = str(employee_id).strip().upper()
-        updated = False
-        
-        for submission in submissions:
-            if (submission.get("employee_id", "").upper() == emp_id and 
-                submission.get("week_start_date") == week_start_date):
-                if submission.get("status") != "SUBMITTED":
-                    return jsonify({"success": False, "error": "Only submitted timesheets can be approved"}), 400
-                
-                submission["status"] = "APPROVED"
-                submission["approved_at"] = _now_iso()
-                submission["approved_by"] = approved_by.upper()
-                updated = True
-                break
-        
-        if not updated:
-            return jsonify({"success": False, "error": "Submitted timesheet not found"}), 404
-        
-        _write_ts_submissions(submissions)
-        
-        print(f"[TIMESHEET] Approved timesheet: {emp_id} for week {week_start_date} by {approved_by}")
-        return jsonify({"success": True, "message": "Timesheet approved successfully"}), 200
-        
-    except Exception as e:
-        print(f"[TIMESHEET] Approve error: {e}")
-        return jsonify({"success": False, "error": str(e)}), 500
-
-
-@bp_time.route("/timesheet/reject", methods=["POST"])
-def reject_timesheet_week():
-    """Reject a submitted timesheet and unlock it (admin only)."""
-    try:
-        body = request.get_json(force=True) or {}
-        employee_id = (body.get("employee_id") or "").strip()
-        week_start_date = (body.get("week_start_date") or "").strip()
-        rejected_by = (body.get("rejected_by") or "").strip()
-        rejection_reason = (body.get("rejection_reason") or "").strip()
-        
-        if not employee_id or not week_start_date or not rejected_by:
-            return jsonify({"success": False, "error": "employee_id, week_start_date, and rejected_by required"}), 400
-        
-        submissions = _read_ts_submissions()
-        emp_id = str(employee_id).strip().upper()
-        updated = False
-        
-        for submission in submissions:
-            if (submission.get("employee_id", "").upper() == emp_id and 
-                submission.get("week_start_date") == week_start_date):
-                if submission.get("status") != "SUBMITTED":
-                    return jsonify({"success": False, "error": "Only submitted timesheets can be rejected"}), 400
-                
-                submission["status"] = "REJECTED"
-                submission["approved_at"] = None
-                submission["approved_by"] = None
-                submission["rejection_reason"] = rejection_reason
-                updated = True
-                break
-        
-        if not updated:
-            return jsonify({"success": False, "error": "Submitted timesheet not found"}), 404
-        
-        _write_ts_submissions(submissions)
-        
-        print(f"[TIMESHEET] Rejected timesheet: {emp_id} for week {week_start_date} by {rejected_by}")
-        return jsonify({"success": True, "message": "Timesheet rejected and unlocked"}), 200
-        
-    except Exception as e:
-        print(f"[TIMESHEET] Reject error: {e}")
-        return jsonify({"success": False, "error": str(e)}), 500
-
-
-@bp_time.route("/timesheet/status", methods=["GET"])
-def get_timesheet_status():
-    """Get timesheet status for an employee and week."""
-    try:
-        employee_id = (request.args.get("employee_id") or "").strip()
-        week_start_date = (request.args.get("week_start_date") or "").strip()
-        
-        if not employee_id:
-            return jsonify({"success": False, "error": "employee_id required"}), 400
-        
-        # If no week_start_date provided, use current week
-        if not week_start_date:
-            week_info = _get_week_start_end()
-            week_start_date = week_info["start"]
-        
-        # Validate week_start_date format
-        try:
-            datetime.strptime(week_start_date, "%Y-%m-%d")
-        except ValueError:
-            return jsonify({"success": False, "error": "week_start_date must be in YYYY-MM-DD format"}), 400
-        
-        submissions = _read_ts_submissions()
-        emp_id = str(employee_id).strip().upper()
-        
-        for submission in submissions:
-            if (submission.get("employee_id", "").upper() == emp_id and 
-                submission.get("week_start_date") == week_start_date):
-                week_info = _get_week_start_end(week_start_date)
-                return jsonify({
-                    "success": True,
-                    "status": submission.get("status", "DRAFT"),
-                    "week_start_date": week_start_date,
-                    "week_end_date": week_info["end"],
-                    "is_locked": submission.get("status") in ["SUBMITTED", "APPROVED"],
-                    "submitted_at": submission.get("submitted_at"),
-                    "approved_at": submission.get("approved_at"),
-                    "rejection_reason": submission.get("rejection_reason")
-                }), 200
-        
-        # No submission found - return default DRAFT status
-        week_info = _get_week_start_end(week_start_date)
-        return jsonify({
-            "success": True,
-            "status": "DRAFT",
-            "week_start_date": week_start_date,
-            "week_end_date": week_info["end"],
-            "is_locked": False,
-            "submitted_at": None,
-            "approved_at": None,
-            "rejection_reason": None
-        }), 200
-        
-    except Exception as e:
-        print(f"[TIMESHEET] Status check error: {e}")
         return jsonify({"success": False, "error": str(e)}), 500

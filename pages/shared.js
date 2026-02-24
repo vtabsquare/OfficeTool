@@ -545,36 +545,6 @@ export const renderMyTasksPage = async () => {
     const getPersistedSecs = (guid) => { try { return Number(localStorage.getItem(PER_TASK_KEY(empId, guid, todayStr())) || '0') || 0; } catch { return 0; } };
     const setPersistedSecs = (guid, secs) => { try { localStorage.setItem(PER_TASK_KEY(empId, guid, todayStr()), String(Math.max(0, secs | 0))); } catch { } };
 
-    // Timesheet locking helper functions
-    const getWeekStartDate = (date = new Date()) => {
-        const d = new Date(date);
-        const day = d.getDay();
-        const diff = d.getDate() - day + (day === 0 ? -6 : 1);
-        const monday = new Date(d.setDate(diff));
-        return monday.toISOString().split('T')[0];
-    };
-
-    const getTimesheetStatus = async (employeeId, weekStartDate) => {
-        try {
-            const params = new URLSearchParams();
-            params.set('employee_id', employeeId);
-            if (weekStartDate) params.set('week_start_date', weekStartDate);
-            
-            const res = await fetch(`${API}/timesheet/status?${params.toString()}`);
-            const data = await res.json().catch(() => ({ success: false }));
-            return res.ok && data.success ? data : null;
-        } catch (err) {
-            console.error('Failed to get timesheet status:', err);
-            return null;
-        }
-    };
-
-    const isCurrentWeekLocked = async () => {
-        const currentWeek = getWeekStartDate();
-        const status = await getTimesheetStatus(empId, currentWeek);
-        return status ? status.is_locked : false;
-    };
-
     const postTimesheetLog = async ({ seconds, task, started_at = null, ended_at = null }) => {
         console.log('[MY_TASKS] postTimesheetLog called with:', { seconds, task, started_at, ended_at });
         const body = {
@@ -723,13 +693,6 @@ export const renderMyTasksPage = async () => {
             // Clear active
             clearActive();
         }
-        // Check if current week is locked before starting a new timer
-        const weekLocked = await isCurrentWeekLocked();
-        if (weekLocked) {
-            showToast('Timesheet for this week is locked and cannot be modified', 'error');
-            return;
-        }
-        
         // Start or resume this task
         if (cur && cur.task_guid === t.guid && cur.paused) {
             // Resume from paused state
@@ -764,31 +727,28 @@ export const renderMyTasksPage = async () => {
     };
 
     let timerInterval = null;
-    const updateTimers = () => {
-    const active = getActive();
-    if (!active) return;
 
-    document.querySelectorAll('tr[data-guid] .tt-time').forEach(cell => {
-        const tr = cell.closest('tr');
-        const guid = tr?.getAttribute('data-guid');
-        if (guid === active.task_guid) {
-            let totalSecs = active.accumulated || 0;
-            if (!active.paused && active.started_at) {
-                totalSecs += Math.floor((Date.now() - Number(active.started_at)) / 1000);
+    const updateTimers = () => {
+        const active = getActive();
+        if (!active) return;
+
+        document.querySelectorAll('tr[data-guid] .tt-time').forEach(cell => {
+            const tr = cell.closest('tr');
+            const guid = tr?.getAttribute('data-guid');
+            if (guid === active.task_guid) {
+                let totalSecs = active.accumulated || 0;
+                if (!active.paused && active.started_at) {
+                    totalSecs += Math.floor((Date.now() - Number(active.started_at)) / 1000);
+                }
+                const color = active.paused ? '#f39c12' : '#d63031';
+                cell.innerHTML = `<span class="running" style="color:${color}; font-weight:600;">${fmt(totalSecs)}</span>`;
             }
-            const color = active.paused ? '#f39c12' : '#d63031';
-            cell.innerHTML = `<span class="running" style="color:${color}; font-weight:600;">${fmt(totalSecs)}</span>`;
-        }
-    });
+        });
     };
 
     const render = async () => {
         await loadTasks();
         const active = getActive();
-        
-        // Check if current week is locked for visual indicators
-        const weekLocked = await isCurrentWeekLocked();
-        
         const rows = tasks.map(t => {
             const proj = projectsIdx[t.project_id] || {};
             const clientName = proj.client || '';
@@ -805,9 +765,8 @@ export const renderMyTasksPage = async () => {
             }
             const color = isPaused ? '#f39c12' : '#d63031';
             const timeText = (isRunning || isPaused || runSecs > 0) ? `<span class="running" style="color:${color}; font-weight:600;">${fmt(runSecs)}</span>` : '-';
-            const toggleIcon = isRunning ? 'fa-pause' : (weekLocked ? 'fa-lock' : 'fa-play');
-            const toggleTitle = isRunning ? 'Pause' : (isPaused ? 'Resume' : (weekLocked ? 'Week locked' : 'Start'));
-            const isButtonDisabled = weekLocked && !isRunning && !isPaused;
+            const toggleIcon = isRunning ? 'fa-pause' : 'fa-play';
+            const toggleTitle = isRunning ? 'Pause' : (isPaused ? 'Resume' : 'Start');
             const canNavigate = !!t.project_id;
 
             const taskLabel = `
