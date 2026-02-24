@@ -511,6 +511,11 @@ def list_my_tasks():
             except Exception:
                 pass
 
+            # Completed tasks should not appear in My Tasks.
+            task_status = str(rec.get("task_status") or "").strip().lower()
+            if task_status == "completed":
+                continue
+
             # Remove internal fields
             rec.pop("_task_statecode", None)
             rec.pop("_task_statuscode", None)
