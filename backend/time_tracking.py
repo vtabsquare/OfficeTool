@@ -35,86 +35,6 @@ def _normalize_status(val: str) -> str:
     return s
 
 
-def _week_start(date_str: str):
-    """Return ISO date string (YYYY-MM-DD) for the Monday of the given date."""
-    try:
-        dt = datetime.strptime(date_str, "%Y-%m-%d")
-    except Exception:
-        return None
-    monday = dt - timedelta(days=dt.weekday())  # weekday(): Monday=0
-    return monday.date().isoformat()
-
-
-def _compute_week_status(employee_id, week_start, entries=None, persist_updates=True):
-    if not employee_id or not week_start:
-        return None
-
-    entries = entries if entries is not None else _read_ts_entries()
-    matched = []
-    updated_cache = False
-    employee_id_upper = str(employee_id).upper()
-
-    for rec in entries:
-        rec_emp = str(rec.get("employee_id") or "").upper()
-        if rec_emp != employee_id_upper:
-            continue
-        rec_week = rec.get("week_start")
-        if not rec_week:
-            date = rec.get("date")
-            if date:
-                rec_week = _week_start(date)
-                rec["week_start"] = rec_week
-                updated_cache = True
-        if rec_week == week_start:
-            matched.append(rec)
-
-    if updated_cache and persist_updates:
-        _write_ts_entries(entries)
-
-    if not matched:
-        return {
-            "status": "unsubmitted",
-            "locked": False,
-            "counts": {"pending": 0, "accepted": 0, "rejected": 0, "total": 0},
-            "rejection_comment": "",
-        }
-
-    pending = sum(1 for r in matched if str(r.get("status") or "").lower() == "pending")
-    accepted = sum(1 for r in matched if str(r.get("status") or "").lower() == "accepted")
-    rejected = sum(1 for r in matched if str(r.get("status") or "").lower() == "rejected")
-    total = len(matched)
-
-    status = "submitted"
-    locked = True
-    if pending:
-        status = "pending"
-    elif accepted and not rejected:
-        status = "accepted"
-    elif rejected == total:
-        status = "rejected"
-        locked = False
-    elif rejected and not (pending or accepted):
-        status = "rejected"
-        locked = False
-
-    rejection_comment = ""
-    if status == "rejected":
-        latest_rejection = max(
-            (r for r in matched if str(r.get("status") or "").lower() == "rejected"),
-            key=lambda r: r.get("decided_at") or "",
-            default=None,
-        )
-        if latest_rejection:
-            rejection_comment = latest_rejection.get("reject_comment") or ""
-
-    return {
-        "status": status,
-        "locked": locked,
-        "counts": {"pending": pending, "accepted": accepted, "rejected": rejected, "total": total},
-        "rejection_comment": rejection_comment,
-    }
-
-
 def _fetch_projects_index(project_ids, headers):
     """Return (existing_ids_set, status_by_id, inactive_ids_set)."""
     pids = [str(x).strip() for x in (project_ids or []) if str(x).strip()]
@@ -720,22 +640,6 @@ def create_task_log():
         if not segments:
             return jsonify({"success": False, "error": "No time segments to log"}), 400
         
-        ts_entries = _read_ts_entries()
-        locked_weeks = {}
-        for seg_work_date, _seg_seconds in segments:
-            week_start = _week_start(seg_work_date)
-            if not week_start:
-                continue
-            if week_start not in locked_weeks:
-                state = _compute_week_status(employee_id, week_start, entries=ts_entries, persist_updates=False)
-                locked_weeks[week_start] = state
-            state = locked_weeks.get(week_start) or {}
-            if state.get("locked"):
-                return jsonify({
-                    "success": False,
-                    "error": f"Timesheet for week starting {week_start} is already submitted. Await admin review before logging additional time."
-                }), 409
-
         def upsert_segment(seg_work_date: str, seg_seconds: int):
             # Convert seconds to hours (decimal)
             hours_worked = round(seg_seconds / 3600, 2)
@@ -1129,14 +1033,11 @@ def submit_timesheet():
             except Exception:
                 hours_val = round(seconds / 3600, 2)
 
-            week_start = _week_start(date)
-
             rec = {
                 "id": f"TS-{base_ts + idx}",
                 "employee_id": employee_id,
                 "employee_name": employee_name,
                 "date": date,
-                "week_start": week_start,
                 "project_id": (item.get("project_id") or "").strip(),
                 "project_name": item.get("project_name") or "",
                 "task_id": (item.get("task_id") or "").strip(),
@@ -1159,24 +1060,6 @@ def submit_timesheet():
 
         _write_ts_entries(entries)
         return jsonify({"success": True, "items": created, "count": len(created)}), 201
-    except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
-
-
-@bp_time.route("/time-tracker/timesheet/status", methods=["GET"])
-def get_timesheet_status():
-    """Return aggregated status for a given employee/week."""
-    try:
-        employee_id = (request.args.get("employee_id") or "").strip()
-        week_start = (request.args.get("week_start") or "").strip()
-        if not employee_id or not week_start:
-            return jsonify({"success": False, "error": "employee_id and week_start required"}), 400
-
-        state = _compute_week_status(employee_id, week_start)
-        if state is None:
-            return jsonify({"success": False, "error": "Unable to compute status"}), 500
-
-        return jsonify({"success": True, **state}), 200
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
 
