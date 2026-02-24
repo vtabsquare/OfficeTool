@@ -775,6 +775,25 @@ export const renderMyTasksPage = async () => {
             let totalSecs = active.accumulated || 0;
             if (!active.paused && active.started_at) {
                 totalSecs += Math.floor((Date.now() - Number(active.started_at)) / 1000);
+            }
+            const color = active.paused ? '#f39c12' : '#d63031';
+            cell.innerHTML = `<span class="running" style="color:${color}; font-weight:600;">${fmt(totalSecs)}</span>`;
+        }
+    });
+    };
+
+    const render = async () => {
+        await loadTasks();
+        const active = getActive();
+        
+        // Check if current week is locked for visual indicators
+        const weekLocked = await isCurrentWeekLocked();
+        
+        const rows = tasks.map(t => {
+            const proj = projectsIdx[t.project_id] || {};
+            const clientName = proj.client || '';
+            const projectName = proj.name || (t.project_id || '');
+            const isRunning = active && active.task_guid === t.guid && !active.paused;
             const isPaused = active && active.task_guid === t.guid && active.paused;
 
             let runSecs = getPersistedSecs(t.guid);
