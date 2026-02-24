@@ -197,27 +197,51 @@ export async function performCheckOut(employeeId, location = null) {
                             const stopResult = await stopResponse.json();
                             console.log('[ATTENDANCE-RENDERER] Task timer stopped successfully from backend:', stopResult);
                             
-                            // Clear localStorage active task data and refresh UI
+                            // Comprehensive cleanup and UI refresh
                             try {
                                 const user = state?.user || window.state?.user || {};
                                 const empId = String((user.id || user.employee_id || user.employeeId || '')).trim();
                                 const activeKey = `tt_active_${empId}`;
                                 
-                                // Clear the active task from localStorage
-                                localStorage.removeItem(activeKey);
-                                console.log('[ATTENDANCE-RENDERER] Cleared active task from localStorage');
+                                // Clear all timer-related localStorage keys for this user
+                                console.log('[ATTENDANCE-RENDERER] Clearing all timer-related localStorage keys...');
                                 
-                                // Force a page refresh to update the UI
-                                // Check if we're currently on the My Tasks page
+                                // Clear active task
+                                localStorage.removeItem(activeKey);
+                                
+                                // Clear any accumulated time keys for today
+                                const today = new Date();
+                                const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+                                
+                                // Find and clear all timer-related keys for this user
+                                const keysToRemove = [];
+                                for (let i = 0; i < localStorage.length; i++) {
+                                    const key = localStorage.key(i);
+                                    if (key && (key.includes('tt_active_') || key.includes('tt_accum_')) && key.toLowerCase().includes(empId.toLowerCase())) {
+                                        keysToRemove.push(key);
+                                    }
+                                }
+                                
+                                keysToRemove.forEach(key => {
+                                    localStorage.removeItem(key);
+                                    console.log(`[ATTENDANCE-RENDERER] Removed key: ${key}`);
+                                });
+                                
+                                console.log('[ATTENDANCE-RENDERER] Cleared all timer-related localStorage keys');
+                                
+                                // Force a page refresh to update the UI with delay to ensure backend sync
                                 if (window.location.hash === '#/time-my-tasks' || window.location.hash === '#/time-my-tasks/') {
-                                    console.log('[ATTENDANCE-RENDERER] On My Tasks page, forcing refresh');
+                                    console.log('[ATTENDANCE-RENDERER] On My Tasks page, forcing refresh after delay...');
                                     
-                                    // Trigger a hash change to refresh the page
-                                    const currentHash = window.location.hash;
-                                    window.location.hash = '#/';
+                                    // Wait a moment for backend to fully sync, then refresh
                                     setTimeout(() => {
-                                        window.location.hash = currentHash;
-                                    }, 100);
+                                        const currentHash = window.location.hash;
+                                        console.log('[ATTENDANCE-RENDERER] Triggering page refresh now');
+                                        window.location.hash = '#/';
+                                        setTimeout(() => {
+                                            window.location.hash = currentHash;
+                                        }, 50);
+                                    }, 500);
                                 } else {
                                     console.log('[ATTENDANCE-RENDERER] Not on My Tasks page, UI will update when user navigates there');
                                 }
