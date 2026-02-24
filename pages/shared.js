@@ -435,6 +435,17 @@ export const renderMyTasksPage = async () => {
 
     console.log('My Tasks - User:', user);
     console.log('My Tasks - Employee ID:', empId);
+    
+    // Debug: Check for any active timer state on page load
+    console.log('My Tasks - Debugging timer state on load:');
+    console.log('- All localStorage keys containing timer:');
+    for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && (key.includes('tt_') || key.includes('timer') || key.includes('active'))) {
+            console.log(`  - ${key}: ${localStorage.getItem(key)}`);
+        }
+    }
+    
     if (!empId) {
         try { empId = await resolveCurrentEmployeeId(); } catch { }
         if (empId) { try { state.user = { ...(state.user || {}), id: empId }; } catch { } }

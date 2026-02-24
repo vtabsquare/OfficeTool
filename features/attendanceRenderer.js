@@ -222,6 +222,21 @@ export async function performCheckOut(employeeId, location = null) {
                                 // Force complete page reload after a short delay
                                 setTimeout(() => {
                                     console.log('[ATTENDANCE-RENDERER] Reloading page to clear all timer state');
+                                    
+                                    // Add debugging info before reload
+                                    console.log('[ATTENDANCE-RENDERER] Pre-reload debug:');
+                                    console.log('- Current hash:', window.location.hash);
+                                    console.log('- All localStorage keys:');
+                                    for (let i = 0; i < localStorage.length; i++) {
+                                        const key = localStorage.key(i);
+                                        console.log(`  - ${key}: ${localStorage.getItem(key)}`);
+                                    }
+                                    console.log('- SessionStorage keys:');
+                                    for (let i = 0; i < sessionStorage.length; i++) {
+                                        const key = sessionStorage.key(i);
+                                        console.log(`  - ${key}: ${sessionStorage.getItem(key)}`);
+                                    }
+                                    
                                     window.location.reload();
                                 }, 300);
                                 
