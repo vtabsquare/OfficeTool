@@ -656,9 +656,7 @@ async function showActionSuccess(actionResult) {
         console.log(`[AI] Starting task timer for: ${actionResult.task_name || actionResult.task_id}`);
         
         try {
-            // Use the same logic as My Tasks page for consistency
-            const user = state?.user || window.state?.user || {};
-            const empId = String((user.id || user.employee_id || user.employeeId || '')).trim();
+            const empId = String(state.user?.id || '').toUpperCase();
             const taskGuid = actionResult.task_guid;
             const taskId = actionResult.task_id;
             const taskName = actionResult.task_name;
@@ -728,9 +726,7 @@ async function showActionSuccess(actionResult) {
         console.log('[AI] Stopping task timer');
         
         try {
-            // Use the same logic as My Tasks page for consistency
-            const user = state?.user || window.state?.user || {};
-            const empId = String((user.id || user.employee_id || user.employeeId || '')).trim();
+            const empId = String(state.user?.id || '').toUpperCase();
             const activeKey = `tt_active_${empId}`;
             const activeRaw = localStorage.getItem(activeKey);
             

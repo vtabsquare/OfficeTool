@@ -565,22 +565,13 @@ def start_timer():
         return jsonify({"success": False, "error": "task_guid and user_id required"}), 400
 
     entries = _read_entries()
-    now_iso = _now_iso()
-    
-    # Debug: Show all active entries before start
-    active_entries = [e for e in entries if e.get("user_id") == user_id and not e.get("end")]
-    print(f"[BACKEND START] Active entries for user {user_id} before start: {len(active_entries)}")
-    for e in active_entries:
-        print(f"  - task_guid: {e.get('task_guid')}, start: {e.get('start')}")
-    
-    # Stop all existing timers for this user (existing logic)
+    # stop any other active entries for this user (single active guard)
     changed = False
+    now_iso = _now_iso()
     for e in entries:
         if e.get("user_id") == user_id and not e.get("end"):
             e["end"] = now_iso
             changed = True
-            print(f"[BACKEND START] Stopped existing timer: task_guid={e.get('task_guid')}")
-    
     new_entry = {
         "id": f"TE-{int(datetime.now().timestamp()*1000)}",
         "task_guid": task_guid,
@@ -589,18 +580,7 @@ def start_timer():
         "end": None,
     }
     entries.append(new_entry)
-    
-    print(f"[BACKEND START] Created new timer: task_guid={task_guid}, user_id={user_id}")
-    
     _write_entries(entries)
-    
-    # Debug: Show all active entries after start
-    entries_after = _read_entries()
-    active_after = [e for e in entries_after if e.get("user_id") == user_id and not e.get("end")]
-    print(f"[BACKEND START] Active entries for user {user_id} after start: {len(active_after)}")
-    for e in active_after:
-        print(f"  - task_guid: {e.get('task_guid')}, start: {e.get('start')}")
-    
     return jsonify({"success": True, "entry": new_entry})
 
 
@@ -615,29 +595,13 @@ def stop_timer():
     entries = _read_entries()
     now_iso = _now_iso()
     stopped = None
-    
-    # Debug: Show all active entries for this user
-    active_entries = [e for e in entries if e.get("user_id") == user_id and not e.get("end")]
-    print(f"[BACKEND] Active entries for user {user_id}: {len(active_entries)}")
-    for e in active_entries:
-        print(f"  - task_guid: {e.get('task_guid')}, start: {e.get('start')}")
-    
     for e in entries:
         if e.get("user_id") == user_id and e.get("task_guid") == task_guid and not e.get("end"):
             e["end"] = now_iso
             stopped = e
-            print(f"[BACKEND] Stopped entry: task_guid={task_guid}, user_id={user_id}")
             break
     if not stopped:
-        print(f"[BACKEND] No active timer found for task_guid={task_guid}, user_id={user_id}")
         return jsonify({"success": False, "error": "No active timer for this task"}), 400
-    
-    # Debug: Check remaining active entries after stop
-    remaining_active = [e for e in entries if e.get("user_id") == user_id and not e.get("end")]
-    print(f"[BACKEND] Remaining active entries after stop: {len(remaining_active)}")
-    for e in remaining_active:
-        print(f"  - task_guid: {e.get('task_guid')}, start: {e.get('start')}")
-    
     _write_entries(entries)
     return jsonify({"success": True, "entry": stopped})
 

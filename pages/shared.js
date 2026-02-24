@@ -435,37 +435,6 @@ export const renderMyTasksPage = async () => {
 
     console.log('My Tasks - User:', user);
     console.log('My Tasks - Employee ID:', empId);
-    
-    // Debug: Check for any active timer state on page load
-    console.log('My Tasks - Debugging timer state on load:');
-    console.log('- All localStorage keys containing timer:');
-    for (let i = 0; i < localStorage.length; i++) {
-        const key = localStorage.key(i);
-        if (key && (key.includes('tt_') || key.includes('timer') || key.includes('active'))) {
-            console.log(`  - ${key}: ${localStorage.getItem(key)}`);
-        }
-    }
-    
-    // Debug: Check if My Tasks page is checking backend timer status
-    console.log('My Tasks - Monitoring backend timer status calls...');
-    
-    // Override fetch to log timer-related API calls
-    const originalFetch = window.fetch;
-    window.fetch = function(...args) {
-        const url = args[0];
-        if (typeof url === 'string' && (url.includes('/time-entries/status') || url.includes('/time-entries'))) {
-            console.log('My Tasks - Timer API call detected:', url, args[1]);
-        }
-        return originalFetch.apply(this, args).then(response => {
-            if (typeof url === 'string' && (url.includes('/time-entries/status') || url.includes('/time-entries'))) {
-                response.clone().json().then(data => {
-                    console.log('My Tasks - Timer API response:', data);
-                }).catch(() => {});
-            }
-            return response;
-        });
-    };
-    
     if (!empId) {
         try { empId = await resolveCurrentEmployeeId(); } catch { }
         if (empId) { try { state.user = { ...(state.user || {}), id: empId }; } catch { } }
