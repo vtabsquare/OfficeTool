@@ -141,8 +141,15 @@ export async function performCheckOut(employeeId, location = null) {
         const activeKey = `tt_active_${empId}`;
         const activeData = localStorage.getItem(activeKey);
         
+        console.log('[ATTENDANCE-RENDERER] Checking for active task timers before checkout...');
+        console.log('[ATTENDANCE-RENDERER] Employee ID:', empId);
+        console.log('[ATTENDANCE-RENDERER] Active key:', activeKey);
+        console.log('[ATTENDANCE-RENDERER] Active data found:', !!activeData);
+        
         if (activeData) {
             const activeTask = JSON.parse(activeData);
+            console.log('[ATTENDANCE-RENDERER] Active task data:', activeTask);
+            
             // Check if there's a running task timer (not paused)
             if (activeTask.task_guid && !activeTask.paused) {
                 console.log('[ATTENDANCE-RENDERER] Pausing active task timer before checkout:', activeTask.task_guid);
@@ -152,23 +159,29 @@ export async function performCheckOut(employeeId, location = null) {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        employee_id: empId,
                         task_guid: activeTask.task_guid,
-                        task_id: activeTask.task_id
+                        user_id: empId
                     })
                 });
+                
+                console.log('[ATTENDANCE-RENDERER] Stop response status:', stopResponse.status);
                 
                 if (stopResponse.ok) {
                     // Clear the active task from localStorage
                     localStorage.removeItem(activeKey);
                     console.log('[ATTENDANCE-RENDERER] Task timer paused successfully before checkout');
                 } else {
-                    console.warn('[ATTENDANCE-RENDERER] Failed to pause task timer before checkout');
+                    const errorData = await stopResponse.json().catch(() => ({}));
+                    console.warn('[ATTENDANCE-RENDERER] Failed to pause task timer before checkout:', stopResponse.status, errorData);
                 }
+            } else {
+                console.log('[ATTENDANCE-RENDERER] No running task timer found - task is paused or no task_guid');
             }
+        } else {
+            console.log('[ATTENDANCE-RENDERER] No active task data found in localStorage');
         }
     } catch (error) {
-        console.warn('[ATTENDANCE-RENDERER] Error checking/pausing task timer before checkout:', error);
+        console.error('[ATTENDANCE-RENDERER] Error checking/pausing task timer before checkout:', error);
         // Continue with checkout even if task timer pause fails
     }
     
