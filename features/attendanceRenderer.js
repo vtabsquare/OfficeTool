@@ -214,31 +214,33 @@ export async function performCheckOut(employeeId, location = null) {
                                     }
                                 }
                                 
+                                console.log('[ATTENDANCE-RENDERER] Keys to remove:', keysToRemove);
+                                
+                                // Remove keys immediately and verify removal
                                 keysToRemove.forEach(key => {
                                     localStorage.removeItem(key);
-                                    console.log(`[ATTENDANCE-RENDERER] Aggressively removed key: ${key}`);
+                                    console.log(`[ATTENDANCE-RENDERER] Removed key: ${key}, still exists: ${!!localStorage.getItem(key)}`);
                                 });
                                 
-                                // Force complete page reload after a short delay
-                                setTimeout(() => {
-                                    console.log('[ATTENDANCE-RENDERER] Reloading page to clear all timer state');
-                                    
-                                    // Add debugging info before reload
-                                    console.log('[ATTENDANCE-RENDERER] Pre-reload debug:');
-                                    console.log('- Current hash:', window.location.hash);
-                                    console.log('- All localStorage keys:');
-                                    for (let i = 0; i < localStorage.length; i++) {
-                                        const key = localStorage.key(i);
-                                        console.log(`  - ${key}: ${localStorage.getItem(key)}`);
+                                // Verify all keys are actually removed before proceeding
+                                let remainingKeys = [];
+                                for (let i = 0; i < localStorage.length; i++) {
+                                    const key = localStorage.key(i);
+                                    if (key && (key.includes('tt_') || key.includes('timer') || key.includes('active'))) {
+                                        remainingKeys.push(key);
                                     }
-                                    console.log('- SessionStorage keys:');
-                                    for (let i = 0; i < sessionStorage.length; i++) {
-                                        const key = sessionStorage.key(i);
-                                        console.log(`  - ${key}: ${sessionStorage.getItem(key)}`);
-                                    }
-                                    
+                                }
+                                
+                                console.log('[ATTENDANCE-RENDERER] Remaining timer keys after cleanup:', remainingKeys);
+                                
+                                if (remainingKeys.length === 0) {
+                                    console.log('[ATTENDANCE-RENDERER] All timer keys cleared successfully, proceeding with reload');
+                                    // Force complete page reload immediately
                                     window.location.reload();
-                                }, 300);
+                                } else {
+                                    console.error('[ATTENDANCE-RENDERER] Failed to clear some timer keys, forcing reload anyway');
+                                    window.location.reload();
+                                }
                                 
                             } catch (reloadError) {
                                 console.error('[ATTENDANCE-RENDERER] Error during page reload:', reloadError);
