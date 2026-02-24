@@ -135,6 +135,43 @@ export async function performCheckOut(employeeId, location = null) {
         throw new Error('Employee ID required');
     }
     
+    // Check for and pause any running task timers before checkout
+    try {
+        const empId = String(employeeId).toUpperCase();
+        const activeKey = `tt_active_${empId}`;
+        const activeData = localStorage.getItem(activeKey);
+        
+        if (activeData) {
+            const activeTask = JSON.parse(activeData);
+            // Check if there's a running task timer (not paused)
+            if (activeTask.task_guid && !activeTask.paused) {
+                console.log('[ATTENDANCE-RENDERER] Pausing active task timer before checkout:', activeTask.task_guid);
+                
+                // Stop the task timer
+                const stopResponse = await fetch(`${BASE_URL}/api/time-entries/stop`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        employee_id: empId,
+                        task_guid: activeTask.task_guid,
+                        task_id: activeTask.task_id
+                    })
+                });
+                
+                if (stopResponse.ok) {
+                    // Clear the active task from localStorage
+                    localStorage.removeItem(activeKey);
+                    console.log('[ATTENDANCE-RENDERER] Task timer paused successfully before checkout');
+                } else {
+                    console.warn('[ATTENDANCE-RENDERER] Failed to pause task timer before checkout');
+                }
+            }
+        }
+    } catch (error) {
+        console.warn('[ATTENDANCE-RENDERER] Error checking/pausing task timer before checkout:', error);
+        // Continue with checkout even if task timer pause fails
+    }
+    
     const payload = {
         employee_id: employeeId,
         timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
