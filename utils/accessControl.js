@@ -43,6 +43,11 @@ export const getUserAccessContext = () => {
 
 export const isAdminUser = () => getUserAccessContext().isAdmin;
 
+export const isL2OrL3User = () => {
+  const { role, isAdmin } = getUserAccessContext();
+  return isAdmin || role === 'L2' || role === 'L3';
+};
+
 export const isManagerOrAdmin = () => {
   const { isAdmin, isManager } = getUserAccessContext();
   return isAdmin || isManager;

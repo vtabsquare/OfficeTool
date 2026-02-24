@@ -5,7 +5,7 @@ import { getPageContentHTML } from '../utils.js';
 import { renderModal, closeModal } from '../components/modal.js';
 import { listLoginAccounts, createLoginAccount, updateLoginAccount, deleteLoginAccount, fetchLoginEvents, updateLoginActivity } from '../features/loginSettingsApi.js';
 import { listAllEmployees } from '../features/employeeApi.js';
-import { isAdminUser } from '../utils/accessControl.js';
+import { isAdminUser, isL2OrL3User } from '../utils/accessControl.js';
 
 let currentLoginSettingsView = 'accounts';
 let cachedLoginAccounts = [];
@@ -700,13 +700,14 @@ const attachRowHandlers = (accounts) => {
 export const renderLoginSettingsPage = async () => {
     console.log('⚙️ Rendering Login Settings Page...');
 
-    if (!isAdminUser()) {
+    // Check if user is admin or L2/L3
+    if (!isL2OrL3User()) {
         const content = `
             <div class="card">
                 <div class="access-denied-content">
                     <i class="fa-solid fa-lock fa-3x error-icon"></i>
                     <h3 class="error-heading">Access Denied</h3>
-                    <p>Login Settings is only accessible to administrators.</p>
+                    <p>Login Settings is only accessible to administrators, managers, and team leads.</p>
                     <p class="access-denied-note">Please contact your administrator if you need access.</p>
                 </div>
             </div>

@@ -1,9 +1,10 @@
 import { state } from '../state.js';
-import { isAdminUser, isL3User, isManagerOrAdmin } from '../utils/accessControl.js';
+import { isAdminUser, isL3User, isManagerOrAdmin, isL2OrL3User } from '../utils/accessControl.js';
 
 export const getSidebarHTML = () => {
     const isAdmin = isAdminUser();
     const isL3 = isL3User();
+    const isL2OrL3 = isL2OrL3User();
     const canManage = isManagerOrAdmin();
     
     return `
@@ -58,12 +59,12 @@ export const getSidebarHTML = () => {
                 <li><a href="#/time-my-tasks" class="nav-link" data-page="time-my-tasks">My Tasks</a></li>
                 <li><a href="#/time-my-timesheet" class="nav-link" data-page="time-my-timesheet">My Timesheet</a></li>
                 ${
-                  isAdmin
+                  isL2OrL3
                     ? '<li><a href="#/time-team-timesheet" class="nav-link" data-page="time-team-timesheet">My Team Timesheet</a></li>'
                     : ""
                 }
                 ${
-                  isL3
+                  isL2OrL3
                     ? '<li><a href="#/time-clients" class="nav-link" data-page="time-clients">Clients</a></li>'
                     : ""
                 }
@@ -82,7 +83,7 @@ export const getSidebarHTML = () => {
             <ul class="nav-submenu">
                 <li><a href="#/attendance-my" class="nav-link" data-page="attendance-my">My Attendance</a></li>
                 ${
-                  isAdmin
+                  isL2OrL3
                     ? '<li><a href="#/attendance-team" class="nav-link" data-page="attendance-team">My Team Attendance</a></li>'
                     : ""
                 }
@@ -101,7 +102,7 @@ export const getSidebarHTML = () => {
             <ul class="nav-submenu">
                 <li><a href="#/leave-my" class="nav-link" data-page="leave-my">My Leaves</a></li>
                 ${
-                  isAdmin
+                  isL2OrL3
                     ? '<li><a href="#/leave-team" class="nav-link" data-page="leave-team">My Team Leaves</a></li>'
                     : ""
                 }
@@ -110,7 +111,7 @@ export const getSidebarHTML = () => {
         </li>
         <li><a href="#/assets" class="nav-link" data-page="assets"><i class="fa-solid fa-box"></i> Assets</a></li>
         ${
-          isAdmin
+          isL2OrL3
             ? `
         <li class="nav-group" data-group="settings">
             <a href="#" class="nav-link nav-toggle">

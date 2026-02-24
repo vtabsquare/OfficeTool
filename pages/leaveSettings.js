@@ -3,7 +3,7 @@ import { state } from '../state.js';
 import { getPageContentHTML } from '../utils.js';
 import { listEmployees } from '../features/employeeApi.js';
 import { renderModal, closeModal } from '../components/modal.js';
-import { isAdminUser } from '../utils/accessControl.js';
+import { isAdminUser, isL2OrL3User } from '../utils/accessControl.js';
 import { API_BASE_URL } from '../config.js';
 
 const API_BASE = `${API_BASE_URL}/api`;
@@ -719,8 +719,8 @@ const renderEmployeeAllocationTable = async () => {
 export const renderLeaveSettingsPage = async () => {
     console.log('⚙️ Rendering Leave Settings Page...');
 
-    // Check if user is admin
-    if (!isAdminUser()) {
+    // Check if user is admin or L2/L3
+    if (!isL2OrL3User()) {
         const content = `
             <div class="card">
                 <div class="access-denied-content">
