@@ -1325,18 +1325,38 @@ export const renderMyTimesheetPage = async () => {
                 </tr>`;
         }).join('');
 
-        const statusBanner = submissionStatusMsg ? `
+        let statusBanner = '';
+        const statusCode = currentWeekLockInfo.status || 'unsubmitted';
+        if (submissionStatusMsg) {
+          statusBanner = `
             <div class="ts-status-banner success">
                 <i class="fa-solid fa-circle-check"></i>
                 <span>${submissionStatusMsg}</span>
-            </div>
-        ` : '';
+            </div>`;
+        } else if (statusCode !== 'unsubmitted') {
+          let bannerClass = currentWeekLockInfo.locked ? 'info' : 'warning';
+          let bannerText = '';
+          if (statusCode === 'pending' || statusCode === 'submitted') {
+            bannerText = 'Timesheet submitted and awaiting approval. Editing is disabled until a decision is made.';
+          } else if (statusCode === 'accepted') {
+            bannerClass = 'success';
+            bannerText = 'Timesheet approved. Editing is disabled for this week.';
+          } else if (statusCode === 'rejected') {
+            bannerText = `Timesheet rejected. ${currentWeekLockInfo.rejection_comment ? `Reason: ${currentWeekLockInfo.rejection_comment}. ` : ''}Please edit and resubmit.`;
+          }
+          if (bannerText) {
+            statusBanner = `
+              <div class="ts-status-banner ${bannerClass}">
+                <i class="fa-solid fa-circle-info"></i>
+                <span>${bannerText}</span>
+              </div>`;
+          }
+        }
 
         const content = `
         <style>
             :root { --ts-blue: #1e88e5; --ts-blue-light:#e3f2fd; --ts-gray:#f3f4f6; }
             .ts-header { background: var(--ts-blue); color: #fff; padding: 16px 20px; display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; border-radius: 12px 12px 0 0; box-shadow: 0 2px 6px rgba(0,0,0,0.08); }
-            .ts-header h2 { margin:0; font-size: 18px; font-weight:700; opacity:.95; }
             .ts-week-nav { display: flex; gap: 12px; align-items: center; justify-content: center; }
             .ts-week-nav button { background: rgba(255,255,255,0.2); border: none; color: #fff; padding: 8px 12px; border-radius: 999px; cursor: pointer; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.25); }
             .ts-week-nav button:hover { background: rgba(255,255,255,0.3); }
@@ -1421,7 +1441,7 @@ export const renderMyTimesheetPage = async () => {
                     <button id="ts-next-week"><i class="fa-solid fa-chevron-right"></i></button>
                 </div>
                 <div class="ts-action-btns">
-                    <button id="ts-submit" class="btn" style="background: #fff; color: var(--primary-color); border: none; padding: 8px 20px;">SUBMIT</button>
+                    <button id="ts-submit" class="btn" style="background: #fff; color: var(--primary-color); border: none; padding: 8px 20px;" ${currentWeekLockInfo.locked ? 'disabled title="Timesheet already submitted for this week"' : ''}>SUBMIT</button>
                 </div>
             </div>
             ${statusBanner}
@@ -1447,7 +1467,7 @@ export const renderMyTimesheetPage = async () => {
                 </table>
             </div>
             <div class="ts-footer">
-                <button id="ts-add-row" class="ts-add-btn">
+                <button id="ts-add-row" class="ts-add-btn" ${currentWeekLockInfo.locked ? 'disabled title="Timesheet locked until decision"' : ''}>
                     <i class="fa-solid fa-plus"></i>
                     <span>Add row</span>
                 </button>
@@ -1467,6 +1487,10 @@ export const renderMyTimesheetPage = async () => {
         };
 
         document.getElementById('ts-add-row').onclick = () => {
+            if (currentWeekLockInfo.locked) {
+              showToast('Timesheet submitted. Editing disabled until a decision is made.');
+              return;
+            }
             const projOpts = ['<option value="">Select project</option>'].concat(projects.map(p => `<option value="${p.crc6f_projectid || p.id}">${p.crc6f_projectname || p.name || p.crc6f_projectid || p.id}</option>`)).join('');
             const taskOpts = ['<option value="">Select task</option>'].concat(tasks.map(t => `<option value="${t.guid}">${t.task_name || t.task_id}</option>`)).join('');
             const body = `
@@ -1533,6 +1557,10 @@ export const renderMyTimesheetPage = async () => {
 
         document.querySelectorAll('.ts-delete-row').forEach(btn => {
             btn.onclick = async (e) => {
+                if (currentWeekLockInfo.locked) {
+                    showToast('Timesheet submitted. Editing disabled until decision.');
+                    return;
+                }
                 const rowIdx = parseInt(e.currentTarget.getAttribute('data-row'));
                 if (confirm('Delete this row?')) {
                     // Only manual rows have delete buttons; remove from manualRows store
@@ -1546,7 +1574,16 @@ export const renderMyTimesheetPage = async () => {
 
         const submitBtn = document.getElementById('ts-submit');
         if (submitBtn) {
+            if (currentWeekLockInfo.locked) {
+                submitBtn.setAttribute('disabled', 'disabled');
+            } else {
+                submitBtn.removeAttribute('disabled');
+            }
             submitBtn.onclick = async () => {
+                if (currentWeekLockInfo.locked) {
+                    showToast('Timesheet already submitted for this week. Awaiting admin response.');
+                    return;
+                }
                 const s = startOfWeek(anchor);
                 const e = endOfWeek(anchor);
                 const weekKey = `ts_manual_${fmt(s)}_${fmt(e)}`;
@@ -1782,7 +1819,12 @@ export const renderMyTimesheetPage = async () => {
 
         document.querySelectorAll('.ts-hour-input').forEach(inp => {
             inp.addEventListener('dblclick', () => {
-                if (inp.hasAttribute('disabled')) return;
+                if (inp.hasAttribute('disabled') || currentWeekLockInfo.locked) {
+                    if (currentWeekLockInfo.locked) {
+                        showToast('Timesheet submitted. Editing disabled until a decision is made.');
+                    }
+                    return;
+                }
                 const rowIdx = parseInt(inp.getAttribute('data-row'), 10);
                 const dayIdx = parseInt(inp.getAttribute('data-day'), 10);
                 openCellEditModal(rowIdx, dayIdx);
@@ -1804,7 +1846,8 @@ export const renderMyTimesheetPage = async () => {
 
         const addRowBtn = document.getElementById('ts-add-row');
         if (addRowBtn) {
-            if (canManageMyTimesheetRows()) {
+            const canAddRow = canManageMyTimesheetRows() && !currentWeekLockInfo.locked;
+            if (canAddRow) {
                 addRowBtn.removeAttribute('disabled');
                 addRowBtn.style.opacity = '';
 
@@ -1813,9 +1856,40 @@ export const renderMyTimesheetPage = async () => {
                 addRowBtn.setAttribute('disabled', 'disabled');
                 addRowBtn.style.opacity = '0.6';
                 addRowBtn.style.cursor = 'not-allowed';
+                if (currentWeekLockInfo.locked) {
+                    addRowBtn.title = 'Timesheet submitted. Editing disabled until a decision is made.';
+                }
             }
         }
     };
+
+    let currentWeekLockInfo = { locked: false, status: 'unsubmitted', rejection_comment: '' };
+    const s = startOfWeek(anchor);
+    const e = endOfWeek(anchor);
+    const weekStartIso = fmt(s);
+    const employeeIdUpper = String(empId || '').toUpperCase();
+
+    // Fetch lock status for the week
+    let weekLock = { locked: false, status: 'unsubmitted', rejection_comment: '' };
+    if (employeeIdUpper) {
+        try {
+            const qs = new URLSearchParams({ employee_id: employeeIdUpper, week_start: weekStartIso });
+            const statusRes = await fetch(`${API}/time-tracker/timesheet/status?${qs.toString()}`);
+            const statusData = await statusRes.json().catch(() => ({}));
+            if (statusRes.ok && statusData.success) {
+                weekLock = {
+                    locked: !!statusData.locked,
+                    status: statusData.status || 'unsubmitted',
+                    rejection_comment: statusData.rejection_comment || ''
+                };
+            } else {
+                console.warn('Timesheet status lookup failed', statusData);
+            }
+        } catch (err) {
+            console.warn('Timesheet status request error', err);
+        }
+    }
+    currentWeekLockInfo = { ...weekLock };
 
     await render();
 };
