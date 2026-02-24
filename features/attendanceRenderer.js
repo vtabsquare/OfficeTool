@@ -196,6 +196,30 @@ export async function performCheckOut(employeeId, location = null) {
                         if (stopResponse.ok) {
                             const stopResult = await stopResponse.json();
                             console.log('[ATTENDANCE-RENDERER] Task timer stopped successfully from backend:', stopResult);
+                            
+                            // Clear localStorage active task data and refresh UI
+                            try {
+                                const user = state?.user || window.state?.user || {};
+                                const empId = String((user.id || user.employee_id || user.employeeId || '')).trim();
+                                const activeKey = `tt_active_${empId}`;
+                                
+                                // Clear the active task from localStorage
+                                localStorage.removeItem(activeKey);
+                                console.log('[ATTENDANCE-RENDERER] Cleared active task from localStorage');
+                                
+                                // Dispatch event to refresh My Tasks page UI
+                                window.dispatchEvent(new CustomEvent('taskTimerStopped', {
+                                    detail: {
+                                        task_guid: statusData.task_guid,
+                                        user_id: empId,
+                                        source: 'checkout'
+                                    }
+                                }));
+                                
+                                console.log('[ATTENDANCE-RENDERER] Dispatched taskTimerStopped event to refresh UI');
+                            } catch (uiError) {
+                                console.warn('[ATTENDANCE-RENDERER] Error updating UI after timer stop:', uiError);
+                            }
                         } else {
                             const errorData = await stopResponse.json().catch(() => ({}));
                             console.warn('[ATTENDANCE-RENDERER] Failed to stop task timer from backend:', stopResponse.status, errorData);
