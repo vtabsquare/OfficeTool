@@ -207,16 +207,20 @@ export async function performCheckOut(employeeId, location = null) {
                                 localStorage.removeItem(activeKey);
                                 console.log('[ATTENDANCE-RENDERER] Cleared active task from localStorage');
                                 
-                                // Dispatch event to refresh My Tasks page UI
-                                window.dispatchEvent(new CustomEvent('taskTimerStopped', {
-                                    detail: {
-                                        task_guid: statusData.task_guid,
-                                        user_id: empId,
-                                        source: 'checkout'
-                                    }
-                                }));
-                                
-                                console.log('[ATTENDANCE-RENDERER] Dispatched taskTimerStopped event to refresh UI');
+                                // Force a page refresh to update the UI
+                                // Check if we're currently on the My Tasks page
+                                if (window.location.hash === '#/time-my-tasks' || window.location.hash === '#/time-my-tasks/') {
+                                    console.log('[ATTENDANCE-RENDERER] On My Tasks page, forcing refresh');
+                                    
+                                    // Trigger a hash change to refresh the page
+                                    const currentHash = window.location.hash;
+                                    window.location.hash = '#/';
+                                    setTimeout(() => {
+                                        window.location.hash = currentHash;
+                                    }, 100);
+                                } else {
+                                    console.log('[ATTENDANCE-RENDERER] Not on My Tasks page, UI will update when user navigates there');
+                                }
                             } catch (uiError) {
                                 console.warn('[ATTENDANCE-RENDERER] Error updating UI after timer stop:', uiError);
                             }
