@@ -468,6 +468,76 @@ export const renderMyTasksPage = async () => {
         if (app) app.innerHTML = getPageContentHTML('My Tasks', skeleton);
     } catch { }
 
+    const canonicalTaskGuid = (task = {}) => {
+        if (!task) return '';
+        const candidates = [task.guid, task.task_guid, task.id, task.task_id];
+        for (const candidate of candidates) {
+            if (candidate === null || candidate === undefined) continue;
+            const trimmed = String(candidate).trim();
+            if (trimmed) return trimmed;
+        }
+        const fallbackParts = [task.project_id || task.project || '', task.task_name || task.task_id || '']
+            .map((part) => String(part || '').trim())
+            .filter(Boolean);
+        return fallbackParts.length ? fallbackParts.join('::') : '';
+    };
+
+    const normalizeTaskIdentity = (task = {}) => {
+        if (!task || typeof task !== 'object') return { guid: '', project_id: '' };
+        const normalized = { ...task };
+        const guid = canonicalTaskGuid(normalized);
+        if (guid) normalized.guid = guid;
+        if (!normalized.project_id) {
+            const projectCandidates = [normalized.project, normalized.projectId];
+            for (const candidate of projectCandidates) {
+                if (candidate) {
+                    normalized.project_id = String(candidate).trim();
+                    break;
+                }
+            }
+        }
+        if (!normalized.task_id) {
+            const taskIdCandidates = [normalized.taskId, normalized.task_name, normalized.task_guid];
+            for (const candidate of taskIdCandidates) {
+                const trimmed = String(candidate || '').trim();
+                if (trimmed) {
+                    normalized.task_id = trimmed;
+                    break;
+                }
+            }
+        }
+        if (!normalized.task_name) {
+            normalized.task_name = normalized.task_id || '';
+        }
+        return normalized;
+    };
+
+    const mergeTaskIdentity = (taskLike = {}) => {
+        const normalized = normalizeTaskIdentity(taskLike);
+        const guid = normalized.guid || normalized.task_guid || normalized.task_id || '';
+        const merged = {
+            ...taskLike,
+            ...normalized,
+        };
+        if (guid) {
+            merged.guid = guid;
+            merged.task_guid = guid;
+        }
+        return merged;
+    };
+
+    const resolveGuidValue = (value) => {
+        if (!value) return '';
+        if (typeof value === 'object') return canonicalTaskGuid(value);
+        const trimmed = String(value || '').trim();
+        return trimmed;
+    };
+
+    const findTaskByGuid = (guid) => {
+        if (!guid) return null;
+        return tasks.find((task) => canonicalTaskGuid(task) === guid) || null;
+    };
+
     const loadTasks = async () => {
         const params = new URLSearchParams();
         // Use /my-tasks so backend matches by employee id, name, or email depending on what is stored.
@@ -528,22 +598,117 @@ export const renderMyTasksPage = async () => {
             if (!search) return true;
             const hay = `${t.task_id || ''} ${t.task_name || ''} ${t.task_status || ''} ${t.project_id || ''}`.toLowerCase();
             return hay.includes(search.toLowerCase());
-        });
+        }).map(normalizeTaskIdentity);
     };
 
     const fmt = (secs) => {
         const h = Math.floor(secs / 3600), m = Math.floor((secs % 3600) / 60), s = secs % 60; return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
     };
 
+    const canonicalTaskGuid = (task = {}) => {
+        if (!task) return '';
+        const candidates = [task.guid, task.task_guid, task.id, task.task_id];
+        for (const candidate of candidates) {
+            if (candidate === null || candidate === undefined) continue;
+            const trimmed = String(candidate).trim();
+            if (trimmed) return trimmed;
+        }
+        const fallbackParts = [task.project_id || task.project || '', task.task_name || task.task_id || '']
+            .map((part) => String(part || '').trim())
+            .filter(Boolean);
+        return fallbackParts.length ? fallbackParts.join('::') : '';
+    };
+
+    const normalizeTaskIdentity = (task = {}) => {
+        if (!task || typeof task !== 'object') return { guid: '', project_id: '' };
+        const normalized = { ...task };
+        const guid = canonicalTaskGuid(normalized);
+        if (guid) normalized.guid = guid;
+        if (!normalized.project_id) {
+            const projectCandidates = [normalized.project, normalized.projectId];
+            for (const candidate of projectCandidates) {
+                if (candidate) {
+                    normalized.project_id = String(candidate).trim();
+                    break;
+                }
+            }
+        }
+        if (!normalized.task_id) {
+            const taskIdCandidates = [normalized.taskId, normalized.task_name, normalized.task_guid];
+            for (const candidate of taskIdCandidates) {
+                const trimmed = String(candidate || '').trim();
+                if (trimmed) {
+                    normalized.task_id = trimmed;
+                    break;
+                }
+            }
+        }
+        if (!normalized.task_name) {
+            normalized.task_name = normalized.task_id || '';
+        }
+        return normalized;
+    };
+
+    const mergeTaskIdentity = (taskLike = {}) => {
+        const normalized = normalizeTaskIdentity(taskLike);
+        const guid = normalized.guid || normalized.task_guid || normalized.task_id || '';
+        const merged = {
+            ...taskLike,
+            ...normalized,
+        };
+        if (guid) {
+            merged.guid = guid;
+            merged.task_guid = guid;
+        }
+        return merged;
+    };
+
+    const resolveGuidValue = (value) => {
+        if (!value) return '';
+        if (typeof value === 'object') return canonicalTaskGuid(value);
+        const trimmed = String(value || '').trim();
+        return trimmed;
+    };
+
     const ACTIVE_KEY = (id) => `tt_active_${id}`;
     const todayStr = () => { const t = new Date(); return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`; };
     const PER_TASK_KEY = (emp, guid, date) => `tt_accum_${String(emp || '').toUpperCase()}_${guid}_${date}`;
-    const getActive = () => { try { return JSON.parse(localStorage.getItem(ACTIVE_KEY(empId)) || 'null'); } catch { return null; } };
-    const setActive = (obj) => { try { localStorage.setItem(ACTIVE_KEY(empId), JSON.stringify(obj)); } catch { } };
+    const getActive = () => {
+        try {
+            const raw = localStorage.getItem(ACTIVE_KEY(empId));
+            if (!raw) return null;
+            const parsed = JSON.parse(raw);
+            if (!parsed) return null;
+            return mergeTaskIdentity(parsed);
+        } catch {
+            return null;
+        }
+    };
+    const setActive = (obj) => {
+        if (!obj) return;
+        try {
+            const payload = mergeTaskIdentity(obj);
+            localStorage.setItem(ACTIVE_KEY(empId), JSON.stringify(payload));
+        } catch {}
+    };
     const clearActive = () => { try { localStorage.removeItem(ACTIVE_KEY(empId)); } catch { } };
 
-    const getPersistedSecs = (guid) => { try { return Number(localStorage.getItem(PER_TASK_KEY(empId, guid, todayStr())) || '0') || 0; } catch { return 0; } };
-    const setPersistedSecs = (guid, secs) => { try { localStorage.setItem(PER_TASK_KEY(empId, guid, todayStr()), String(Math.max(0, secs | 0))); } catch { } };
+    const getPersistedSecs = (guidLike) => {
+        try {
+            const safeGuid = resolveGuidValue(guidLike);
+            if (!safeGuid) return 0;
+            return Number(localStorage.getItem(PER_TASK_KEY(empId, safeGuid, todayStr())) || '0') || 0;
+        } catch {
+            return 0;
+        }
+    };
+    const setPersistedSecs = (guidLike, secs) => {
+        try {
+            const safeGuid = resolveGuidValue(guidLike);
+            if (!safeGuid) return;
+            localStorage.setItem(PER_TASK_KEY(empId, safeGuid, todayStr()), String(Math.max(0, secs | 0)));
+        } catch { }
+    };
 
     const postTimesheetLog = async ({ seconds, task, started_at = null, ended_at = null }) => {
         console.log('[MY_TASKS] postTimesheetLog called with:', { seconds, task, started_at, ended_at });
@@ -1054,7 +1219,22 @@ export const renderMyTimesheetPage = async () => {
         return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
     };
 
-    const rowKeyFor = (row) => `${row.project_id || ''}|${row.task_guid || row.task_id || ''}`;
+    const canonicalTimesheetKey = ({ project_id, projectId, project, task_guid, taskGuid, guid, task_id, taskId, task_name, taskName } = {}) => {
+        const proj = String(project_id || projectId || project || '').trim();
+        const candidates = [task_guid, taskGuid, guid, task_id, taskId, task_name, taskName];
+        let identifier = '';
+        for (const candidate of candidates) {
+            if (candidate === undefined || candidate === null) continue;
+            const trimmed = String(candidate).trim();
+            if (trimmed) {
+                identifier = trimmed;
+                break;
+            }
+        }
+        return `${proj}|${identifier}`;
+    };
+
+    const rowKeyFor = (row) => canonicalTimesheetKey(row);
 
     const render = async () => {
         const s = startOfWeek(anchor);
@@ -1174,7 +1354,7 @@ export const renderMyTimesheetPage = async () => {
         // Group logs by project/task
         const grouped = {};
         logs.forEach(l => {
-            const key = `${l.project_id || ''}|${l.task_guid || ''}`;
+            const key = canonicalTimesheetKey(l);
             if (!grouped[key]) {
                 grouped[key] = {
                     project_id: l.project_id,
@@ -1215,7 +1395,12 @@ export const renderMyTimesheetPage = async () => {
             });
             const existingKeys = new Set(Object.keys(grouped));
             assignedTasks.forEach(t => {
-                const key = `${t.project_id || ''}|${t.guid || t.task_id || ''}`;
+                const key = canonicalTimesheetKey({
+                    project_id: t.project_id,
+                    guid: t.guid,
+                    task_id: t.task_id,
+                    task_name: t.task_name,
+                });
                 if (!existingKeys.has(key)) {
                     gridRows.push({
                         project_id: t.project_id || '',
