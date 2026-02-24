@@ -137,7 +137,9 @@ export async function performCheckOut(employeeId, location = null) {
     
     // Check for and pause any running task timers before checkout
     try {
-        const empId = String(employeeId).toUpperCase();
+        // Use the same logic as My Tasks page to get the correct user_id format
+        const user = state?.user || window.state?.user || {};
+        const empId = String((user.id || user.employee_id || user.employeeId || '')).trim();
         const activeKey = `tt_active_${empId}`;
         const activeData = localStorage.getItem(activeKey);
         
