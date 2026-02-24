@@ -140,14 +140,17 @@ export async function performCheckOut(employeeId, location = null) {
         // Use the same logic as My Tasks page to get the correct user_id format
         const user = state?.user || window.state?.user || {};
         const empId = String((user.id || user.employee_id || user.employeeId || '')).trim();
-        const activeKey = `tt_active_${empId}`;
-        const activeData = localStorage.getItem(activeKey);
         
         console.log('[ATTENDANCE-RENDERER] Checking for active task timers before checkout...');
         console.log('[ATTENDANCE-RENDERER] User object:', user);
         console.log('[ATTENDANCE-RENDERER] Employee ID:', empId);
-        console.log('[ATTENDANCE-RENDERER] Active key:', activeKey);
-        console.log('[ATTENDANCE-RENDERER] Active data found:', !!activeData);
+        
+        // First check localStorage (for tasks started via My Tasks page)
+        const activeKey = `tt_active_${empId}`;
+        const activeData = localStorage.getItem(activeKey);
+        
+        console.log('[ATTENDANCE-RENDERER] LocalStorage active key:', activeKey);
+        console.log('[ATTENDANCE-RENDERER] LocalStorage active data found:', !!activeData);
         
         // Debug: Show all localStorage keys that contain 'tt_active'
         console.log('[ATTENDANCE-RENDERER] All tt_active keys in localStorage:');
@@ -158,26 +161,61 @@ export async function performCheckOut(employeeId, location = null) {
             }
         }
         
-        // Try both uppercase and lowercase versions
-        const empIdUpper = empId.toUpperCase();
-        const activeKeyUpper = `tt_active_${empIdUpper}`;
-        const activeDataUpper = localStorage.getItem(activeKeyUpper);
-        
-        console.log('[ATTENDANCE-RENDERER] Trying uppercase key:', activeKeyUpper);
-        console.log('[ATTENDANCE-RENDERER] Uppercase data found:', !!activeDataUpper);
-        
-        // Use whichever key has data
-        let finalActiveKey = activeKey;
-        let finalActiveData = activeData;
-        if (!activeData && activeDataUpper) {
-            finalActiveKey = activeKeyUpper;
-            finalActiveData = activeDataUpper;
-            console.log('[ATTENDANCE-RENDERER] Using uppercase key instead');
-        }
-        
-        if (finalActiveData) {
-            const activeTask = JSON.parse(finalActiveData);
-            console.log('[ATTENDANCE-RENDERER] Active task data:', activeTask);
+        // If no active task in localStorage, check backend for any running timers
+        if (!activeData) {
+            console.log('[ATTENDANCE-RENDERER] No active task in localStorage, checking backend for running timers...');
+            
+            try {
+                // Get all active time entries for this user
+                const entriesResponse = await fetch(`${BASE_URL}/api/time-entries`, {
+                    method: 'GET',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                
+                if (entriesResponse.ok) {
+                    const entriesData = await entriesResponse.json();
+                    const activeEntries = entriesData.entries?.filter(entry => 
+                        entry.user_id === empId && !entry.end
+                    ) || [];
+                    
+                    console.log('[ATTENDANCE-RENDERER] Active entries from backend:', activeEntries);
+                    
+                    if (activeEntries.length > 0) {
+                        // Stop the first active entry
+                        const activeEntry = activeEntries[0];
+                        console.log('[ATTENDANCE-RENDERER] Stopping active timer from backend:', activeEntry);
+                        
+                        const stopResponse = await fetch(`${BASE_URL}/api/time-entries/stop`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                task_guid: activeEntry.task_guid,
+                                user_id: empId
+                            })
+                        });
+                        
+                        console.log('[ATTENDANCE-RENDERER] Backend stop response status:', stopResponse.status);
+                        
+                        if (stopResponse.ok) {
+                            const stopResult = await stopResponse.json();
+                            console.log('[ATTENDANCE-RENDERER] Task timer stopped successfully from backend:', stopResult);
+                        } else {
+                            const errorData = await stopResponse.json().catch(() => ({}));
+                            console.warn('[ATTENDANCE-RENDERER] Failed to stop task timer from backend:', stopResponse.status, errorData);
+                        }
+                    } else {
+                        console.log('[ATTENDANCE-RENDERER] No active timers found in backend');
+                    }
+                } else {
+                    console.warn('[ATTENDANCE-RENDERER] Failed to fetch time entries from backend:', entriesResponse.status);
+                }
+            } catch (error) {
+                console.error('[ATTENDANCE-RENDERER] Error checking backend for active timers:', error);
+            }
+        } else {
+            // Handle localStorage active task (original logic)
+            const activeTask = JSON.parse(activeData);
+            console.log('[ATTENDANCE-RENDERER] Active task data from localStorage:', activeTask);
             
             // Check if there's a running task timer (not paused)
             if (activeTask.task_guid && !activeTask.paused) {
@@ -197,7 +235,7 @@ export async function performCheckOut(employeeId, location = null) {
                 
                 if (stopResponse.ok) {
                     // Clear the active task from localStorage
-                    localStorage.removeItem(finalActiveKey);
+                    localStorage.removeItem(activeKey);
                     console.log('[ATTENDANCE-RENDERER] Task timer paused successfully before checkout');
                 } else {
                     const errorData = await stopResponse.json().catch(() => ({}));
@@ -206,8 +244,6 @@ export async function performCheckOut(employeeId, location = null) {
             } else {
                 console.log('[ATTENDANCE-RENDERER] No running task timer found - task is paused or no task_guid');
             }
-        } else {
-            console.log('[ATTENDANCE-RENDERER] No active task data found in localStorage');
         }
     } catch (error) {
         console.error('[ATTENDANCE-RENDERER] Error checking/pausing task timer before checkout:', error);
