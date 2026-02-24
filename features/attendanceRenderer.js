@@ -166,30 +166,27 @@ export async function performCheckOut(employeeId, location = null) {
             console.log('[ATTENDANCE-RENDERER] No active task in localStorage, checking backend for running timers...');
             
             try {
-                // Get all active time entries for this user
-                const entriesResponse = await fetch(`${BASE_URL}/api/time-entries`, {
+                // Check timer status for this user
+                const statusResponse = await fetch(`${BASE_URL}/api/time-entries/status?user_id=${encodeURIComponent(empId)}`, {
                     method: 'GET',
                     headers: { 'Content-Type': 'application/json' }
                 });
                 
-                if (entriesResponse.ok) {
-                    const entriesData = await entriesResponse.json();
-                    const activeEntries = entriesData.entries?.filter(entry => 
-                        entry.user_id === empId && !entry.end
-                    ) || [];
+                console.log('[ATTENDANCE-RENDERER] Timer status response status:', statusResponse.status);
+                
+                if (statusResponse.ok) {
+                    const statusData = await statusResponse.json();
+                    console.log('[ATTENDANCE-RENDERER] Timer status data:', statusData);
                     
-                    console.log('[ATTENDANCE-RENDERER] Active entries from backend:', activeEntries);
-                    
-                    if (activeEntries.length > 0) {
-                        // Stop the first active entry
-                        const activeEntry = activeEntries[0];
-                        console.log('[ATTENDANCE-RENDERER] Stopping active timer from backend:', activeEntry);
+                    if (statusData.success && statusData.active && statusData.task_guid) {
+                        console.log('[ATTENDANCE-RENDERER] Found active timer, stopping it:', statusData.task_guid);
                         
+                        // Stop the active timer
                         const stopResponse = await fetch(`${BASE_URL}/api/time-entries/stop`, {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({
-                                task_guid: activeEntry.task_guid,
+                                task_guid: statusData.task_guid,
                                 user_id: empId
                             })
                         });
@@ -204,10 +201,10 @@ export async function performCheckOut(employeeId, location = null) {
                             console.warn('[ATTENDANCE-RENDERER] Failed to stop task timer from backend:', stopResponse.status, errorData);
                         }
                     } else {
-                        console.log('[ATTENDANCE-RENDERER] No active timers found in backend');
+                        console.log('[ATTENDANCE-RENDERER] No active timers found in backend status');
                     }
                 } else {
-                    console.warn('[ATTENDANCE-RENDERER] Failed to fetch time entries from backend:', entriesResponse.status);
+                    console.warn('[ATTENDANCE-RENDERER] Failed to fetch timer status from backend:', statusResponse.status);
                 }
             } catch (error) {
                 console.error('[ATTENDANCE-RENDERER] Error checking backend for active timers:', error);
