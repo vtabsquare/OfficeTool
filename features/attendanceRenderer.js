@@ -206,6 +206,10 @@ export async function performCheckOut(employeeId, location = null) {
                             
                             // Verify the timer is actually stopped by checking status again
                             console.log('[ATTENDANCE-RENDERER] Verifying timer is stopped...');
+                            
+                            // Add small delay to allow backend to fully commit the changes
+                            await new Promise(resolve => setTimeout(resolve, 500));
+                            
                             const verifyResponse = await fetch(`${BASE_URL}/api/time-entries/status?user_id=${encodeURIComponent(empId)}`, {
                                 method: 'GET',
                                 headers: { 'Content-Type': 'application/json' }
