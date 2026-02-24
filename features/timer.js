@@ -364,6 +364,20 @@ const stopTimer = async () => {
 
             console.log('✅ Check-out confirmed by backend:', checkout_time);
 
+            if (typeof window !== 'undefined') {
+                try {
+                    window.dispatchEvent(new CustomEvent('attendanceCheckout', {
+                        detail: {
+                            employeeId: state.user?.id || null,
+                            checkoutTime: checkout_time,
+                            totalSeconds: Math.max(state.timer.lastDuration || 0, lastSeconds || 0),
+                        }
+                    }));
+                } catch (eventErr) {
+                    console.warn('[TIMER] Failed to emit attendanceCheckout event', eventErr);
+                }
+            }
+
             // Update attendance state for today
             const day = today.getDate();
             state.attendanceData[uid] = state.attendanceData[uid] || {};

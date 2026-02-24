@@ -901,6 +901,43 @@ export const renderMyTasksPage = async () => {
     };
 
     await render();
+
+    const handleAttendanceCheckout = async () => {
+        const active = getActive();
+        if (!active || active.paused) return;
+
+        const task = tasks.find((t) => t.guid === active.task_guid) || {
+            guid: active.task_guid,
+            task_id: active.task_id,
+            task_name: active.task_name,
+            project_id: active.project_id,
+        };
+
+        let totalSeconds = active.accumulated || 0;
+        if (active.started_at) {
+            totalSeconds += Math.floor((Date.now() - Number(active.started_at)) / 1000);
+        }
+        totalSeconds = Math.max(1, totalSeconds);
+
+        setPersistedSecs(active.task_guid, totalSeconds);
+        const logged = await postTimesheetLog({
+            seconds: totalSeconds,
+            task,
+            started_at: active.started_at,
+            ended_at: Date.now(),
+        });
+        if (logged) {
+            clearActive();
+            render();
+        }
+    };
+
+    const existingListener = window.__ttAttendanceListener;
+    if (existingListener) {
+        window.removeEventListener('attendanceCheckout', existingListener);
+    }
+    window.__ttAttendanceListener = () => { handleAttendanceCheckout(); };
+    window.addEventListener('attendanceCheckout', window.__ttAttendanceListener);
 };
 
 export const renderMyTimesheetPage = async () => {
