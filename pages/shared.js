@@ -665,8 +665,17 @@ export const renderMyTasksPage = async () => {
         }
     };
 
+    const isWeekLocked = () => {
+        return !!(window.__MYTS_WEEK_LOCK && window.__MYTS_WEEK_LOCK.locked);
+    };
+
     const toggleTimer = async (t) => {
+        if (isWeekLocked()) {
+            showToast('Timesheet submitted. Timers disabled until admin decision.');
+            return;
+        }
         const cur = getActive();
+
         // If timer is running for this task, pause it
         if (cur && cur.task_guid === t.guid && !cur.paused) {
             const elapsed = Math.floor((Date.now() - Number(cur.started_at)) / 1000);
@@ -708,8 +717,11 @@ export const renderMyTasksPage = async () => {
     };
 
     const stopLocalTimer = async (t) => {
+        if (isWeekLocked()) {
+            showToast('Timesheet submitted. Timers disabled until admin decision.');
+            return;
+        }
         const cur = getActive();
-        if (!cur || cur.task_guid !== t.guid) return;
 
         // Calculate total seconds (accumulated + current session if running)
         let totalSeconds = cur.accumulated || 0;
@@ -1154,8 +1166,7 @@ export const renderMyTimesheetPage = async () => {
             // Only process if log date is not in the future (using local date)
             if (logDate <= todayStr) {
                 for (let i = 0; i < 7; i++) {
-                    const dayDate = new Date(s);
-                    dayDate.setDate(s.getDate() + i);
+                    const dayDate = new Date(s); dayDate.setDate(s.getDate() + i);
                     const dayDateStr = `${dayDate.getFullYear()}-${String(dayDate.getMonth() + 1).padStart(2, '0')}-${String(dayDate.getDate()).padStart(2, '0')}`;
                     if (logDate === dayDateStr) {
                         const seconds = Number(l.seconds || 0);
@@ -1477,12 +1488,15 @@ export const renderMyTimesheetPage = async () => {
         document.getElementById('app-content').innerHTML = getPageContentHTML('My Timesheet', content);
 
         // Event handlers
-        document.getElementById('ts-prev-week').onclick = () => {
+        document.getElementById('ts-prev-week').onclick = async () => {
             anchor = new Date(s.getTime() - 7 * 86400000);
+            await updateWeekLockInfo();
             render();
         };
-        document.getElementById('ts-next-week').onclick = () => {
+
+        document.getElementById('ts-next-week').onclick = async () => {
             anchor = new Date(s.getTime() + 7 * 86400000);
+            await updateWeekLockInfo();
             render();
         };
 
@@ -1558,7 +1572,7 @@ export const renderMyTimesheetPage = async () => {
         document.querySelectorAll('.ts-delete-row').forEach(btn => {
             btn.onclick = async (e) => {
                 if (currentWeekLockInfo.locked) {
-                    showToast('Timesheet submitted. Editing disabled until decision.');
+                    showToast('Timesheet submitted. Editing disabled until a decision is made.');
                     return;
                 }
                 const rowIdx = parseInt(e.currentTarget.getAttribute('data-row'));
@@ -1584,6 +1598,7 @@ export const renderMyTimesheetPage = async () => {
                     showToast('Timesheet already submitted for this week. Awaiting admin response.');
                     return;
                 }
+
                 const s = startOfWeek(anchor);
                 const e = endOfWeek(anchor);
                 const weekKey = `ts_manual_${fmt(s)}_${fmt(e)}`;
@@ -1616,7 +1631,7 @@ export const renderMyTimesheetPage = async () => {
                         const secs = overrideSecs !== null ? overrideSecs : baseSecs;
                         if (!secs) continue;
 
-                        const project = projects.find(p => (p.crc6f_projectid || p.id) === row.project_id) || {};
+                        const project = projects.find(p => (p.crc6f_projectid || p.id) === row.project_id);
                         const projectId = row.project_id || project.crc6f_projectid || project.id || '';
                         const projectName = project.crc6f_projectname || project.name || row.project_name || projectId;
 
@@ -1679,6 +1694,7 @@ export const renderMyTimesheetPage = async () => {
                     // Notify admin/manager about the new timesheet submission
                     try { await updateNotificationBadge(); } catch (e) { console.warn('Notification badge update failed', e); }
 
+                    await updateWeekLockInfo();
                     await render();
                 } catch (err) {
                     console.error('Timesheet submit failed', err);
@@ -1707,8 +1723,13 @@ export const renderMyTimesheetPage = async () => {
         };
 
         const saveCell = async (rowIdx, dayIdx, seconds) => {
+            if (currentWeekLockInfo.locked) {
+                showToast('Timesheet submitted. Editing disabled until a decision is made.');
+                return;
+            }
             const row = gridRows[rowIdx];
             if (!row) return;
+
             const dayDate = new Date(startOfWeek(anchor));
             dayDate.setDate(startOfWeek(anchor).getDate() + dayIdx);
             const yyyy = dayDate.getFullYear();
@@ -1758,8 +1779,13 @@ export const renderMyTimesheetPage = async () => {
         };
 
         const openCellEditModal = (rowIdx, dayIdx) => {
+            if (currentWeekLockInfo.locked) {
+                showToast('Timesheet submitted. Editing disabled until a decision is made.');
+                return;
+            }
             const row = gridRows[rowIdx];
             if (!row) return;
+
             const dayDate = new Date(startOfWeek(anchor));
             dayDate.setDate(startOfWeek(anchor).getDate() + dayIdx);
             const yyyy = dayDate.getFullYear();
@@ -1864,34 +1890,37 @@ export const renderMyTimesheetPage = async () => {
     };
 
     let currentWeekLockInfo = { locked: false, status: 'unsubmitted', rejection_comment: '' };
-    const s = startOfWeek(anchor);
-    const e = endOfWeek(anchor);
-    const weekStartIso = fmt(s);
-    const employeeIdUpper = String(empId || '').toUpperCase();
-
-    // Fetch lock status for the week
-    let weekLock = { locked: false, status: 'unsubmitted', rejection_comment: '' };
-    if (employeeIdUpper) {
-        try {
-            const qs = new URLSearchParams({ employee_id: employeeIdUpper, week_start: weekStartIso });
-            const statusRes = await fetch(`${API}/time-tracker/timesheet/status?${qs.toString()}`);
-            const statusData = await statusRes.json().catch(() => ({}));
-            if (statusRes.ok && statusData.success) {
-                weekLock = {
-                    locked: !!statusData.locked,
-                    status: statusData.status || 'unsubmitted',
-                    rejection_comment: statusData.rejection_comment || ''
-                };
-            } else {
-                console.warn('Timesheet status lookup failed', statusData);
+    const updateWeekLockInfo = async () => {
+        const s = startOfWeek(anchor);
+        const weekStartIso = fmt(s);
+        const employeeIdUpper = String(empId || '').toUpperCase();
+        let weekLock = { locked: false, status: 'unsubmitted', rejection_comment: '' };
+        if (employeeIdUpper) {
+            try {
+                const qs = new URLSearchParams({ employee_id: employeeIdUpper, week_start: weekStartIso });
+                const statusRes = await fetch(`${API}/time-tracker/timesheet/status?${qs.toString()}`);
+                const statusData = await statusRes.json().catch(() => ({}));
+                if (statusRes.ok && statusData.success) {
+                    weekLock = {
+                        locked: !!statusData.locked,
+                        status: statusData.status || 'unsubmitted',
+                        rejection_comment: statusData.rejection_comment || ''
+                    };
+                } else {
+                    console.warn('Timesheet status lookup failed', statusData);
+                }
+            } catch (err) {
+                console.warn('Timesheet status request error', err);
             }
-        } catch (err) {
-            console.warn('Timesheet status request error', err);
         }
-    }
-    currentWeekLockInfo = { ...weekLock };
+        currentWeekLockInfo = { ...weekLock };
+        window.__MYTS_WEEK_LOCK = { ...weekLock };
+        return currentWeekLockInfo;
+    };
 
+    await updateWeekLockInfo();
     await render();
+
 };
 
 export const renderTeamTimesheetPage = async () => {
