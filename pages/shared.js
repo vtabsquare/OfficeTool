@@ -22,32 +22,6 @@ const canManageMyTimesheetRows = () => {
     return designation.includes('manager');
 };
 
-const fetchWeekLockStatus = async (employeeId, weekStart, weekEnd) => {
-    if (!employeeId || !weekStart || !weekEnd) {
-        return { locked: false, status: 'unsubmitted', counts: {} };
-    }
-    const params = new URLSearchParams({
-        employee_id: employeeId,
-        week_start: weekStart,
-        week_end: weekEnd,
-    });
-    try {
-        const resp = await fetch(`${apiBase}/api/time-tracker/timesheet/week-lock?${params.toString()}`);
-        const data = await resp.json().catch(() => ({ success: false }));
-        if (!resp.ok || data.success === false) {
-            throw new Error(data.error || resp.statusText);
-        }
-        return {
-            locked: !!data.locked,
-            status: data.status || 'unsubmitted',
-            counts: data.counts || {},
-        };
-    } catch (err) {
-        console.warn('Failed to fetch week lock status', err);
-        return { locked: false, status: 'unsubmitted', counts: {} };
-    }
-};
-
 const renderMyTsRow = (days, idx = 0) => {
     const dayInputs = days.map(function (d, i) { return '<div class="ts-cell"><input class="ts-input ts-hhmm" data-row="' + idx + '" data-col="' + i + '" placeholder="HH:MM" /></div>'; }).join('');
     return `
@@ -1048,21 +1022,12 @@ export const renderMyTimesheetPage = async () => {
     const render = async () => {
         const s = startOfWeek(anchor);
         const e = endOfWeek(anchor);
-        const weekStartStr = fmt(s);
-        const weekEndStr = fmt(e);
         const initialHash = window.location.hash;
-        const [logsData, weekLockInfo] = await Promise.all([
-            load(s, e),
-            fetchWeekLockStatus(empId, weekStartStr, weekEndStr)
-        ]);
-        let logs = logsData;
+        let logs = await load(s, e);
         // If the user has navigated away while logs were loading, abort rendering
         if (initialHash !== '#/time-my-timesheet' || window.location.hash !== '#/time-my-timesheet') {
             return;
         }
-        const isWeekLocked = !!weekLockInfo.locked;
-        const weekLockStatus = String(weekLockInfo.status || 'unsubmitted').toLowerCase();
-        const prettyWeekLockStatus = weekLockStatus.replace(/\b\w/g, (c) => c.toUpperCase());
 
         // Filter out future dates (use local date, not UTC)
         const today = new Date();
@@ -1074,9 +1039,8 @@ export const renderMyTimesheetPage = async () => {
         });
 
         // manual rows: load from sessionStorage per week range
-        const weekKey = `ts_manual_${weekStartStr}_${weekEndStr}`;
+        const weekKey = `ts_manual_${fmt(s)}_${fmt(e)}`;
         try { manualRows = JSON.parse(sessionStorage.getItem(weekKey) || '[]'); } catch { manualRows = []; }
-
         if (!Array.isArray(manualRows)) manualRows = [];
         manualRows = manualRows.map(r => ({
             ...r,
@@ -1086,7 +1050,6 @@ export const renderMyTimesheetPage = async () => {
 
         // manual overrides map (per week)
         const overridesKey = `${weekKey}_overrides`;
-
         let overrides = {};
         try { overrides = JSON.parse(sessionStorage.getItem(overridesKey) || '{}'); } catch { overrides = {}; }
 
@@ -1368,12 +1331,6 @@ export const renderMyTimesheetPage = async () => {
                 <span>${submissionStatusMsg}</span>
             </div>
         ` : '';
-        const lockBanner = isWeekLocked ? `
-            <div class="ts-status-banner warning">
-                <i class="fa-solid fa-lock"></i>
-                <span>This week's timesheet is <strong>${prettyWeekLockStatus}</strong>. Editing and submission are disabled until it is rejected or a new week begins.</span>
-            </div>
-        ` : '';
 
         const content = `
         <style>
@@ -1387,7 +1344,6 @@ export const renderMyTimesheetPage = async () => {
             .ts-summary strong { color: var(--text-primary, #333); }
             .ts-status-banner { margin: 0 20px 12px; padding: 10px 16px; border-radius: 12px; font-size: 14px; font-weight: 600; display:flex; align-items:center; gap:10px; }
             .ts-status-banner.success { background:#ecfdf3; color:#166534; border:1px solid #bbf7d0; }
-            .ts-status-banner.warning { background:#fef3c7; color:#92400e; border:1px solid #fcd34d; }
             .ts-table-wrapper { overflow-x: auto; }
             .ts-table { width: 100%; border-collapse: separate; border-spacing:0; background:#fff; border-radius: 0 0 12px 12px; box-shadow: 0 2px 10px rgba(0,0,0,0.04); }
             .ts-table th { background: var(--surface-alt, #fafbfd); padding: 12px 8px; text-align: center; font-size: 12px; text-transform: uppercase; color: var(--text-secondary, #666); border-bottom: 2px solid var(--border-color, #e8edf3); }
@@ -1468,7 +1424,7 @@ export const renderMyTimesheetPage = async () => {
                     <button id="ts-submit" class="btn" style="background: #fff; color: var(--primary-color); border: none; padding: 8px 20px;">SUBMIT</button>
                 </div>
             </div>
-            ${statusBanner}${lockBanner}
+            ${statusBanner}
             <div class="ts-summary">
                 <div>Total logged: <strong>${formatTimeDisplay(totalLoggedSecs)}</strong></div>
                 <div>Total billable: <strong>${formatTimeDisplay(totalBillableSecs)}</strong></div>
@@ -1496,7 +1452,7 @@ export const renderMyTimesheetPage = async () => {
                     <span>Add row</span>
                 </button>
             </div>
-        </div>
+        </div>`;
 
         document.getElementById('app-content').innerHTML = getPageContentHTML('My Timesheet', content);
 
@@ -1511,12 +1467,7 @@ export const renderMyTimesheetPage = async () => {
         };
 
         document.getElementById('ts-add-row').onclick = () => {
-            if (isWeekLocked) {
-                showToast('Timesheet locked pending approval. You cannot add rows this week.');
-                return;
-            }
             const projOpts = ['<option value="">Select project</option>'].concat(projects.map(p => `<option value="${p.crc6f_projectid || p.id}">${p.crc6f_projectname || p.name || p.crc6f_projectid || p.id}</option>`)).join('');
-
             const taskOpts = ['<option value="">Select task</option>'].concat(tasks.map(t => `<option value="${t.guid}">${t.task_name || t.task_id}</option>`)).join('');
             const body = `
               <div id="myts-add-row-form" class="form-grid-2-col myts-add-row-form">
@@ -1582,13 +1533,8 @@ export const renderMyTimesheetPage = async () => {
 
         document.querySelectorAll('.ts-delete-row').forEach(btn => {
             btn.onclick = async (e) => {
-                if (isWeekLocked) {
-                    showToast('Timesheet locked pending approval.');
-                    return;
-                }
                 const rowIdx = parseInt(e.currentTarget.getAttribute('data-row'));
                 if (confirm('Delete this row?')) {
-
                     // Only manual rows have delete buttons; remove from manualRows store
                     const toDelete = gridRows[rowIdx];
                     manualRows = manualRows.filter(r => r.id !== toDelete.id);
@@ -1600,12 +1546,11 @@ export const renderMyTimesheetPage = async () => {
 
         const submitBtn = document.getElementById('ts-submit');
         if (submitBtn) {
-            const handleSubmit = async () => {
+            submitBtn.onclick = async () => {
                 const s = startOfWeek(anchor);
                 const e = endOfWeek(anchor);
                 const weekKey = `ts_manual_${fmt(s)}_${fmt(e)}`;
                 const overridesKey = `${weekKey}_overrides`;
-
                 let overridesMap = {};
                 try { overridesMap = JSON.parse(sessionStorage.getItem(overridesKey) || '{}'); } catch { overridesMap = {}; }
 
@@ -1703,20 +1648,6 @@ export const renderMyTimesheetPage = async () => {
                     showToast('Failed to submit timesheet. Please try again.');
                 }
             };
-
-            if (isWeekLocked) {
-                submitBtn.onclick = null;
-                submitBtn.setAttribute('disabled', 'disabled');
-                submitBtn.style.opacity = '0.6';
-                submitBtn.style.cursor = 'not-allowed';
-                submitBtn.title = 'Timesheet locked pending approval';
-            } else {
-                submitBtn.removeAttribute('disabled');
-                submitBtn.style.opacity = '';
-                submitBtn.style.cursor = '';
-                submitBtn.title = '';
-                submitBtn.onclick = handleSubmit;
-            }
         }
 
         // Enable edit via modal on double-click; save to backend and refresh
@@ -1730,14 +1661,17 @@ export const renderMyTimesheetPage = async () => {
             return (h * 3600) + (mm * 60);
         };
 
+        const resolveRole = () => {
+            const u = state?.user || window.state?.user || {};
+            const isAdmin = !!u.is_admin || String(u.id || '').toUpperCase() === 'EMP001';
+            const roleStr = String(u.role || '').toLowerCase();
+            const isManager = !!u.is_manager || roleStr === 'l2' || String(u.designation || '').toLowerCase().includes('manager');
+            return isAdmin ? 'l3' : (isManager ? 'l2' : 'l2');
+        };
+
         const saveCell = async (rowIdx, dayIdx, seconds) => {
-            if (isWeekLocked) {
-                showToast('Cannot edit a locked week.');
-                return;
-            }
             const row = gridRows[rowIdx];
             if (!row) return;
-
             const dayDate = new Date(startOfWeek(anchor));
             dayDate.setDate(startOfWeek(anchor).getDate() + dayIdx);
             const yyyy = dayDate.getFullYear();
@@ -1746,6 +1680,7 @@ export const renderMyTimesheetPage = async () => {
             const workDate = `${yyyy}-${mm}-${dd}`;
             const today = new Date();
             const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+            if (workDate > todayStr) return;
 
             const payload = {
                 employee_id: String(empId || '').toUpperCase(),
@@ -1786,13 +1721,8 @@ export const renderMyTimesheetPage = async () => {
         };
 
         const openCellEditModal = (rowIdx, dayIdx) => {
-            if (isWeekLocked) {
-                showToast('Week locked pending approval.');
-                return;
-            }
             const row = gridRows[rowIdx];
             if (!row) return;
-
             const dayDate = new Date(startOfWeek(anchor));
             dayDate.setDate(startOfWeek(anchor).getDate() + dayIdx);
             const yyyy = dayDate.getFullYear();
@@ -1851,10 +1781,6 @@ export const renderMyTimesheetPage = async () => {
         };
 
         document.querySelectorAll('.ts-hour-input').forEach(inp => {
-            if (isWeekLocked) {
-                inp.setAttribute('title', 'Timesheet locked pending approval');
-                return;
-            }
             inp.addEventListener('dblclick', () => {
                 if (inp.hasAttribute('disabled')) return;
                 const rowIdx = parseInt(inp.getAttribute('data-row'), 10);
@@ -1878,17 +1804,15 @@ export const renderMyTimesheetPage = async () => {
 
         const addRowBtn = document.getElementById('ts-add-row');
         if (addRowBtn) {
-            const canAddRow = canManageMyTimesheetRows() && !isWeekLocked;
-            if (canAddRow) {
+            if (canManageMyTimesheetRows()) {
                 addRowBtn.removeAttribute('disabled');
                 addRowBtn.style.opacity = '';
+
                 addRowBtn.style.cursor = '';
-                addRowBtn.title = '';
             } else {
                 addRowBtn.setAttribute('disabled', 'disabled');
                 addRowBtn.style.opacity = '0.6';
                 addRowBtn.style.cursor = 'not-allowed';
-                addRowBtn.title = isWeekLocked ? 'Timesheet locked pending approval' : 'Only managers/admins can add rows';
             }
         }
     };
