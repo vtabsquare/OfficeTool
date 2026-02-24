@@ -182,6 +182,12 @@ export async function performCheckOut(employeeId, location = null) {
                         console.log('[ATTENDANCE-RENDERER] Found active timer, stopping it:', statusData.task_guid);
                         
                         // Stop the active timer
+                        console.log('[ATTENDANCE-RENDERER] Stopping active timer from backend:', statusData.task_guid);
+                        console.log('[ATTENDANCE-RENDERER] Stop API payload:', {
+                            task_guid: statusData.task_guid,
+                            user_id: empId
+                        });
+                        
                         const stopResponse = await fetch(`${BASE_URL}/api/time-entries/stop`, {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
@@ -192,13 +198,30 @@ export async function performCheckOut(employeeId, location = null) {
                         });
                         
                         console.log('[ATTENDANCE-RENDERER] Backend stop response status:', stopResponse.status);
+                        console.log('[ATTENDANCE-RENDERER] Backend stop response headers:', stopResponse.headers);
                         
                         if (stopResponse.ok) {
                             const stopResult = await stopResponse.json();
-                            console.log('[ATTENDANCE-RENDERER] Task timer stopped successfully from backend:', stopResult);
+                            console.log('[ATTENDANCE-RENDERER] Backend stop response body:', stopResult);
                             
-                            // Force complete page reload to clear all timer state
-                            console.log('[ATTENDANCE-RENDERER] Forcing complete page reload to clear timer state...');
+                            // Verify the timer is actually stopped by checking status again
+                            console.log('[ATTENDANCE-RENDERER] Verifying timer is stopped...');
+                            const verifyResponse = await fetch(`${BASE_URL}/api/time-entries/status?user_id=${encodeURIComponent(empId)}`, {
+                                method: 'GET',
+                                headers: { 'Content-Type': 'application/json' }
+                            });
+                            
+                            if (verifyResponse.ok) {
+                                const verifyData = await verifyResponse.json();
+                                console.log('[ATTENDANCE-RENDERER] Verification response:', verifyData);
+                                
+                                if (verifyData.success && verifyData.active) {
+                                    console.error('[ATTENDANCE-RENDERER] TIMER STILL ACTIVE AFTER STOP REQUEST!');
+                                    console.error('[ATTENDANCE-RENDERER] Backend stop API returned success but timer is still running');
+                                } else {
+                                    console.log('[ATTENDANCE-RENDERER] Timer successfully stopped in backend');
+                                }
+                            }
                             
                             // Clear all possible timer keys aggressively
                             try {
