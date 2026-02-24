@@ -446,6 +446,26 @@ export const renderMyTasksPage = async () => {
         }
     }
     
+    // Debug: Check if My Tasks page is checking backend timer status
+    console.log('My Tasks - Monitoring backend timer status calls...');
+    
+    // Override fetch to log timer-related API calls
+    const originalFetch = window.fetch;
+    window.fetch = function(...args) {
+        const url = args[0];
+        if (typeof url === 'string' && (url.includes('/time-entries/status') || url.includes('/time-entries'))) {
+            console.log('My Tasks - Timer API call detected:', url, args[1]);
+        }
+        return originalFetch.apply(this, args).then(response => {
+            if (typeof url === 'string' && (url.includes('/time-entries/status') || url.includes('/time-entries'))) {
+                response.clone().json().then(data => {
+                    console.log('My Tasks - Timer API response:', data);
+                }).catch(() => {});
+            }
+            return response;
+        });
+    };
+    
     if (!empId) {
         try { empId = await resolveCurrentEmployeeId(); } catch { }
         if (empId) { try { state.user = { ...(state.user || {}), id: empId }; } catch { } }
