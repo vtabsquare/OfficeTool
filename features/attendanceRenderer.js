@@ -197,53 +197,60 @@ export async function performCheckOut(employeeId, location = null) {
                             const stopResult = await stopResponse.json();
                             console.log('[ATTENDANCE-RENDERER] Task timer stopped successfully from backend:', stopResult);
                             
-                            // Comprehensive cleanup and UI refresh
+                            // Use the same logic as My Tasks page to ensure proper state management
                             try {
                                 const user = state?.user || window.state?.user || {};
                                 const empId = String((user.id || user.employee_id || user.employeeId || '')).trim();
                                 const activeKey = `tt_active_${empId}`;
                                 
-                                // Clear all timer-related localStorage keys for this user
-                                console.log('[ATTENDANCE-RENDERER] Clearing all timer-related localStorage keys...');
+                                console.log('[ATTENDANCE-RENDERER] Using My Tasks page logic to stop timer...');
                                 
-                                // Clear active task
-                                localStorage.removeItem(activeKey);
+                                // Get the active task data before clearing
+                                const activeData = localStorage.getItem(activeKey);
+                                let activeTask = null;
                                 
-                                // Clear any accumulated time keys for today
-                                const today = new Date();
-                                const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-                                
-                                // Find and clear all timer-related keys for this user
-                                const keysToRemove = [];
-                                for (let i = 0; i < localStorage.length; i++) {
-                                    const key = localStorage.key(i);
-                                    if (key && (key.includes('tt_active_') || key.includes('tt_accum_')) && key.toLowerCase().includes(empId.toLowerCase())) {
-                                        keysToRemove.push(key);
+                                if (activeData) {
+                                    activeTask = JSON.parse(activeData);
+                                    console.log('[ATTENDANCE-RENDERER] Active task found:', activeTask);
+                                    
+                                    // Calculate elapsed time and update accumulated seconds (same as My Tasks)
+                                    if (activeTask.started_at && !activeTask.paused) {
+                                        const elapsed = Math.floor((Date.now() - Number(activeTask.started_at)) / 1000);
+                                        const totalAccumulated = (activeTask.accumulated || 0) + elapsed;
+                                        
+                                        // Update accumulated time for this task
+                                        const today = new Date();
+                                        const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+                                        const perTaskKey = `tt_accum_${empId}_${activeTask.task_guid}_${todayStr}`;
+                                        const currentSecs = Number(localStorage.getItem(perTaskKey) || '0') || 0;
+                                        localStorage.setItem(perTaskKey, String(Math.max(0, totalAccumulated | 0)));
+                                        
+                                        console.log('[ATTENDANCE-RENDERER] Updated accumulated time:', totalAccumulated);
                                     }
                                 }
                                 
-                                keysToRemove.forEach(key => {
-                                    localStorage.removeItem(key);
-                                    console.log(`[ATTENDANCE-RENDERER] Removed key: ${key}`);
-                                });
+                                // Clear the active task (same as My Tasks clearActive function)
+                                localStorage.removeItem(activeKey);
+                                console.log('[ATTENDANCE-RENDERER] Cleared active task from localStorage');
                                 
-                                console.log('[ATTENDANCE-RENDERER] Cleared all timer-related localStorage keys');
-                                
-                                // Force a page refresh to update the UI with delay to ensure backend sync
+                                // If we're on the My Tasks page, trigger a re-render of just the timer section
                                 if (window.location.hash === '#/time-my-tasks' || window.location.hash === '#/time-my-tasks/') {
-                                    console.log('[ATTENDANCE-RENDERER] On My Tasks page, forcing refresh after delay...');
+                                    console.log('[ATTENDANCE-RENDERER] On My Tasks page, updating timer UI directly...');
                                     
-                                    // Wait a moment for backend to fully sync, then refresh
+                                    // Find and update the timer button directly
                                     setTimeout(() => {
-                                        const currentHash = window.location.hash;
-                                        console.log('[ATTENDANCE-RENDERER] Triggering page refresh now');
-                                        window.location.hash = '#/';
-                                        setTimeout(() => {
-                                            window.location.hash = currentHash;
-                                        }, 50);
-                                    }, 500);
-                                } else {
-                                    console.log('[ATTENDANCE-RENDERER] Not on My Tasks page, UI will update when user navigates there');
+                                        const taskRows = document.querySelectorAll('tr[data-guid]');
+                                        taskRows.forEach(row => {
+                                            const guid = row.getAttribute('data-guid');
+                                            if (guid === statusData.task_guid) {
+                                                const timerBtn = row.querySelector('.action-btn.toggle-timer i');
+                                                if (timerBtn) {
+                                                    timerBtn.className = 'fa-solid fa-pause';
+                                                    console.log('[ATTENDANCE-RENDERER] Updated timer button to pause state');
+                                                }
+                                            }
+                                        });
+                                    }, 200);
                                 }
                             } catch (uiError) {
                                 console.warn('[ATTENDANCE-RENDERER] Error updating UI after timer stop:', uiError);
