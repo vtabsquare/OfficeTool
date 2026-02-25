@@ -7596,13 +7596,14 @@ def create_employee():
                     print(f"   [OK] Login created: {email} | Access Level: {access_level} | User ID: {user_id}")
                     print(f"   [FETCH] Create result: {result}")
                     
-                    # Send login credentials email for external uploads
-                    if auto_generated_id:
-                        print(f"\n[MAIL] Sending login credentials email for external upload...")
+                    # Send login credentials email for external uploads and onboarding flow.
+                    if auto_generated_id or data.get("send_credentials_email", False):
+                        print(f"\n[MAIL] Sending login credentials email...")
                         credentials = {
                             'username': email,
                             'password': default_password
                         }
+                        
                         employee_data = {
                             'email': email,
                             'firstname': first_name,
@@ -12411,6 +12412,8 @@ def verify_documents_and_complete(record_id):
             # Flag all onboarding-created employees as Intern so they
             # automatically participate in the Interns view filtering.
             "employee_flag": "Intern",
+            # Ensure onboarding flow sends login credentials email.
+            "send_credentials_email": True,
         }
         if doj:
             employee_create_payload["doj"] = doj
