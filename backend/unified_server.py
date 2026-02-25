@@ -13374,6 +13374,11 @@ def ai_query():
             "chat_get_unread": {"module": "chat", "min_role": "L1"},
             "chat_read_conversation": {"module": "chat", "min_role": "L1"},
             "chat_reply": {"module": "chat", "min_role": "L1"},
+            "fetch_my_projects": {"module": "projects", "min_role": "L1"},
+            "create_project": {"module": "projects", "min_role": "L2"},
+            "fetch_clients": {"module": "clients", "min_role": "L1"},
+            "create_client": {"module": "clients", "min_role": "L2"},
+            "fetch_inbox_approvals": {"module": "inbox", "min_role": "L1"},
         }
 
         ROLE_LEVELS = {"L1": 1, "L2": 2, "L3": 3, "L4": 3}
@@ -13583,6 +13588,12 @@ What would you like to say to {employee_name}?"""
                         response_data["answer"] = f"⏹️ {action_result.get('message', 'Timer stopped!')}"
                         response_data["actionResult"] = action_result
                         response_data["taskAction"] = "stop_timer"
+                    # Project / Client / Inbox view & create actions – show formatted message
+                    elif action.get("type") in (
+                        "fetch_my_projects", "fetch_clients", "fetch_inbox_approvals",
+                        "create_project", "create_client",
+                    ):
+                        response_data["answer"] = action_result.get("message", "Done.")
                     else:
                         # Normal success - append message
                         response_data["answer"] += f"\n\n🎉 {action_result.get('message')}"
@@ -13608,6 +13619,8 @@ What would you like to say to {employee_name}?"""
             scope = "assets"
         elif any(kw in question_lower for kw in ["project", "client"]):
             scope = "projects"
+        elif any(kw in question_lower for kw in ["inbox", "approval", "approvals", "pending approval"]):
+            scope = "all"
         elif any(kw in question_lower for kw in ["intern", "trainee"]):
             scope = "interns"
         

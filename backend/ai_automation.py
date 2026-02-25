@@ -146,9 +146,14 @@ AUTOMATION_REGISTRY: Dict[str, Dict[str, Any]] = {
     "check_in": {"min_role": "L1", "handler": "_handle_check_action", "description": "Check in attendance", "audit": "attendance.checkin"},
     "check_out": {"min_role": "L1", "handler": "_handle_check_action", "description": "Check out attendance", "audit": "attendance.checkout"},
     "attendance_submit": {"min_role": "L1", "handler": "handle_attendance_submission_flow", "description": "Submit attendance report for approval", "audit": "attendance.submit"},
-    "attendance_review": {"min_role": "L3", "handler": "handle_attendance_review_flow", "description": "Approve or reject attendance submissions", "audit": "attendance.review"},
+    "attendance_review": {"min_role": "L2", "handler": "handle_attendance_review_flow", "description": "Approve or reject attendance submissions", "audit": "attendance.review"},
     "timesheet_submit": {"min_role": "L1", "handler": "handle_timesheet_submission_flow", "description": "Submit a timesheet entry", "audit": "timesheet.submit"},
-    "timesheet_review": {"min_role": "L3", "handler": "handle_timesheet_review_flow", "description": "Approve or reject timesheet entries", "audit": "timesheet.review"},
+    "timesheet_review": {"min_role": "L2", "handler": "handle_timesheet_review_flow", "description": "Approve or reject timesheet entries", "audit": "timesheet.review"},
+    "project_view": {"min_role": "L1", "handler": "handle_project_view_flow", "description": "View assigned projects", "audit": "project.view"},
+    "project_creation": {"min_role": "L2", "handler": "handle_project_creation_flow", "description": "Create project", "audit": "project.create"},
+    "client_view": {"min_role": "L1", "handler": "handle_client_view_flow", "description": "View clients", "audit": "client.view"},
+    "client_creation": {"min_role": "L2", "handler": "handle_client_creation_flow", "description": "Create client", "audit": "client.create"},
+    "inbox_view": {"min_role": "L1", "handler": "handle_inbox_view_flow", "description": "View inbox approvals", "audit": "inbox.view"},
     "chat_send_message": {"min_role": "L1", "handler": "handle_chat_send_message_flow", "description": "Send internal chat", "audit": "chat.send"},
     "chat_read_messages": {"min_role": "L1", "handler": "handle_chat_read_messages_flow", "description": "Read messages", "audit": "chat.read"},
     "chat_read_conversation": {"min_role": "L1", "handler": "handle_chat_read_conversation_flow", "description": "Read conversation", "audit": "chat.conversation"},
@@ -211,6 +216,25 @@ def _normalize_optional_date(value: str) -> str:
     return value.strip()
 
 
+def _normalize_optional_text(value: str) -> str:
+    text = (value or "").strip()
+    return "" if text.lower() == "skip" else text
+
+
+def _normalize_project_status(value: str) -> str:
+    lookup = {
+        "active": "Active",
+        "in progress": "In Progress",
+        "completed": "Completed",
+        "on hold": "On Hold",
+        "hold": "On Hold",
+    }
+    raw = (value or "").strip().lower()
+    if not raw or raw == "skip":
+        return "Active"
+    return lookup.get(raw, value.strip())
+
+
 def _normalize_task_field(key: str, value: str) -> Any:
     if key == "project_code":
         return value.strip().upper()
@@ -240,6 +264,34 @@ def _build_task_summary(data: Dict[str, Any]) -> str:
         f"• **Due Date:** {data.get('due_date') or 'Not set'}",
     ]
     return "\n".join(lines)
+
+
+def _normalize_project_field(key: str, value: str) -> Any:
+    if key == "project_id":
+        text = _normalize_optional_text(value)
+        return text.upper() if text else ""
+    if key == "project_name":
+        return value.strip()
+    if key == "client_name":
+        return value.strip()
+    if key == "manager":
+        return _normalize_optional_text(value)
+    if key in {"start_date", "end_date"}:
+        return _normalize_optional_date(value)
+    if key == "status":
+        return _normalize_project_status(value)
+    if key == "description":
+        return _normalize_optional_text(value)
+    return value.strip()
+
+
+def _normalize_client_field(key: str, value: str) -> Any:
+    if key == "client_id":
+        text = _normalize_optional_text(value)
+        return text.upper() if text else ""
+    if key in {"client_name", "company_name", "email", "phone", "country", "address"}:
+        return _normalize_optional_text(value)
+    return value.strip()
 
 
 def _normalize_asset_assignment_field(key: str, value: str) -> Any:
@@ -769,6 +821,283 @@ def handle_task_creation_flow(
 
     next_field = TASK_CREATION_FIELDS[state.current_step]
     return f"✓ Got it.\n\n**Step {state.current_step + 1} of {len(TASK_CREATION_FIELDS)}:** {next_field['prompt']}", state, None
+
+
+# ================== PROJECT / CLIENT / INBOX FLOWS ==================
+
+PROJECT_CREATION_FIELDS = [
+    {
+        "key": "project_name",
+        "label": "Project Name",
+        "prompt": "What is the **project name**?",
+        "required": True,
+        "validate": lambda x: len((x or "").strip()) >= 3,
+        "error": "Project name must be at least 3 characters.",
+    },
+    {
+        "key": "client_name",
+        "label": "Client",
+        "prompt": "Which **client** is this project for?",
+        "required": True,
+        "validate": lambda x: len((x or "").strip()) >= 2,
+        "error": "Please provide a client name.",
+    },
+    {
+        "key": "status",
+        "label": "Status",
+        "prompt": "Project status? (Active / In Progress / Completed / On Hold, or type 'skip')",
+        "required": False,
+        "validate": lambda x: True,
+        "error": "",
+    },
+    {
+        "key": "start_date",
+        "label": "Start Date",
+        "prompt": "Start date? (YYYY-MM-DD, 'today', 'tomorrow', or 'skip')",
+        "required": False,
+        "validate": lambda x: True,
+        "error": "",
+    },
+    {
+        "key": "manager",
+        "label": "Manager",
+        "prompt": "Manager name or employee ID (or 'skip')",
+        "required": False,
+        "validate": lambda x: True,
+        "error": "",
+    },
+    {
+        "key": "description",
+        "label": "Description",
+        "prompt": "Short project description (or 'skip')",
+        "required": False,
+        "validate": lambda x: True,
+        "error": "",
+    },
+]
+
+CLIENT_CREATION_FIELDS = [
+    {
+        "key": "client_name",
+        "label": "Client Name",
+        "prompt": "What is the **client contact name**?",
+        "required": True,
+        "validate": lambda x: len((x or "").strip()) >= 2,
+        "error": "Client name is required (min 2 characters).",
+    },
+    {
+        "key": "company_name",
+        "label": "Company",
+        "prompt": "What is the **company name**?",
+        "required": True,
+        "validate": lambda x: len((x or "").strip()) >= 2,
+        "error": "Company name is required (min 2 characters).",
+    },
+    {
+        "key": "email",
+        "label": "Email",
+        "prompt": "Client email address (or 'skip')",
+        "required": False,
+        "validate": lambda x: True,
+        "error": "",
+    },
+    {
+        "key": "phone",
+        "label": "Phone",
+        "prompt": "Phone number (or 'skip')",
+        "required": False,
+        "validate": lambda x: True,
+        "error": "",
+    },
+    {
+        "key": "country",
+        "label": "Country",
+        "prompt": "Country (or 'skip')",
+        "required": False,
+        "validate": lambda x: True,
+        "error": "",
+    },
+    {
+        "key": "address",
+        "label": "Address",
+        "prompt": "Address (or 'skip')",
+        "required": False,
+        "validate": lambda x: True,
+        "error": "",
+    },
+]
+
+
+def handle_project_view_flow(
+    user_message: str,
+    state: 'ConversationState',
+    user_employee_id: Optional[str] = None,
+    user_employee_name: Optional[str] = None,
+    user_employee_email: Optional[str] = None,
+    user_access: Optional[Dict[str, Any]] = None,
+) -> Tuple[str, 'ConversationState', Optional[Dict[str, Any]]]:
+    """Fetch projects – L1 sees own, L2+ sees all."""
+    state.reset()
+    role_level = _user_role_level(user_access)
+    scope = "all" if role_level >= ROLE_ORDER["L2"] else "mine"
+    action = {
+        "type": "fetch_my_projects",
+        "scope": scope,
+        "employee_id": user_employee_id or "",
+        "employee_name": user_employee_name or "",
+        "employee_email": user_employee_email or "",
+    }
+    return "📁 Fetching project details…", state, action
+
+
+def handle_client_view_flow(
+    user_message: str,
+    state: 'ConversationState',
+    user_access: Optional[Dict[str, Any]] = None,
+) -> Tuple[str, 'ConversationState', Optional[Dict[str, Any]]]:
+    """Fetch client list."""
+    state.reset()
+    action = {"type": "fetch_clients"}
+    return "🏢 Fetching client list…", state, action
+
+
+def handle_inbox_view_flow(
+    user_message: str,
+    state: 'ConversationState',
+    user_employee_id: Optional[str] = None,
+    user_access: Optional[Dict[str, Any]] = None,
+) -> Tuple[str, 'ConversationState', Optional[Dict[str, Any]]]:
+    """Fetch inbox approvals – L1 sees own, L2+ sees all pending for review."""
+    state.reset()
+    text = (user_message or "").strip().lower()
+    status_filter = "all"
+    if "pending" in text:
+        status_filter = "pending"
+    elif "completed" in text or "accepted" in text or "approved" in text:
+        status_filter = "completed"
+    elif "rejected" in text:
+        status_filter = "rejected"
+
+    role_level = _user_role_level(user_access)
+    action = {
+        "type": "fetch_inbox_approvals",
+        "status_filter": status_filter,
+        "employee_id": user_employee_id or "",
+        "role_level": role_level,
+    }
+    return "📥 Fetching inbox approvals…", state, action
+
+
+def handle_project_creation_flow(
+    user_message: str,
+    state: 'ConversationState',
+) -> Tuple[str, 'ConversationState', Optional[Dict[str, Any]]]:
+    """Multi-step project creation (L2+)."""
+    if state.active_flow != "project_creation":
+        state.active_flow = "project_creation"
+        state.current_step = 0
+        state.collected_data = {}
+        state.awaiting_confirmation = False
+        first = PROJECT_CREATION_FIELDS[0]
+        return f"Let's create a project.\n\n**Step 1 of {len(PROJECT_CREATION_FIELDS)}:** {first['prompt']}", state, None
+
+    if user_message.strip().lower() in {"cancel", "stop", "quit"}:
+        state.reset()
+        return "Project creation cancelled.", state, None
+
+    if state.awaiting_confirmation:
+        answer = user_message.strip().lower()
+        if answer in {"yes", "y", "confirm", "ok", "proceed"}:
+            action = {
+                "type": "create_project",
+                "data": state.collected_data.copy(),
+            }
+            state.reset()
+            return "✅ Creating the project…", state, action
+        if answer in {"no", "n"}:
+            state.awaiting_confirmation = False
+            state.current_step = 0
+            state.collected_data = {}
+            return f"Okay, let's restart.\n\n**Step 1 of {len(PROJECT_CREATION_FIELDS)}:** {PROJECT_CREATION_FIELDS[0]['prompt']}", state, None
+        return "Please type **'yes'** to create or **'no'** to restart.", state, None
+
+    field = PROJECT_CREATION_FIELDS[state.current_step]
+    if field.get("required") and not field["validate"](user_message):
+        return f"❌ {field['error']}\n\n{field['prompt']}", state, None
+
+    state.collected_data[field["key"]] = _normalize_project_field(field["key"], user_message)
+    state.current_step += 1
+
+    if state.current_step >= len(PROJECT_CREATION_FIELDS):
+        state.awaiting_confirmation = True
+        summary = "\n".join([
+            f"• **Project:** {state.collected_data.get('project_name')}",
+            f"• **Client:** {state.collected_data.get('client_name')}",
+            f"• **Status:** {state.collected_data.get('status') or 'Active'}",
+            f"• **Start Date:** {state.collected_data.get('start_date') or 'Not set'}",
+            f"• **Manager:** {state.collected_data.get('manager') or 'Not set'}",
+            f"• **Description:** {state.collected_data.get('description') or 'Not provided'}",
+        ])
+        return f"Project summary:\n\n{summary}\n\nType **'yes'** to create or **'no'** to restart.", state, None
+
+    nf = PROJECT_CREATION_FIELDS[state.current_step]
+    return f"✓ Noted.\n\n**Step {state.current_step + 1} of {len(PROJECT_CREATION_FIELDS)}:** {nf['prompt']}", state, None
+
+
+def handle_client_creation_flow(
+    user_message: str,
+    state: 'ConversationState',
+) -> Tuple[str, 'ConversationState', Optional[Dict[str, Any]]]:
+    """Multi-step client creation (L2+)."""
+    if state.active_flow != "client_creation":
+        state.active_flow = "client_creation"
+        state.current_step = 0
+        state.collected_data = {}
+        state.awaiting_confirmation = False
+        first = CLIENT_CREATION_FIELDS[0]
+        return f"Let's create a client.\n\n**Step 1 of {len(CLIENT_CREATION_FIELDS)}:** {first['prompt']}", state, None
+
+    if user_message.strip().lower() in {"cancel", "stop", "quit"}:
+        state.reset()
+        return "Client creation cancelled.", state, None
+
+    if state.awaiting_confirmation:
+        answer = user_message.strip().lower()
+        if answer in {"yes", "y", "confirm", "ok", "proceed"}:
+            action = {
+                "type": "create_client",
+                "data": state.collected_data.copy(),
+            }
+            state.reset()
+            return "✅ Creating the client…", state, action
+        if answer in {"no", "n"}:
+            state.awaiting_confirmation = False
+            state.current_step = 0
+            state.collected_data = {}
+            return f"Okay, let's restart.\n\n**Step 1 of {len(CLIENT_CREATION_FIELDS)}:** {CLIENT_CREATION_FIELDS[0]['prompt']}", state, None
+        return "Please type **'yes'** to create or **'no'** to restart.", state, None
+
+    field = CLIENT_CREATION_FIELDS[state.current_step]
+    if field.get("required") and not field["validate"](user_message):
+        return f"❌ {field['error']}\n\n{field['prompt']}", state, None
+
+    state.collected_data[field["key"]] = _normalize_client_field(field["key"], user_message)
+    state.current_step += 1
+
+    if state.current_step >= len(CLIENT_CREATION_FIELDS):
+        state.awaiting_confirmation = True
+        summary = "\n".join([
+            f"• **Client Name:** {state.collected_data.get('client_name')}",
+            f"• **Company:** {state.collected_data.get('company_name')}",
+            f"• **Email:** {state.collected_data.get('email') or 'Not provided'}",
+            f"• **Phone:** {state.collected_data.get('phone') or 'Not provided'}",
+            f"• **Country:** {state.collected_data.get('country') or 'Not provided'}",
+            f"• **Address:** {state.collected_data.get('address') or 'Not provided'}",
+        ])
+        return f"Client summary:\n\n{summary}\n\nType **'yes'** to create or **'no'** to restart.", state, None
+
+    nf = CLIENT_CREATION_FIELDS[state.current_step]
+    return f"✓ Noted.\n\n**Step {state.current_step + 1} of {len(CLIENT_CREATION_FIELDS)}:** {nf['prompt']}", state, None
 
 
 # ================== ASSET ASSIGNMENT FLOW ==================
@@ -1331,6 +1660,52 @@ AUTOMATION_INTENTS = {
         ],
         "flow": "chat_reply",
         "description": "Reply to a message"
+    },
+    # Project / Client / Inbox Automation
+    "view_projects": {
+        "keywords": [
+            "my projects", "show my projects", "list my projects", "view projects",
+            "show projects", "list projects", "project list", "assigned projects",
+            "what projects", "which projects"
+        ],
+        "flow": "project_view",
+        "description": "View projects"
+    },
+    "create_project": {
+        "keywords": [
+            "create project", "create a project", "new project", "add project",
+            "add a project", "add new project", "project creation",
+            "create a new project"
+        ],
+        "flow": "project_creation",
+        "description": "Create a new project"
+    },
+    "view_clients": {
+        "keywords": [
+            "my clients", "show clients", "list clients", "view clients",
+            "client list", "show my clients", "all clients", "who are our clients"
+        ],
+        "flow": "client_view",
+        "description": "View clients"
+    },
+    "create_client": {
+        "keywords": [
+            "create client", "create a client", "new client", "add client",
+            "add a client", "add new client", "client creation",
+            "create a new client"
+        ],
+        "flow": "client_creation",
+        "description": "Create a new client"
+    },
+    "view_inbox": {
+        "keywords": [
+            "my inbox", "show inbox", "inbox approvals", "pending approvals",
+            "my approvals", "show approvals", "view inbox", "view approvals",
+            "completed approvals", "inbox", "approval status",
+            "show my approvals", "check approvals", "approval requests"
+        ],
+        "flow": "inbox_view",
+        "description": "View inbox approvals"
     },
 }
 
@@ -2695,6 +3070,31 @@ def process_automation(
                 "state": state.to_dict(),
                 "action": action
             }
+        # Project / Client / Inbox flows
+        elif state.active_flow == "project_creation":
+            denied = _ensure_flow("project_creation")
+            if denied:
+                return denied
+            response, state, action = handle_project_creation_flow(user_message, state)
+            _log_automation_event("project_creation", user_employee_id, {"success": True, "message": response})
+            return {
+                "is_automation": True,
+                "response": response,
+                "state": state.to_dict(),
+                "action": action,
+            }
+        elif state.active_flow == "client_creation":
+            denied = _ensure_flow("client_creation")
+            if denied:
+                return denied
+            response, state, action = handle_client_creation_flow(user_message, state)
+            _log_automation_event("client_creation", user_employee_id, {"success": True, "message": response})
+            return {
+                "is_automation": True,
+                "response": response,
+                "state": state.to_dict(),
+                "action": action,
+            }
     
     # Check for new automation intent
     intent = detect_automation_intent(user_message)
@@ -2920,6 +3320,67 @@ def process_automation(
                 "response": response,
                 "state": state.to_dict(),
                 "action": action
+            }
+        # Project / Client / Inbox intents
+        elif intent["flow"] == "project_view":
+            denied = _ensure_flow("project_view")
+            if denied:
+                return denied
+            response, state, action = handle_project_view_flow(user_message, state, user_employee_id, user_employee_name, user_employee_email, user_access)
+            _log_automation_event("project_view", user_employee_id, {"success": True, "message": response})
+            return {
+                "is_automation": True,
+                "response": response,
+                "state": state.to_dict(),
+                "action": action,
+            }
+        elif intent["flow"] == "project_creation":
+            denied = _ensure_flow("project_creation")
+            if denied:
+                return denied
+            response, state, action = handle_project_creation_flow(user_message, state)
+            _log_automation_event("project_creation", user_employee_id, {"success": True, "message": response})
+            return {
+                "is_automation": True,
+                "response": response,
+                "state": state.to_dict(),
+                "action": action,
+            }
+        elif intent["flow"] == "client_view":
+            denied = _ensure_flow("client_view")
+            if denied:
+                return denied
+            response, state, action = handle_client_view_flow(user_message, state, user_access)
+            _log_automation_event("client_view", user_employee_id, {"success": True, "message": response})
+            return {
+                "is_automation": True,
+                "response": response,
+                "state": state.to_dict(),
+                "action": action,
+            }
+        elif intent["flow"] == "client_creation":
+            denied = _ensure_flow("client_creation")
+            if denied:
+                return denied
+            response, state, action = handle_client_creation_flow(user_message, state)
+            _log_automation_event("client_creation", user_employee_id, {"success": True, "message": response})
+            return {
+                "is_automation": True,
+                "response": response,
+                "state": state.to_dict(),
+                "action": action,
+            }
+        elif intent["flow"] == "inbox_view":
+            denied = _ensure_flow("inbox_view")
+            if denied:
+                return denied
+            response, state, action = handle_inbox_view_flow(user_message, state, user_employee_id, user_access)
+            _log_automation_event("inbox_view", user_employee_id, {"success": True, "message": response})
+            return {
+                "is_automation": True,
+                "response": response,
+                "state": state.to_dict(),
+                "action": action,
             }
     
     # Not an automation flow
@@ -4502,6 +4963,328 @@ Please review in HR Tool.
             }
         except Exception as e:
             return {"success": False, "error": f"Error updating asset: {e}"}
+
+    # ==================== FETCH MY PROJECTS ====================
+    if action["type"] == "fetch_my_projects":
+        try:
+            import requests as req
+            import os as _os
+            from dataverse_helper import get_access_token
+
+            scope = action.get("scope", "mine")
+            employee_id = action.get("employee_id", "")
+            employee_name = action.get("employee_name", "")
+            employee_email = action.get("employee_email", "")
+
+            tk = get_access_token()
+            headers = {
+                "Authorization": f"Bearer {tk}",
+                "Accept": "application/json",
+                "OData-Version": "4.0",
+            }
+            dv = _os.getenv("RESOURCE", "")
+            api = "/api/data/v9.2"
+
+            project_url = (
+                f"{dv}{api}/crc6f_hr_projectheaders?"
+                "$select=crc6f_projectid,crc6f_projectname,crc6f_client,crc6f_manager,"
+                "crc6f_projectstatus,crc6f_startdate,crc6f_enddate,crc6f_hr_projectheaderid"
+            )
+            resp = req.get(project_url, headers=headers, timeout=30)
+            projects_data = resp.json().get("value", []) if resp.ok else []
+
+            if scope == "mine" and employee_id:
+                emp_lower = employee_id.lower()
+                name_lower = (employee_name or "").lower()
+                email_lower = (employee_email or "").lower()
+
+                # Also fetch contributor memberships
+                contrib_url = f"{dv}{api}/crc6f_hr_projectcontributorses?$filter=crc6f_employeeid eq '{employee_id.upper()}'&$select=crc6f_projectid"
+                try:
+                    cr = req.get(contrib_url, headers=headers, timeout=30)
+                    contrib_pids = {c.get("crc6f_projectid") for c in (cr.json().get("value", []) if cr.ok else [])}
+                except Exception:
+                    contrib_pids = set()
+
+                filtered = []
+                for p in projects_data:
+                    pid = p.get("crc6f_projectid") or ""
+                    manager = (p.get("crc6f_manager") or "").lower()
+                    is_mine = (
+                        pid in contrib_pids
+                        or (emp_lower and emp_lower in manager)
+                        or (name_lower and name_lower in manager)
+                        or (email_lower and email_lower in manager)
+                    )
+                    if is_mine:
+                        filtered.append(p)
+                projects_data = filtered
+
+            items = []
+            for p in projects_data[:30]:
+                items.append({
+                    "project_id": p.get("crc6f_projectid"),
+                    "project_name": p.get("crc6f_projectname"),
+                    "client": p.get("crc6f_client"),
+                    "manager": p.get("crc6f_manager"),
+                    "status": p.get("crc6f_projectstatus"),
+                    "start_date": p.get("crc6f_startdate"),
+                    "end_date": p.get("crc6f_enddate"),
+                    "guid": p.get("crc6f_hr_projectheaderid"),
+                })
+
+            if not items:
+                return {"success": True, "message": "📁 No projects found.", "projects": []}
+
+            lines = [f"📁 **Projects ({len(items)}):**\n"]
+            for i, proj in enumerate(items, 1):
+                name = proj.get("project_name") or proj.get("project_id") or "Unnamed"
+                status = proj.get("status") or ""
+                client = proj.get("client") or ""
+                lines.append(f"**{i}.** {name} — {client} ({status})")
+
+            return {
+                "success": True,
+                "message": "\n".join(lines),
+                "projects": items,
+            }
+        except Exception as e:
+            import traceback; traceback.print_exc()
+            return {"success": False, "error": f"Error fetching projects: {e}"}
+
+    # ==================== FETCH CLIENTS ====================
+    if action["type"] == "fetch_clients":
+        try:
+            import requests as req
+            import os as _os
+            from dataverse_helper import get_access_token
+
+            tk = get_access_token()
+            headers = {
+                "Authorization": f"Bearer {tk}",
+                "Accept": "application/json",
+                "OData-Version": "4.0",
+            }
+            dv = _os.getenv("RESOURCE", "")
+            api = "/api/data/v9.2"
+
+            client_url = (
+                f"{dv}{api}/crc6f_hr_clients?"
+                "$select=crc6f_clientid,crc6f_clientname,crc6f_companyname,"
+                "crc6f_email,crc6f_phone,crc6f_country,crc6f_address,crc6f_hr_clientid"
+                "&$top=100"
+            )
+            resp = req.get(client_url, headers=headers, timeout=30)
+            clients_data = resp.json().get("value", []) if resp.ok else []
+
+            items = []
+            for c in clients_data:
+                items.append({
+                    "client_id": c.get("crc6f_clientid"),
+                    "client_name": c.get("crc6f_clientname"),
+                    "company_name": c.get("crc6f_companyname"),
+                    "email": c.get("crc6f_email"),
+                    "phone": c.get("crc6f_phone"),
+                    "country": c.get("crc6f_country"),
+                    "guid": c.get("crc6f_hr_clientid"),
+                })
+
+            if not items:
+                return {"success": True, "message": "🏢 No clients found.", "clients": []}
+
+            lines = [f"🏢 **Clients ({len(items)}):**\n"]
+            for i, cl in enumerate(items, 1):
+                name = cl.get("client_name") or cl.get("company_name") or "Unnamed"
+                company = cl.get("company_name") or ""
+                lines.append(f"**{i}.** {name} — {company}")
+
+            return {
+                "success": True,
+                "message": "\n".join(lines),
+                "clients": items,
+            }
+        except Exception as e:
+            import traceback; traceback.print_exc()
+            return {"success": False, "error": f"Error fetching clients: {e}"}
+
+    # ==================== FETCH INBOX APPROVALS ====================
+    if action["type"] == "fetch_inbox_approvals":
+        try:
+            import requests as req
+
+            employee_id = action.get("employee_id", "")
+            status_filter = action.get("status_filter", "all")
+            role_level = action.get("role_level", 1)
+
+            # Timesheet submissions
+            ts_params = {}
+            if role_level < ROLE_ORDER["L2"]:
+                ts_params["employee_id"] = employee_id
+            if status_filter and status_filter != "all":
+                mapped = {"completed": "accepted", "pending": "pending", "rejected": "rejected"}
+                ts_params["status"] = mapped.get(status_filter, status_filter)
+
+            ts_items = []
+            try:
+                ts_resp = req.get(
+                    f"{BACKEND_API_INTERNAL_URL}/time-tracker/timesheet/submissions",
+                    params=ts_params, timeout=20,
+                )
+                if ts_resp.ok:
+                    ts_items = ts_resp.json().get("items", [])
+            except Exception:
+                pass
+
+            # Attendance submissions
+            att_items = []
+            try:
+                att_resp = req.get(
+                    f"{BACKEND_API_INTERNAL_URL}/api/attendance/submissions",
+                    params=ts_params, timeout=20,
+                )
+                if att_resp.ok:
+                    att_items = att_resp.json().get("items", [])
+            except Exception:
+                pass
+
+            all_items = []
+            for t in ts_items:
+                all_items.append({
+                    "type": "Timesheet",
+                    "id": t.get("id") or t.get("entry_id"),
+                    "employee_id": t.get("employee_id"),
+                    "status": t.get("status"),
+                    "submitted_at": t.get("submitted_at"),
+                    "details": t.get("description") or t.get("project_id") or "",
+                })
+            for a in att_items:
+                all_items.append({
+                    "type": "Attendance",
+                    "id": a.get("id") or a.get("marker_id"),
+                    "employee_id": a.get("employee_id"),
+                    "status": a.get("status"),
+                    "submitted_at": a.get("submitted_at"),
+                    "details": a.get("month") or "",
+                })
+
+            if not all_items:
+                return {"success": True, "message": "📥 No inbox approvals found.", "approvals": []}
+
+            pending_count = sum(1 for i in all_items if (i.get("status") or "").lower() == "pending")
+            accepted_count = sum(1 for i in all_items if (i.get("status") or "").lower() in ("accepted", "approved"))
+            rejected_count = sum(1 for i in all_items if (i.get("status") or "").lower() == "rejected")
+
+            lines = [f"📥 **Inbox Approvals ({len(all_items)} total):**\n"]
+            lines.append(f"• Pending: **{pending_count}**")
+            lines.append(f"• Accepted: **{accepted_count}**")
+            lines.append(f"• Rejected: **{rejected_count}**\n")
+
+            shown = all_items[:15]
+            for i, item in enumerate(shown, 1):
+                typ = item.get("type", "")
+                status = item.get("status", "")
+                emp = item.get("employee_id", "")
+                details = item.get("details", "")
+                lines.append(f"**{i}.** [{typ}] {emp} — {status} {details}")
+
+            if len(all_items) > 15:
+                lines.append(f"\n_…and {len(all_items) - 15} more_")
+
+            return {
+                "success": True,
+                "message": "\n".join(lines),
+                "approvals": all_items,
+                "pending_count": pending_count,
+                "accepted_count": accepted_count,
+                "rejected_count": rejected_count,
+            }
+        except Exception as e:
+            import traceback; traceback.print_exc()
+            return {"success": False, "error": f"Error fetching inbox: {e}"}
+
+    # ==================== CREATE PROJECT ====================
+    if action["type"] == "create_project":
+        try:
+            import requests as req
+            import os as _os
+            import time
+            from dataverse_helper import get_access_token, create_record as dv_create
+
+            data = action.get("data") or {}
+            project_name = (data.get("project_name") or "").strip()
+            client_name = (data.get("client_name") or "").strip()
+            if not project_name or not client_name:
+                return {"success": False, "error": "Project name and client are required."}
+
+            # Auto-generate project ID
+            prefix = "".join(c for c in project_name[:4].upper() if c.isalpha()) or "PROJ"
+            project_id = f"{prefix}{int(time.time()) % 100000}"
+
+            entity = "crc6f_hr_projectheaders"
+            payload = {
+                "crc6f_projectid": project_id,
+                "crc6f_projectname": project_name,
+                "crc6f_client": client_name,
+                "crc6f_projectstatus": data.get("status") or "Active",
+            }
+            if data.get("start_date"):
+                payload["crc6f_startdate"] = data["start_date"]
+            if data.get("manager"):
+                payload["crc6f_manager"] = data["manager"]
+            if data.get("description"):
+                payload["crc6f_projectdescription"] = data["description"]
+
+            dv_create(entity, payload)
+
+            return {
+                "success": True,
+                "message": f"📁 Project **{project_name}** (ID: {project_id}) created successfully!",
+                "project_id": project_id,
+            }
+        except Exception as e:
+            import traceback; traceback.print_exc()
+            return {"success": False, "error": f"Error creating project: {e}"}
+
+    # ==================== CREATE CLIENT ====================
+    if action["type"] == "create_client":
+        try:
+            import time
+            from dataverse_helper import create_record as dv_create
+
+            data = action.get("data") or {}
+            client_name = (data.get("client_name") or "").strip()
+            company_name = (data.get("company_name") or "").strip()
+            if not client_name or not company_name:
+                return {"success": False, "error": "Client name and company are required."}
+
+            prefix = "".join(c for c in company_name[:3].upper() if c.isalpha()) or "CLI"
+            client_id = f"{prefix}{int(time.time()) % 100000}"
+
+            entity = "crc6f_hr_clients"
+            payload = {
+                "crc6f_clientid": client_id,
+                "crc6f_clientname": client_name,
+                "crc6f_companyname": company_name,
+            }
+            if data.get("email"):
+                payload["crc6f_email"] = data["email"]
+            if data.get("phone"):
+                payload["crc6f_phone"] = data["phone"]
+            if data.get("country"):
+                payload["crc6f_country"] = data["country"]
+            if data.get("address"):
+                payload["crc6f_address"] = data["address"]
+
+            dv_create(entity, payload)
+
+            return {
+                "success": True,
+                "message": f"🏢 Client **{client_name}** ({company_name}, ID: {client_id}) created successfully!",
+                "client_id": client_id,
+            }
+        except Exception as e:
+            import traceback; traceback.print_exc()
+            return {"success": False, "error": f"Error creating client: {e}"}
 
     return {
         "success": False,
