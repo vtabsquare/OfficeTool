@@ -1934,15 +1934,38 @@ export const renderMyTimesheetPage = async () => {
             const currentHHMM = formatSeconds(currentSeconds) || '';
 
             const body = `
-                <div style="display:flex; flex-direction:column; gap:12px;">
-                    <div style="color:#475569; font-size:13px;">
-                        <div><strong>Date:</strong> ${workDate}</div>
-                        <div><strong>Project:</strong> ${row.project_id || row.project_name || '-'}</div>
-                        <div><strong>Task:</strong> ${row.task_id || row.task_name || '-'}</div>
-                    </div>
-                    <div class="form-group" style="display:flex; flex-direction:column; gap:6px;">
-                        <label for="ts-edit-time" style="font-weight:600;">Time (HH:MM)</label>
-                        <input id="ts-edit-time" type="text" placeholder="HH:MM" value="${currentHHMM}" style="padding:10px; border:1px solid #d7dce4; border-radius:10px;" />
+                <div class="leave-form timesheet-edit-form">
+                    <div class="form-section">
+                        <div class="form-section-header">
+                            <div>
+                                <p class="form-eyebrow">Timesheet entry</p>
+                                <h3>Update logged hours</h3>
+                            </div>
+                            <p class="form-section-copy">Review the selected row details and adjust the duration.</p>
+                        </div>
+
+                        <div class="form-grid two-col">
+                            <div class="form-field">
+                                <label class="form-label">Date</label>
+                                <div class="input-control">${workDate}</div>
+                            </div>
+                            <div class="form-field">
+                                <label class="form-label">Project</label>
+                                <div class="input-control">${row.project_id || row.project_name || '-'}</div>
+                            </div>
+                            <div class="form-field">
+                                <label class="form-label">Task</label>
+                                <div class="input-control">${row.task_id || row.task_name || '-'}</div>
+                            </div>
+                            <div class="form-field with-icon">
+                                <label class="form-label" for="ts-edit-time">Time (HH:MM)</label>
+                                <div class="input-wrapper">
+                                    <i class="fa-regular fa-clock"></i>
+                                    <input class="input-control" id="ts-edit-time" type="text" placeholder="HH:MM" value="${currentHHMM}" />
+                                </div>
+                                <p class="helper-text">Use HH:MM format (example: 01:30).</p>
+                            </div>
+                        </div>
                     </div>
                 </div>`;
 
