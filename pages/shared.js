@@ -1607,21 +1607,41 @@ export const renderMyTimesheetPage = async () => {
             const projOpts = ['<option value="">Select project</option>'].concat(projects.map(p => `<option value="${p.crc6f_projectid || p.id}">${p.crc6f_projectname || p.name || p.crc6f_projectid || p.id}</option>`)).join('');
             const taskOpts = ['<option value="">Select task</option>'].concat(tasks.map(t => `<option value="${t.guid}">${t.task_name || t.task_id}</option>`)).join('');
             const body = `
-              <div id="myts-add-row-form" class="form-grid-2-col myts-add-row-form">
-                <div class="form-group">
-                  <label>Project</label>
-                  <select id="mr-project">${projOpts}</select>
-                </div>
-                <div class="form-group">
-                  <label>Task</label>
-                  <select id="mr-task">${taskOpts}</select>
-                </div>
-                <div class="form-group">
-                  <label>Billing</label>
-                  <select id="mr-billing">
-                    <option value="Non-billable" selected>Non-billable</option>
-                    <option value="Billable">Billable</option>
-                  </select>
+              <div id="myts-add-row-form" class="leave-form timesheet-edit-form">
+                <div class="form-section">
+                  <div class="form-section-header">
+                    <div>
+                      <p class="form-eyebrow">Timesheet entry</p>
+                      <h3>Add timesheet row</h3>
+                    </div>
+                    <p class="form-section-copy">Select project, task, and billing type for the new row.</p>
+                  </div>
+                  <div class="form-grid two-col">
+                    <div class="form-field with-icon">
+                      <label class="form-label" for="mr-project">Project</label>
+                      <div class="input-wrapper">
+                        <i class="fa-solid fa-folder-tree"></i>
+                        <select class="input-control" id="mr-project">${projOpts}</select>
+                      </div>
+                    </div>
+                    <div class="form-field with-icon">
+                      <label class="form-label" for="mr-task">Task</label>
+                      <div class="input-wrapper">
+                        <i class="fa-solid fa-list-check"></i>
+                        <select class="input-control" id="mr-task">${taskOpts}</select>
+                      </div>
+                    </div>
+                    <div class="form-field with-icon">
+                      <label class="form-label" for="mr-billing">Billing</label>
+                      <div class="input-wrapper">
+                        <i class="fa-solid fa-file-invoice-dollar"></i>
+                        <select class="input-control" id="mr-billing">
+                          <option value="Non-billable" selected>Non-billable</option>
+                          <option value="Billable">Billable</option>
+                        </select>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>`;
             renderModal('Add timesheet row', body, 'ts-manual-submit');
