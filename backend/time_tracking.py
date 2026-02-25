@@ -1,6 +1,6 @@
 from flask import Blueprint, request, jsonify
 from datetime import datetime, timezone, timedelta
-import os, json, traceback
+import os, json, traceback, re
 from dataverse_helper import get_access_token, update_record, create_record
 import requests
 import urllib.parse
@@ -201,6 +201,83 @@ def _format_hms(seconds: int) -> str:
 def _safe_date_part(value):
     """Return YYYY-MM-DD part from date/datetime-like strings."""
     return str(value or "").strip()[:10]
+
+
+def _hoursworked_to_seconds(raw_value, formatted_value=None):
+    """
+    Convert Dataverse crc6f_hoursworked variants to seconds.
+
+    Supports:
+    - Decimal hours (e.g. 0.5, "1.25")
+    - Duration-like strings (e.g. "00:30", "01:15:00")
+    - Minute-formatted values (e.g. formatted "30 minutes" or integer 30)
+    """
+
+    def _parse_float(v):
+        if v is None:
+            return None
+        if isinstance(v, (int, float)):
+            return float(v)
+        s = str(v).strip()
+        if not s:
+            return None
+        try:
+            return float(s)
+        except Exception:
+            return None
+
+    def _parse_hhmm_like(v):
+        s = str(v or "").strip()
+        m = re.match(r"^(\d{1,3}):(\d{1,2})(?::(\d{1,2}))?$", s)
+        if not m:
+            return None
+        h = int(m.group(1) or 0)
+        mm = int(m.group(2) or 0)
+        ss = int(m.group(3) or 0)
+        if mm >= 60 or ss >= 60:
+            return None
+        return (h * 3600) + (mm * 60) + ss
+
+    def _parse_minutes_from_text(v):
+        s = str(v or "").strip().lower()
+        if "minute" not in s:
+            return None
+        m = re.search(r"-?\d+(?:\.\d+)?", s)
+        if not m:
+            return None
+        try:
+            mins = float(m.group(0))
+            return max(0, int(round(mins * 60)))
+        except Exception:
+            return None
+
+    # 1) Prefer explicit minute-format hints from Dataverse formatted value
+    mins_from_fmt = _parse_minutes_from_text(formatted_value)
+    if mins_from_fmt is not None:
+        return mins_from_fmt
+
+    # 2) Handle HH:MM / HH:MM:SS strings directly
+    hhmm_raw = _parse_hhmm_like(raw_value)
+    if hhmm_raw is not None:
+        return hhmm_raw
+    hhmm_fmt = _parse_hhmm_like(formatted_value)
+    if hhmm_fmt is not None:
+        return hhmm_fmt
+
+    # 3) Numeric conversion with safe heuristics
+    num = _parse_float(raw_value)
+    if num is None:
+        num = _parse_float(formatted_value)
+    if num is None:
+        return 0
+
+    # Heuristic: large whole numbers are usually minute-based legacy values.
+    # Example: 30 (minutes) should render as 00:30, not 30:00.
+    if float(num).is_integer() and num > 24:
+        return max(0, int(num * 60))
+
+    # Default: decimal hours
+    return max(0, int(round(num * 3600)))
 
 
 def _split_session_by_day(start_ms: int, end_ms: int, tz_offset_minutes: int = 0):
@@ -944,6 +1021,7 @@ def list_logs():
             "Authorization": f"Bearer {token}",
             "Accept": "application/json",
             "OData-Version": "4.0",
+            "Prefer": 'odata.include-annotations="*"',
         }
         
         # Build OData filter
@@ -998,6 +1076,10 @@ def list_logs():
                 raw_description = r.get("crc6f_workdescription", "") or ""
                 is_manual = "[MANUAL]" in raw_description
                 clean_description = raw_description.replace("[MANUAL]", "").strip()
+                seconds_value = _hoursworked_to_seconds(
+                    r.get("crc6f_hoursworked", 0),
+                    r.get("crc6f_hoursworked@OData.Community.Display.V1.FormattedValue"),
+                )
 
                 log_entry = {
                     "id": r.get("crc6f_hr_timesheetlogid"),
@@ -1006,7 +1088,7 @@ def list_logs():
                     "task_guid": r.get("crc6f_taskguid"),
                     "task_id": r.get("crc6f_taskid"),
                     "task_name": r.get("crc6f_taskname") or clean_description.split(" - ")[0] if clean_description else "",
-                    "seconds": int(float(r.get("crc6f_hoursworked", 0)) * 3600),  # Convert hours back to seconds
+                    "seconds": seconds_value,
                     "work_date": work_date[:10] if work_date else "",  # Ensure YYYY-MM-DD format
                     "description": clean_description,
                     "approval_status": r.get("crc6f_approvalstatus", "Pending"),
