@@ -329,6 +329,12 @@ const renderAttendanceTrackerPage = async (mode) => {
             if (rangeStart < monthStart) rangeStart = new Date(monthStart);
             if (rangeEnd > monthEnd) rangeEnd = new Date(monthEnd);
 
+            if (viewingCurrentMonth) {
+                const todayDateOnly = new Date(today);
+                todayDateOnly.setHours(0, 0, 0, 0);
+                if (rangeEnd > todayDateOnly) rangeEnd = todayDateOnly;
+            }
+
             const fromStr = rangeStart.toISOString().split('T')[0];
             const toStr = rangeEnd.toISOString().split('T')[0];
 
