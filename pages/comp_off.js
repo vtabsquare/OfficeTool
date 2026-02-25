@@ -3,6 +3,7 @@ import { getPageContentHTML } from "../utils.js";
 import { renderModal, closeModal } from "../components/modal.js";
 import { notifyAdminCompOffRequest } from "../features/notificationApi.js";
 import { API_BASE_URL } from '../config.js';
+import { isL3User } from "../utils/accessControl.js";
 
 
 const API_BASE = API_BASE_URL;
@@ -33,6 +34,7 @@ export const fetchCompOffData = async () => {
 };
 
 const getCompOffContentHTML = () => {
+  const canEditCompOffBalance = isL3User();
   const tableRows = state.compOffs
     .map(
       (co) => `
@@ -41,9 +43,12 @@ const getCompOffContentHTML = () => {
             <td>${co.employeeId}</td>
             <td>${co.availableDays}</td>
             <td>
-                <button class="btn btn-secondary edit-compoff-balance-btn" data-id="${co.employeeId}" aria-label="Edit balance">
+                ${canEditCompOffBalance
+          ? `<button class="btn btn-secondary edit-compoff-balance-btn" data-id="${co.employeeId}" aria-label="Edit balance">
                     <i class="fa-solid fa-pen-to-square"></i>
-                </button>
+                </button>`
+          : `<span class="subtle">-</span>`
+        }
             </td>
         </tr>
     `
@@ -216,6 +221,11 @@ export const handleRequestCompOff = (e) => {
 };
 
 export const showEditCompOffBalanceModal = (employeeId) => {
+  if (!isL3User()) {
+    alert("Only L3 users can edit comp off balance.");
+    return;
+  }
+
   const compOff = state.compOffs.find((co) => co.employeeId === employeeId);
   if (!compOff) return;
 
