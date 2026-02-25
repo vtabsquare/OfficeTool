@@ -3,6 +3,7 @@ import os
 import json
 import requests
 import re
+import time
 from typing import Optional
 from dotenv import load_dotenv
 
@@ -176,22 +177,43 @@ Please provide a helpful, accurate response based on the available data."""
         api_url = f"{GEMINI_API_URL}?key={GEMINI_API_KEY}"
         print(f"[AI_GEMINI] Calling API: {GEMINI_API_URL}")
         
-        response = requests.post(
-            api_url,
-            headers=headers,
-            json=payload,
-            timeout=30
-        )
+        response = None
+        retry_delays = [0.6, 1.2]
+        max_attempts = 1 + len(retry_delays)
+        for attempt in range(max_attempts):
+            response = requests.post(
+                api_url,
+                headers=headers,
+                json=payload,
+                timeout=30
+            )
+            if response.status_code == 200:
+                break
+
+            # Retry only for transient rate-limit/server errors
+            if response.status_code in (429, 500, 502, 503, 504) and attempt < max_attempts - 1:
+                delay = retry_delays[attempt]
+                print(f"[AI_GEMINI] Retry {attempt + 1}/{max_attempts - 1} after status {response.status_code} in {delay}s")
+                time.sleep(delay)
+                continue
+
+            break
         
         print(f"[AI_GEMINI] Response status: {response.status_code}")
         
         if response.status_code != 200:
             error_text = response.text[:500]
             print(f"[AI_GEMINI] Error response: {error_text}")
+            if response.status_code == 429:
+                clean_error = "Gemini API rate limit reached (RESOURCE_EXHAUSTED)."
+            elif 500 <= response.status_code < 600:
+                clean_error = f"Gemini service temporary server error ({response.status_code})."
+            else:
+                clean_error = f"Gemini API request failed ({response.status_code})."
             return {
                 "success": False,
                 "answer": None,
-                "error": f"Gemini API error: {response.status_code} - {error_text}"
+                "error": clean_error
             }
         
         result = response.json()

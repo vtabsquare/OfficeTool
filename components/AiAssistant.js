@@ -404,7 +404,10 @@ async function sendMessage(question) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 question,
-                currentUser: state.user || {},
+                currentUser: {
+                    ...(state.user || {}),
+                    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
+                },
                 history: messages.slice(-10),
                 automationState: automationState // Pass automation state for multi-step flows
             })
@@ -434,7 +437,12 @@ async function sendMessage(question) {
                 await showActionSuccess(data.actionResult);
             }
         } else {
-            appendMessage('assistant', data.error || 'Sorry, I encountered an error. Please try again.');
+            const errText = String(data.error || '');
+            if (errText.includes('RESOURCE_EXHAUSTED') || errText.includes('429')) {
+                appendMessage('assistant', '⚠️ AI service is currently busy. Please retry in a few moments.');
+            } else {
+                appendMessage('assistant', data.error || 'Sorry, I encountered an error. Please try again.');
+            }
         }
     } catch (error) {
         removeLoading(loadingId);

@@ -87,6 +87,7 @@ def _fetch_entity(entity: str, token: str, select: str = "", filter_query: str =
         resp = requests.get(url, headers=_get_headers(token), timeout=30)
         if resp.status_code == 200:
             return resp.json().get("value", [])
+        print(f"[AI Service] Dataverse non-200 for {entity}: {resp.status_code} | {resp.text[:240]}")
         return []
     except Exception as e:
         print(f"[AI Service] Error fetching {entity}: {e}")
@@ -95,6 +96,15 @@ def _fetch_entity(entity: str, token: str, select: str = "", filter_query: str =
 
 def _safe_lower(val: Optional[str]) -> str:
     return str(val or "").strip().lower()
+
+
+def _normalize_emp_id(value: Optional[str]) -> str:
+    raw = str(value or "").strip().upper()
+    if not raw:
+        return ""
+    if raw.isdigit():
+        return f"EMP{int(raw):03d}"
+    return raw
 
 
 def get_employee_overview(token: str, emp_id: str) -> dict:
@@ -160,10 +170,12 @@ def get_attendance_summary(token: str, emp_id: Optional[str] = None, days: int =
     
     # Date filter for recent records
     start_date = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
-    filter_query = f"crc6f_date ge {start_date}"
+    filter_query = f"crc6f_date ge '{start_date}'"
+
+    normalized_emp_id = _normalize_emp_id(emp_id)
     
-    if emp_id:
-        filter_query += f" and crc6f_employeeid eq '{emp_id}'"
+    if normalized_emp_id:
+        filter_query += f" and crc6f_employeeid eq '{normalized_emp_id}'"
     
     records = _fetch_entity(
         entity, token,
@@ -183,9 +195,13 @@ def get_attendance_summary(token: str, emp_id: Optional[str] = None, days: int =
                 # Parse duration (could be in various formats)
                 if isinstance(duration, (int, float)):
                     total_hours += float(duration)
-                elif ":" in str(duration):
-                    parts = str(duration).split(":")
-                    total_hours += int(parts[0]) + int(parts[1]) / 60
+                else:
+                    duration_str = str(duration).strip()
+                    if ":" in duration_str:
+                        parts = duration_str.split(":")
+                        total_hours += int(parts[0]) + int(parts[1]) / 60
+                    else:
+                        total_hours += float(duration_str)
             except:
                 pass
     
@@ -214,8 +230,9 @@ def get_leave_summary(token: str, emp_id: Optional[str] = None) -> dict:
     entity = ENTITIES["leave"]
     
     filter_query = ""
-    if emp_id:
-        filter_query = f"crc6f_employeeid eq '{emp_id}'"
+    normalized_emp_id = _normalize_emp_id(emp_id)
+    if normalized_emp_id:
+        filter_query = f"crc6f_employeeid eq '{normalized_emp_id}'"
     
     records = _fetch_entity(
         entity, token,
@@ -293,6 +310,146 @@ def get_projects_summary(token: str) -> dict:
     return {
         "total_projects": len(records),
         "projects": records[:10] if records else []
+    }
+
+
+def get_new_joiners_summary(token: str, days: int = 7) -> dict:
+    """Get newly joined employees in the last N days."""
+    entity = ENTITIES["employees"]
+    start_date = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+    filter_query = f"crc6f_doj ge '{start_date}'"
+
+    records = _fetch_entity(
+        entity,
+        token,
+        select="crc6f_employeeid,crc6f_firstname,crc6f_lastname,crc6f_department,crc6f_designation,crc6f_doj",
+        filter_query=filter_query,
+        top=200,
+    )
+
+    return {
+        "period_days": days,
+        "total_new_joiners": len(records),
+        "joiners": [
+            {
+                "employee_id": r.get("crc6f_employeeid"),
+                "name": f"{r.get('crc6f_firstname', '')} {r.get('crc6f_lastname', '')}".strip(),
+                "department": r.get("crc6f_department"),
+                "designation": r.get("crc6f_designation"),
+                "date_of_joining": r.get("crc6f_doj"),
+            }
+            for r in records[:25]
+        ],
+    }
+
+
+def get_today_checked_in_summary(token: str) -> dict:
+    """Return today's checked-in/checked-out employee snapshot for admin/L3 queries."""
+    entity = ENTITIES.get("login_activity")
+    if not entity:
+        return {"date": datetime.now().strftime("%Y-%m-%d"), "total_checked_in": 0, "total_checked_out": 0}
+
+    today = datetime.now().strftime("%Y-%m-%d")
+    select_fields = ",".join(
+        [
+            "crc6f_employeeid",
+            "crc6f_date",
+            "crc6f_checkintime",
+            "crc6f_checkouttime",
+        ]
+    )
+    records = _fetch_entity(
+        entity,
+        token,
+        select=select_fields,
+        filter_query=f"crc6f_date eq '{today}'",
+        top=2000,
+    )
+
+    employee_name_map = {}
+    employee_entity = ENTITIES.get("employees")
+    if employee_entity:
+        emp_rows = _fetch_entity(
+            employee_entity,
+            token,
+            select="crc6f_employeeid,crc6f_firstname,crc6f_lastname",
+            top=5000,
+        )
+        for row in emp_rows:
+            emp_id = _normalize_emp_id(row.get("crc6f_employeeid"))
+            if not emp_id:
+                continue
+            employee_name_map[emp_id] = f"{row.get('crc6f_firstname', '')} {row.get('crc6f_lastname', '')}".strip() or emp_id
+
+    by_employee = {}
+    for r in records:
+        emp_id = _normalize_emp_id(r.get("crc6f_employeeid"))
+        if not emp_id:
+            continue
+        current = by_employee.get(emp_id) or {
+            "employee_id": emp_id,
+            "name": employee_name_map.get(emp_id) or emp_id,
+            "check_in": None,
+            "check_out": None,
+        }
+
+        check_in_val = r.get("crc6f_checkintime")
+        check_out_val = r.get("crc6f_checkouttime")
+        if check_in_val and (not current.get("check_in") or str(check_in_val) > str(current.get("check_in"))):
+            current["check_in"] = check_in_val
+        if check_out_val and (not current.get("check_out") or str(check_out_val) > str(current.get("check_out"))):
+            current["check_out"] = check_out_val
+
+        by_employee[emp_id] = current
+
+    checked_in = []
+    checked_out = []
+    for item in by_employee.values():
+        if item.get("check_in") and not item.get("check_out"):
+            checked_in.append(item)
+        elif item.get("check_in") and item.get("check_out"):
+            checked_out.append(item)
+
+    checked_in = sorted(checked_in, key=lambda x: x.get("employee_id") or "")
+    checked_out = sorted(checked_out, key=lambda x: x.get("employee_id") or "")
+
+    return {
+        "date": today,
+        "total_checked_in": len(checked_in),
+        "total_checked_out": len(checked_out),
+        "checked_in_employees": checked_in,
+        "checked_out_employees": checked_out,
+    }
+
+
+def get_leave_balance_summary(token: str, emp_id: Optional[str]) -> dict:
+    """Get deterministic leave balance for an employee (CL/SL/CO)."""
+    entity = ENTITIES.get("leave_balance")
+    normalized_emp_id = _normalize_emp_id(emp_id)
+    if not entity or not normalized_emp_id:
+        return {"employee_id": normalized_emp_id, "available": {"CL": 0.0, "SL": 0.0, "CO": 0.0, "Total": 0.0}}
+
+    records = _fetch_entity(
+        entity,
+        token,
+        select="crc6f_employeeid,crc6f_cl,crc6f_sl,crc6f_compoff",
+        filter_query=f"crc6f_employeeid eq '{normalized_emp_id}'",
+        top=1,
+    )
+
+    row = records[0] if records else {}
+    cl = float(row.get("crc6f_cl") or 0)
+    sl = float(row.get("crc6f_sl") or 0)
+    co = float(row.get("crc6f_compoff") or 0)
+
+    return {
+        "employee_id": normalized_emp_id,
+        "available": {
+            "CL": round(cl, 2),
+            "SL": round(sl, 2),
+            "CO": round(co, 2),
+            "Total": round(cl + sl + co, 2),
+        },
     }
 
 
@@ -387,9 +544,10 @@ def get_timesheet_summary(token: str, emp_id: Optional[str] = None, days: int = 
         return {}
 
     start_date = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
-    filter_query = f"crc6f_workdate ge {start_date}"
-    if emp_id:
-        filter_query += f" and crc6f_employeeid eq '{emp_id}'"
+    filter_query = f"crc6f_workdate ge '{start_date}'"
+    normalized_emp_id = _normalize_emp_id(emp_id)
+    if normalized_emp_id:
+        filter_query += f" and crc6f_employeeid eq '{normalized_emp_id}'"
 
     select_fields = ",".join(
         [
@@ -398,8 +556,7 @@ def get_timesheet_summary(token: str, emp_id: Optional[str] = None, days: int = 
             "crc6f_taskid",
             "crc6f_taskname",
             "crc6f_workdate",
-            "crc6f_hours",
-            "crc6f_seconds",
+            "crc6f_hoursworked",
         ]
     )
 
@@ -412,13 +569,10 @@ def get_timesheet_summary(token: str, emp_id: Optional[str] = None, days: int = 
     recent_entries = []
 
     for rec in records:
-        hours = rec.get("crc6f_hours")
-        seconds = rec.get("crc6f_seconds")
+        hours = rec.get("crc6f_hoursworked")
         try:
             if hours is not None:
                 total_hours += float(hours)
-            elif seconds is not None:
-                total_hours += float(seconds) / 3600.0
         except Exception:
             pass
 
@@ -429,7 +583,7 @@ def get_timesheet_summary(token: str, emp_id: Optional[str] = None, days: int = 
             {
                 "date": rec.get("crc6f_workdate"),
                 "task": rec.get("crc6f_taskname") or rec.get("crc6f_taskid"),
-                "hours": rec.get("crc6f_hours") or rec.get("crc6f_seconds"),
+                "hours": rec.get("crc6f_hoursworked"),
             }
         )
 
@@ -451,9 +605,10 @@ def get_login_activity_summary(token: str, emp_id: Optional[str] = None, days: i
         return {}
 
     start_date = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
-    filter_query = f"crc6f_date ge {start_date}"
-    if emp_id:
-        filter_query += f" and crc6f_employeeid eq '{emp_id}'"
+    filter_query = f"crc6f_date ge '{start_date}'"
+    normalized_emp_id = _normalize_emp_id(emp_id)
+    if normalized_emp_id:
+        filter_query += f" and crc6f_employeeid eq '{normalized_emp_id}'"
 
     select_fields = ",".join(
         [
@@ -506,7 +661,7 @@ def build_ai_context(token: str, user_meta: dict, scope: str = "general") -> dic
         "user_access": role_flags,
     }
     
-    emp_id = user_meta.get("employee_id")
+    emp_id = _normalize_emp_id(user_meta.get("employee_id"))
     is_admin = role_flags.get("is_admin")
     is_l3 = role_flags.get("is_l3")
     is_l2 = role_flags.get("is_l2")
@@ -515,6 +670,7 @@ def build_ai_context(token: str, user_meta: dict, scope: str = "general") -> dic
         # Always include basic employee info for the current user
         if emp_id:
             context["current_user_profile"] = get_employee_overview(token, emp_id)
+            context["my_leave_balance"] = get_leave_balance_summary(token, emp_id)
         
         # Scope-based data fetching with L3 permissions
         if scope in ["general", "employee", "all"]:
@@ -526,6 +682,7 @@ def build_ai_context(token: str, user_meta: dict, scope: str = "general") -> dic
         if scope in ["general", "attendance", "all"]:
             if is_admin or is_l3:
                 context["attendance_summary"] = get_attendance_summary(token, days=30)
+                context["checked_in_summary_today"] = get_today_checked_in_summary(token)
             elif emp_id:
                 context["my_attendance"] = get_attendance_summary(token, emp_id=emp_id, days=30)
         
@@ -551,6 +708,10 @@ def build_ai_context(token: str, user_meta: dict, scope: str = "general") -> dic
         if scope in ["general", "interns", "all"]:
             if is_admin or is_l3:
                 context["interns_summary"] = get_interns_summary(token)
+
+        if scope in ["general", "employee", "all"]:
+            if is_admin or is_l3:
+                context["new_joiners_summary"] = get_new_joiners_summary(token, days=7)
         
         if scope in ["general", "tasks", "projects", "all"]:
             if is_admin or is_l3:

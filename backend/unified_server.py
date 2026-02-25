@@ -13095,9 +13095,288 @@ def ai_query():
                 "success": False,
                 "error": "Question is required"
             }), 400
+
+        def _normalize_emp_id_ai(value):
+            raw = (str(value or "").strip()).upper()
+            if not raw:
+                return ""
+            if raw.isdigit():
+                return f"EMP{int(raw):03d}"
+            return raw
+
+        def _resolve_ai_user_meta(base_user_meta, token_value):
+            """Resolve user role + employee_id from server-side records for reliability."""
+            resolved = dict(base_user_meta or {})
+            resolved["employee_id"] = _normalize_emp_id_ai(resolved.get("employee_id"))
+
+            headers = {
+                "Authorization": f"Bearer {token_value}",
+                "Accept": "application/json",
+                "OData-MaxVersion": "4.0",
+                "OData-Version": "4.0",
+            }
+
+            username = (resolved.get("email") or resolved.get("username") or "").strip()
+            try:
+                if username:
+                    login_record = _fetch_login_by_username(username, token_value, headers)
+                    if login_record:
+                        access_level = _normalize_access_level(login_record.get("crc6f_accesslevel"))
+                        resolved["role"] = access_level
+                        resolved["access_level"] = access_level
+                        resolved["is_admin"] = access_level in ("L3", "L4")
+                        resolved["is_l3"] = access_level in ("L3", "L4")
+                        resolved["is_l2"] = access_level in ("L2", "L3", "L4")
+                        resolved["is_manager"] = access_level in ("L2", "L3", "L4")
+            except Exception as role_err:
+                print(f"[AI] Role enrichment failed: {role_err}")
+
+            if resolved.get("employee_id"):
+                return resolved
+
+            email = (resolved.get("email") or "").strip()
+            if not email:
+                return resolved
+
+            try:
+                employee_entity = get_employee_entity_set(token_value)
+                field_map = get_field_map(employee_entity)
+                id_field = field_map.get("id") or "crc6f_employeeid"
+                safe_email = email.replace("'", "''")
+                find_emp_url = (
+                    f"{BASE_URL}/{employee_entity}"
+                    f"?$top=1&$select={id_field}&$filter=crc6f_email eq '{safe_email}'"
+                )
+                emp_resp = requests.get(find_emp_url, headers=headers, timeout=20)
+                if emp_resp.status_code == 200:
+                    vals = emp_resp.json().get("value", [])
+                    if vals:
+                        resolved["employee_id"] = _normalize_emp_id_ai(vals[0].get(id_field))
+            except Exception as emp_err:
+                print(f"[AI] Employee ID enrichment failed: {emp_err}")
+
+            return resolved
+
+        def _deterministic_ai_answer(question_text, context, meta):
+            q = (question_text or "").strip().lower()
+
+            if any(kw in q for kw in ["current time", "time now", "what time"]):
+                now_local = datetime.now().strftime("%I:%M %p")
+                today_local = datetime.now().strftime("%Y-%m-%d")
+                return f"* Current Time: {now_local}\\n* Date: {today_local}"
+
+            if any(kw in q for kw in ["leave balance", "available leave", "how many leaves", "leave quota"]):
+                balance = (context.get("my_leave_balance") or {}).get("available") or {}
+                if balance:
+                    return (
+                        "Here is your leave balance:\\n\\n"
+                        f"* Casual Leave (CL): {balance.get('CL', 0)}\\n"
+                        f"* Sick Leave (SL): {balance.get('SL', 0)}\\n"
+                        f"* Comp Off (CO): {balance.get('CO', 0)}\\n"
+                        f"* Total: {balance.get('Total', 0)}"
+                    )
+
+            if any(
+                kw in q
+                for kw in [
+                    "who are all checked in",
+                    "who is checked in",
+                    "who are checked in",
+                    "checked in employees",
+                    "currently checked in",
+                    "who checked in today",
+                ]
+            ):
+                if not (meta.get("is_admin") or meta.get("is_l3")):
+                    return "⚠️ You do not have access to organization-wide attendance visibility."
+                snapshot = context.get("checked_in_summary_today") or {}
+                checked_in = snapshot.get("checked_in_employees") or []
+                on_date = snapshot.get("date") or datetime.now().strftime("%Y-%m-%d")
+                if not checked_in:
+                    return f"No employees are currently checked in for {on_date}."
+                lines = "\\n".join(
+                    [
+                        f"* {emp.get('name') or emp.get('employee_id')} ({emp.get('employee_id')}) - In: {emp.get('check_in') or '-'}"
+                        for emp in checked_in[:50]
+                    ]
+                )
+                return (
+                    f"Employees currently checked in ({len(checked_in)}) on {on_date}:\\n\\n"
+                    f"{lines}"
+                )
+
+            if any(
+                kw in q
+                for kw in [
+                    "who checked out today",
+                    "who are checked out",
+                    "checked out employees",
+                ]
+            ):
+                if not (meta.get("is_admin") or meta.get("is_l3")):
+                    return "⚠️ You do not have access to organization-wide attendance visibility."
+                snapshot = context.get("checked_in_summary_today") or {}
+                checked_out = snapshot.get("checked_out_employees") or []
+                on_date = snapshot.get("date") or datetime.now().strftime("%Y-%m-%d")
+                if not checked_out:
+                    return f"No employees have checked out yet for {on_date}."
+                lines = "\\n".join(
+                    [
+                        f"* {emp.get('name') or emp.get('employee_id')} ({emp.get('employee_id')}) - In: {emp.get('check_in') or '-'} | Out: {emp.get('check_out') or '-'}"
+                        for emp in checked_out[:50]
+                    ]
+                )
+                return (
+                    f"Employees checked out ({len(checked_out)}) on {on_date}:\\n\\n"
+                    f"{lines}"
+                )
+
+            if any(kw in q for kw in ["attendance summary", "my attendance"]):
+                summary = context.get("my_attendance") or context.get("attendance_summary") or {}
+                if summary:
+                    recent = summary.get("recent_entries") or []
+                    latest_line = "None"
+                    if recent:
+                        latest = recent[0]
+                        latest_line = (
+                            f"{latest.get('date')}: In {latest.get('check_in') or '-'} | "
+                            f"Out {latest.get('check_out') or '-'} | Duration {latest.get('duration') or '-'}"
+                        )
+                    return (
+                        "Here is your attendance summary:\\n\\n"
+                        f"* Period: {summary.get('period_days', 30)} days\\n"
+                        f"* Total Attendance Records: {summary.get('total_attendance_records', 0)}\\n"
+                        f"* Total Hours Logged: {summary.get('total_hours_logged', 0)}\\n"
+                        f"* Average Hours Per Day: {summary.get('average_hours_per_day', 0)}\\n"
+                        f"* Latest Entry: {latest_line}"
+                    )
+
+            if any(kw in q for kw in ["team attendance", "organization attendance", "overall attendance"]):
+                if not (meta.get("is_admin") or meta.get("is_l3")):
+                    return "⚠️ You do not have access to team/organization attendance summary."
+                summary = context.get("attendance_summary") or {}
+                if summary:
+                    return (
+                        "Here is the organization attendance summary:\n\n"
+                        f"* Period: {summary.get('period_days', 30)} days\n"
+                        f"* Total Attendance Records: {summary.get('total_attendance_records', 0)}\n"
+                        f"* Total Hours Logged: {summary.get('total_hours_logged', 0)}\n"
+                        f"* Average Hours Per Record: {summary.get('average_hours_per_day', 0)}"
+                    )
+
+            if any(kw in q for kw in ["team leave summary", "organization leave", "overall leave"]):
+                if not (meta.get("is_admin") or meta.get("is_l3")):
+                    return "⚠️ You do not have access to team/organization leave summary."
+                summary = context.get("leave_summary") or {}
+                by_status = summary.get("by_status") or {}
+                by_type = summary.get("by_type") or {}
+                if summary:
+                    status_lines = "\\n".join([f"  - {k}: {v}" for k, v in by_status.items()]) or "  - None"
+                    type_lines = "\\n".join([f"  - {k}: {v}" for k, v in by_type.items()]) or "  - None"
+                    return (
+                        "Here is the organization leave summary:\n\n"
+                        f"* Total Leave Requests: {summary.get('total_leave_requests', 0)}\\n"
+                        "* By Status:\n"
+                        f"{status_lines}\\n"
+                        "* By Type:\n"
+                        f"{type_lines}"
+                    )
+
+            if any(kw in q for kw in ["show all employees", "employee count", "total employees", "active employees"]):
+                if not (meta.get("is_admin") or meta.get("is_l3")):
+                    return "⚠️ You do not have access to organization-wide employee summary."
+                summary = context.get("employees_summary") or {}
+                if summary:
+                    return (
+                        "Employee overview:\n\n"
+                        f"* Total Employees: {summary.get('total_employees', 0)}\n"
+                        f"* Active Employees: {summary.get('active_employees', 0)}\n"
+                        f"* Inactive Employees: {summary.get('inactive_employees', 0)}"
+                    )
+
+            if any(kw in q for kw in ["new joiners", "new joiner", "joined this week", "onboarded this week"]):
+                if not (meta.get("is_admin") or meta.get("is_l3")):
+                    return "⚠️ You do not have access to organization-wide new joiner information."
+                joiners = context.get("new_joiners_summary") or {}
+                total = int(joiners.get("total_new_joiners") or 0)
+                if total <= 0:
+                    return "No new joiners found in the last 7 days."
+                names = [j.get("name") or j.get("employee_id") for j in (joiners.get("joiners") or [])[:10]]
+                preview = "\\n".join([f"* {name}" for name in names if name])
+                return f"New joiners in the last 7 days: {total}\\n\\n{preview}"
+
+            if any(kw in q for kw in ["my tasks", "task summary", "assigned tasks"]):
+                summary = context.get("my_tasks_summary") or context.get("tasks_summary") or {}
+                if summary:
+                    return (
+                        "Task summary:\n\n"
+                        f"* Total Tasks: {summary.get('total_tasks', 0)}\n"
+                        f"* My Tasks (preview): {len(summary.get('my_tasks') or [])}"
+                    )
+
+            if any(kw in q for kw in ["timesheet summary", "my timesheet", "time logs"]):
+                summary = context.get("my_timesheets") or context.get("timesheet_summary") or {}
+                if summary:
+                    return (
+                        "Timesheet summary:\n\n"
+                        f"* Period: {summary.get('period_days', 30)} days\n"
+                        f"* Total Logs: {summary.get('total_logs', 0)}\n"
+                        f"* Total Hours: {summary.get('total_hours', 0)}"
+                    )
+
+            return None
+
+        ACTION_EXECUTION_REGISTRY = {
+            "create_employee": {"module": "employees", "min_role": "L3"},
+            "search_employee": {"module": "employees", "min_role": "L3"},
+            "update_employee": {"module": "employees", "min_role": "L3"},
+            "search_employee_for_delete": {"module": "employees", "min_role": "L3"},
+            "delete_employee": {"module": "employees", "min_role": "L3", "requires_confirmation": True},
+            "apply_leave": {"module": "leave", "min_role": "L1"},
+            "check_in": {"module": "attendance", "min_role": "L1"},
+            "check_out": {"module": "attendance", "min_role": "L1"},
+            "create_asset": {"module": "assets", "min_role": "L3"},
+            "update_asset_assignment": {"module": "assets", "min_role": "L2"},
+            "fetch_my_tasks": {"module": "tasks", "min_role": "L1"},
+            "start_task_timer": {"module": "tasks", "min_role": "L1"},
+            "stop_task_timer": {"module": "tasks", "min_role": "L1"},
+            "create_project_task": {"module": "tasks", "min_role": "L2"},
+            "chat_search_employee": {"module": "chat", "min_role": "L1"},
+            "chat_send_message": {"module": "chat", "min_role": "L1"},
+            "chat_get_unread": {"module": "chat", "min_role": "L1"},
+            "chat_read_conversation": {"module": "chat", "min_role": "L1"},
+            "chat_reply": {"module": "chat", "min_role": "L1"},
+        }
+
+        ROLE_LEVELS = {"L1": 1, "L2": 2, "L3": 3, "L4": 3}
+
+        def _role_level(meta: dict) -> int:
+            level = str(meta.get("access_level") or meta.get("role") or "L1").strip().upper()
+            if meta.get("is_admin") or meta.get("is_l3"):
+                level = "L3"
+            elif meta.get("is_l2") or meta.get("is_manager"):
+                level = "L2"
+            return ROLE_LEVELS.get(level, 1)
+
+        def _authorize_action(action_payload: dict, meta: dict) -> Tuple[bool, str]:
+            action_type = str((action_payload or {}).get("type") or "").strip()
+            policy = ACTION_EXECUTION_REGISTRY.get(action_type)
+            if not policy:
+                return False, f"Unsupported automation action: {action_type or 'unknown'}"
+
+            required = str(policy.get("min_role") or "L1").upper()
+            required_level = ROLE_LEVELS.get(required, 1)
+            if _role_level(meta) < required_level:
+                return False, f"This action requires {required} access."
+
+            if policy.get("requires_confirmation") and not bool(action_payload.get("confirmed")):
+                return False, "Confirmation is required before executing this action."
+
+            return True, ""
         
         # Extract user info
         current_user = data.get("currentUser", {})
+        token = get_access_token()
         user_meta = {
             "name": current_user.get("name", "User"),
             "email": current_user.get("email", ""),
@@ -13109,7 +13388,9 @@ def ai_query():
             "access_level": current_user.get("access_level") or current_user.get("role"),
             "is_l3": current_user.get("is_l3", False),
             "is_l2": current_user.get("is_l2", False),
+            "timezone": current_user.get("timezone") or "UTC",
         }
+        user_meta = _resolve_ai_user_meta(user_meta, token)
         
         # Get automation state from request (for multi-step flows)
         automation_state = data.get("automationState", None)
@@ -13156,7 +13437,12 @@ def ai_query():
             # If there's an action to execute (e.g., create employee, search employee)
             action = automation_result.get("action")
             if action:
-                token = get_access_token()
+                allowed, denial_reason = _authorize_action(action, user_meta)
+                if not allowed:
+                    response_data["answer"] = (response_data.get("answer") or "") + f"\n\n⚠️ {denial_reason}"
+                    response_data["actionError"] = denial_reason
+                    return jsonify(response_data)
+
                 action_result = execute_automation_action(action, token)
                 
                 if action_result.get("success"):
@@ -13283,7 +13569,7 @@ What would you like to say to {employee_name}?"""
         scope = data.get("scope", "general")
         question_lower = question.lower()
         
-        if any(kw in question_lower for kw in ["attendance", "check-in", "checkin", "check-out", "checkout", "hours", "time"]):
+        if any(kw in question_lower for kw in ["attendance", "check-in", "checkin", "check-out", "checkout", "checked in", "checked out", "hours", "time"]):
             scope = "attendance"
         elif any(kw in question_lower for kw in ["leave", "vacation", "sick", "holiday", "pto", "time off"]):
             scope = "leave"
@@ -13296,9 +13582,19 @@ What would you like to say to {employee_name}?"""
         elif any(kw in question_lower for kw in ["intern", "trainee"]):
             scope = "interns"
         
-        # Get Dataverse token and build context
-        token = get_access_token()
+        # Get Dataverse context
         data_context = build_ai_context(token, user_meta, scope)
+
+        # Deterministic answers for high-frequency HR queries (avoids LLM drift)
+        deterministic_answer = _deterministic_ai_answer(question, data_context, user_meta)
+        if deterministic_answer:
+            return jsonify({
+                "success": True,
+                "answer": deterministic_answer,
+                "scope": scope,
+                "timestamp": data_context.get("timestamp"),
+                "automationState": automation_result.get("state")
+            })
         
         # Get chat history
         history = data.get("history", [])
@@ -13320,9 +13616,18 @@ What would you like to say to {employee_name}?"""
                 "automationState": automation_result.get("state")  # Preserve state
             })
         else:
+            err_msg = result.get("error", "Failed to get AI response")
+            if "RESOURCE_EXHAUSTED" in err_msg or "429" in err_msg:
+                return jsonify({
+                    "success": True,
+                    "answer": "⚠️ AI service is currently busy (rate limited). Please retry in a few moments. For attendance, leave, and checkout actions, use the normal app controls and this assistant will sync once quota recovers.",
+                    "scope": scope,
+                    "timestamp": data_context.get("timestamp"),
+                    "automationState": automation_result.get("state")
+                })
             return jsonify({
                 "success": False,
-                "error": result.get("error", "Failed to get AI response")
+                "error": err_msg
             }), 500
             
     except Exception as e:
@@ -13342,6 +13647,48 @@ def ai_health():
         "service": "AI Assistant",
         "model": "Gemini",
         "backend_model_id": "gemini-2.0-flash"
+    })
+
+
+@app.route("/api/ai/capabilities", methods=["GET"])
+def ai_capabilities():
+    """Expose chatbot module/action capabilities and role gates."""
+    return jsonify({
+        "success": True,
+        "automation_actions": {
+            "create_employee": {"module": "employees", "min_role": "L3"},
+            "search_employee": {"module": "employees", "min_role": "L3"},
+            "update_employee": {"module": "employees", "min_role": "L3"},
+            "search_employee_for_delete": {"module": "employees", "min_role": "L3"},
+            "delete_employee": {"module": "employees", "min_role": "L3", "requires_confirmation": True},
+            "apply_leave": {"module": "leave", "min_role": "L1"},
+            "check_in": {"module": "attendance", "min_role": "L1"},
+            "check_out": {"module": "attendance", "min_role": "L1"},
+            "create_asset": {"module": "assets", "min_role": "L3"},
+            "update_asset_assignment": {"module": "assets", "min_role": "L2"},
+            "fetch_my_tasks": {"module": "tasks", "min_role": "L1"},
+            "start_task_timer": {"module": "tasks", "min_role": "L1"},
+            "stop_task_timer": {"module": "tasks", "min_role": "L1"},
+            "create_project_task": {"module": "tasks", "min_role": "L2"},
+            "chat_search_employee": {"module": "chat", "min_role": "L1"},
+            "chat_send_message": {"module": "chat", "min_role": "L1"},
+            "chat_get_unread": {"module": "chat", "min_role": "L1"},
+            "chat_read_conversation": {"module": "chat", "min_role": "L1"},
+            "chat_reply": {"module": "chat", "min_role": "L1"},
+        },
+        "deterministic_query_support": [
+            "my attendance summary",
+            "my leave balance",
+            "who are checked in today",
+            "who checked out today",
+            "team attendance summary",
+            "team leave summary",
+            "employee counts",
+            "new joiners",
+            "task summary",
+            "timesheet summary",
+            "current time",
+        ],
     })
 
 # ================== LOGIN EVENTS (Location Tracking) ==================
