@@ -637,7 +637,7 @@ export const showAddEmployeeModal = () => {
     const previewClass = 'avatar-preview';
     const previewStyle = '';
     const formHTML = `
-        <div class="modal-form modern-form employee-form">
+        <div class="modal-form modern-form leave-form employee-form">
             <div class="form-section">
                 <div class="form-section-header">
                     <div>
@@ -647,25 +647,38 @@ export const showAddEmployeeModal = () => {
                     <p class="form-section-copy">Capture the core information we need to onboard the employee.</p>
                 </div>
                 <div class="form-grid two-col">
-                    <div class="form-field">
+                    <div class="form-field with-icon">
                         <label class="form-label" for="firstName">First Name</label>
-                        <input class="input-control" type="text" id="firstName" name="firstName" placeholder="John" required>
+                        <div class="input-wrapper">
+                            <i class="fa-solid fa-user"></i>
+                            <input class="input-control" type="text" id="firstName" name="firstName" placeholder="John" required>
+                        </div>
                     </div>
-                    <div class="form-field">
+                    <div class="form-field with-icon">
                         <label class="form-label" for="lastName">Last Name</label>
-                        <input class="input-control" type="text" id="lastName" name="lastName" placeholder="Doe">
+                        <div class="input-wrapper">
+                            <i class="fa-solid fa-user"></i>
+                            <input class="input-control" type="text" id="lastName" name="lastName" placeholder="Doe">
+                        </div>
                     </div>
-                    <div class="form-field">
+                    <div class="form-field with-icon">
                         <label class="form-label" for="email">Email</label>
-                        <input class="input-control" type="email" id="email" name="email" placeholder="name@company.com">
+                        <div class="input-wrapper">
+                            <i class="fa-solid fa-envelope"></i>
+                            <input class="input-control" type="email" id="email" name="email" placeholder="name@company.com">
+                        </div>
                     </div>
-                    <div class="form-field">
+                    <div class="form-field with-icon">
                         <label class="form-label" for="contactNo">Address</label>
-                        <input class="input-control" type="tel" id="contactNo" name="contactNo" placeholder="Street, City" required>
+                        <div class="input-wrapper">
+                            <i class="fa-solid fa-location-dot"></i>
+                            <input class="input-control" type="tel" id="contactNo" name="contactNo" placeholder="Street, City" required>
+                        </div>
                         <p class="helper-text">Used for mailing details and ID proof.</p>
                     </div>
                 </div>
             </div>
+
             <div class="form-section">
                 <div class="form-section-header">
                     <div>
@@ -674,36 +687,59 @@ export const showAddEmployeeModal = () => {
                     </div>
                 </div>
                 <div class="form-grid two-col">
-                    <div class="form-field">
+                    <div class="form-field with-icon">
                         <label class="form-label" for="address">Contact No</label>
-                        <input class="input-control" type="text" id="address" name="address" placeholder="(+91) 98765 43210">
+                        <div class="input-wrapper">
+                            <i class="fa-solid fa-phone"></i>
+                            <input class="input-control" type="text" id="address" name="address" placeholder="(+91) 98765 43210">
+                        </div>
                     </div>
-                    <div class="form-field">
+                    <div class="form-field with-icon">
                         <label class="form-label" for="designation">Designation</label>
-                        <input class="input-control" type="text" id="designation" name="designation" placeholder="UI Designer" required>
+                        <div class="input-wrapper">
+                            <i class="fa-solid fa-briefcase"></i>
+                            <input class="input-control" type="text" id="designation" name="designation" placeholder="UI Designer" required>
+                        </div>
                     </div>
-                    <div class="form-field">
+                    <div class="form-field with-icon">
                         <label class="form-label" for="department">Department</label>
-                        <input class="input-control" type="text" id="department" name="department" placeholder="Engineering">
+                        <div class="input-wrapper">
+                            <i class="fa-solid fa-building-user"></i>
+                            <input class="input-control" type="text" id="department" name="department" placeholder="Engineering">
+                        </div>
                     </div>
-                    <div class="form-field">
+                    <div class="form-field with-icon">
+                        <label class="form-label" for="doj">DOJ</label>
+                        <div class="input-wrapper">
+                            <i class="fa-regular fa-calendar"></i>
+                            <input class="input-control" type="date" id="doj" name="doj">
+                        </div>
+                    </div>
+                    <div class="form-field with-icon">
                         <label class="form-label" for="status">Status</label>
-                        <select class="input-control" id="status" name="status" required>
-                            <option value="" disabled selected>Select status</option>
-                            <option value="Active">Active</option>
-                            <option value="Inactive">Inactive</option>
-                        </select>
+                        <div class="input-wrapper">
+                            <i class="fa-solid fa-signal"></i>
+                            <select class="input-control" id="status" name="status" required>
+                                <option value="" disabled selected>Select status</option>
+                                <option value="Active">Active</option>
+                                <option value="Inactive">Inactive</option>
+                            </select>
+                        </div>
                     </div>
-                    <div class="form-field">
+                    <div class="form-field with-icon">
                         <label class="form-label" for="employeeFlag">Employee Flag</label>
-                        <select class="input-control" id="employeeFlag" name="employeeFlag" required>
-                            <option value="Employee" selected>Employee</option>
-                            <option value="Intern">Intern</option>
-                        </select>
+                        <div class="input-wrapper">
+                            <i class="fa-solid fa-user-tag"></i>
+                            <select class="input-control" id="employeeFlag" name="employeeFlag" required>
+                                <option value="Employee" selected>Employee</option>
+                                <option value="Intern">Intern</option>
+                            </select>
+                        </div>
                         <p class="helper-text">Flag interns to auto-appear in the Interns module.</p>
                     </div>
                 </div>
             </div>
+
             <div class="form-section">
                 <div class="form-section-header">
                     <div>
@@ -753,6 +789,9 @@ export const handleAddEmployee = async (e) => {
         console.log('Contact No field value:', contactNoValue);
         console.log('Address field value:', addressValue);
 
+        const statusValue = document.getElementById('status').value;
+        const dojValue = document.getElementById('doj')?.value || '';
+
         const payload = {
             employee_id: data.next_id,
             first_name: document.getElementById('firstName').value,
@@ -762,8 +801,8 @@ export const handleAddEmployee = async (e) => {
             contact_number: contactNoValue,
             department: document.getElementById('department').value,
             designation: document.getElementById('designation').value,
-            doj: document.getElementById('status').value === 'Active' ? new Date().toISOString().split('T')[0] : '',
-            active: document.getElementById('status').value === 'Active',
+            doj: dojValue || (statusValue === 'Active' ? new Date().toISOString().split('T')[0] : ''),
+            active: statusValue === 'Active',
             employee_flag: document.getElementById('employeeFlag').value || 'Employee',
             profile_picture: photoDraft.cleared ? null : cleanDataUrl(photoDraft.dataUrl)
         };
