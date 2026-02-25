@@ -8,11 +8,28 @@ const normalizeRole = (value) => {
   if (['L1', 'L2', 'L3', 'L4'].includes(val)) {
     return val;
   }
+  const compact = val.replace(/\s+/g, '');
+  if (['L1', 'L2', 'L3', 'L4'].includes(compact)) {
+    return compact;
+  }
+  const levelMatch = val.match(/L\s*([1-4])/);
+  if (levelMatch) {
+    return `L${levelMatch[1]}`;
+  }
+  const numericMatch = val.match(/LEVEL\s*([1-4])/);
+  if (numericMatch) {
+    return `L${numericMatch[1]}`;
+  }
   return '';
 };
 
 export const getUserAccessContext = () => {
-  const role = normalizeRole(state.user?.access_level || state.user?.role);
+  const role = normalizeRole(
+    state.user?.access_level ||
+    state.user?.accessLevel ||
+    state.user?.access ||
+    state.user?.role
+  );
   const empId = String(state.user?.id || '').trim().toUpperCase();
   const email = String(state.user?.email || '').trim().toLowerCase();
   const designation = String(state.user?.designation || '').trim().toLowerCase();

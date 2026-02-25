@@ -2,7 +2,25 @@ export const deriveRoleInfo = (payload = {}) => {
   const normalize = (val = '') => String(val || '').trim().toUpperCase();
   const allowed = new Set(['L1', 'L2', 'L3', 'L4']);
 
-  let role = normalize(payload.access_level || payload.role);
+  const normalizeRole = (rawValue = '') => {
+    const raw = normalize(rawValue);
+    if (!raw) return '';
+    if (allowed.has(raw)) return raw;
+    const compact = raw.replace(/\s+/g, '');
+    if (allowed.has(compact)) return compact;
+    const levelMatch = raw.match(/L\s*([1-4])/);
+    if (levelMatch) return `L${levelMatch[1]}`;
+    const numericMatch = raw.match(/LEVEL\s*([1-4])/);
+    if (numericMatch) return `L${numericMatch[1]}`;
+    return '';
+  };
+
+  let role = normalizeRole(
+    payload.access_level ||
+    payload.accessLevel ||
+    payload.access ||
+    payload.role
+  );
   if (!allowed.has(role)) {
     if (payload.is_admin) {
       role = 'L3';
