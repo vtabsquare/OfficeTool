@@ -4857,9 +4857,23 @@ const handleInboxApprove = async (leaveId) => {
 
 const showInboxRejectModal = (leaveId) => {
     const formHTML = `
-        <div class="form-group">
-            <label for="inboxRejectionReason">Rejection Reason (Optional)</label>
-            <textarea id="inboxRejectionReason" name="rejectionReason" rows="4" placeholder="Enter reason for rejection..."></textarea>
+        <div class="leave-form">
+            <div class="form-section">
+                <div class="form-section-header">
+                    <div>
+                        <p class="form-eyebrow">Leave review</p>
+                        <h3>Rejection reason</h3>
+                    </div>
+                    <p class="form-section-copy">This comment is shared with the employee.</p>
+                </div>
+                <div class="form-field">
+                    <div class="field-header">
+                        <label class="form-label" for="inboxRejectionReason">Reason (Optional)</label>
+                        <span class="field-hint">Be specific and actionable</span>
+                    </div>
+                    <textarea class="input-control" id="inboxRejectionReason" name="rejectionReason" rows="4" placeholder="Enter reason for rejection..."></textarea>
+                </div>
+            </div>
         </div>
         <input type="hidden" id="inboxRejectLeaveId" value="${leaveId}">
     `;
