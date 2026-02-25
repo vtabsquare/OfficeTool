@@ -13417,6 +13417,7 @@ def ai_query():
             "is_l3": current_user.get("is_l3", False),
             "is_l2": current_user.get("is_l2", False),
             "timezone": current_user.get("timezone") or "UTC",
+            "timezone_offset_minutes": current_user.get("timezone_offset_minutes"),
         }
         user_meta = _resolve_ai_user_meta(user_meta, token)
         

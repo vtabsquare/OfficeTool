@@ -2041,6 +2041,7 @@ def _handle_check_action(
     state: 'ConversationState',
     user_employee_id: str = None,
     user_timezone: str = "UTC",
+    user_timezone_offset_minutes: Optional[int] = None,
 ) -> Tuple[str, 'ConversationState', Optional[Dict[str, Any]]]:
     """
     Handle check-in or check-out action.
@@ -2065,6 +2066,7 @@ def _handle_check_action(
             "type": "check_in",
             "employee_id": user_employee_id,
             "timezone": user_timezone or "UTC",
+            "timezone_offset_minutes": user_timezone_offset_minutes,
         }
         return "⏰ Checking you in...", state, action
     elif action_type == "check_out":
@@ -2072,6 +2074,7 @@ def _handle_check_action(
             "type": "check_out",
             "employee_id": user_employee_id,
             "timezone": user_timezone or "UTC",
+            "timezone_offset_minutes": user_timezone_offset_minutes,
         }
         return "⏰ Checking you out...", state, action
     
@@ -2771,6 +2774,7 @@ def process_automation(
                 state,
                 user_employee_id,
                 (user_access or {}).get("timezone", "UTC"),
+                (user_access or {}).get("timezone_offset_minutes"),
             )
             return {
                 "is_automation": True,
@@ -2787,6 +2791,7 @@ def process_automation(
                 state,
                 user_employee_id,
                 (user_access or {}).get("timezone", "UTC"),
+                (user_access or {}).get("timezone_offset_minutes"),
             )
             return {
                 "is_automation": True,
@@ -3676,7 +3681,41 @@ Please review in HR Tool.
             return f"EMP{int(value):03d}"
         return value
 
-    def _invoke_attendance_v2(action_type: str, employee_id: str, tz_name: str = "UTC") -> Dict[str, Any]:
+    def _format_local_display_time(utc_iso: str, display_time: str, tz_name: str, tz_offset_minutes: Optional[int]) -> str:
+        """Best-effort conversion to client-local HH:MM:SS for chat messages."""
+        dt_utc = None
+        try:
+            if utc_iso:
+                dt_utc = datetime.fromisoformat(str(utc_iso).replace("Z", "+00:00"))
+        except Exception:
+            dt_utc = None
+
+        if dt_utc is not None:
+            if tz_offset_minutes is not None:
+                try:
+                    offset = int(tz_offset_minutes)
+                    # JS getTimezoneOffset semantics: local = utc - offset_minutes
+                    return (dt_utc - timedelta(minutes=offset)).strftime("%H:%M:%S")
+                except Exception:
+                    pass
+
+            try:
+                from zoneinfo import ZoneInfo
+                if tz_name:
+                    return dt_utc.astimezone(ZoneInfo(tz_name)).strftime("%H:%M:%S")
+            except Exception:
+                pass
+
+            return dt_utc.strftime("%H:%M:%S")
+
+        return str(display_time or "")
+
+    def _invoke_attendance_v2(
+        action_type: str,
+        employee_id: str,
+        tz_name: str = "UTC",
+        tz_offset_minutes: Optional[int] = None,
+    ) -> Dict[str, Any]:
         """Invoke attendance v2 handlers via Flask request context for consistent behavior."""
         from unified_server import app
         from attendance_service_v2 import checkin_v2, checkout_v2
@@ -3694,6 +3733,7 @@ Please review in HR Tool.
         payload = {
             "employee_id": normalized_emp,
             "timezone": tz_name or "UTC",
+            "timezone_offset_minutes": tz_offset_minutes,
         }
 
         with app.test_request_context(endpoint, method="POST", json=payload):
@@ -3733,7 +3773,12 @@ Please review in HR Tool.
         total_hours = round(total_seconds / 3600.0, 2)
 
         if is_checkin:
-            checkin_time = display.get("checkin_local") or display.get("checkin") or ""
+            checkin_time = _format_local_display_time(
+                body.get("checkin_utc"),
+                display.get("checkin_local") or display.get("checkin"),
+                tz_name,
+                tz_offset_minutes,
+            )
             msg_time = f" at **{checkin_time}**" if checkin_time else ""
             return {
                 "success": True,
@@ -3743,7 +3788,12 @@ Please review in HR Tool.
                 "total_hours": total_hours,
             }
 
-        checkout_time = display.get("checkout_local") or display.get("checkout") or ""
+        checkout_time = _format_local_display_time(
+            body.get("checkout_utc"),
+            display.get("checkout_local") or display.get("checkout"),
+            tz_name,
+            tz_offset_minutes,
+        )
         duration_text = display.get("duration_text") or display.get("session_text") or ""
         msg_time = f" at **{checkout_time}**" if checkout_time else ""
         msg_duration = f"\n\n📊 **Today's total:** {duration_text}" if duration_text else ""
@@ -3760,7 +3810,8 @@ Please review in HR Tool.
         try:
             employee_id = action.get("employee_id", "")
             tz_name = action.get("timezone", "UTC")
-            return _invoke_attendance_v2("check_in", employee_id, tz_name)
+            tz_offset_minutes = action.get("timezone_offset_minutes")
+            return _invoke_attendance_v2("check_in", employee_id, tz_name, tz_offset_minutes)
         except Exception as e:
             import traceback
             traceback.print_exc()
@@ -3774,7 +3825,8 @@ Please review in HR Tool.
         try:
             employee_id = action.get("employee_id", "")
             tz_name = action.get("timezone", "UTC")
-            return _invoke_attendance_v2("check_out", employee_id, tz_name)
+            tz_offset_minutes = action.get("timezone_offset_minutes")
+            return _invoke_attendance_v2("check_out", employee_id, tz_name, tz_offset_minutes)
         except Exception as e:
             import traceback
             traceback.print_exc()

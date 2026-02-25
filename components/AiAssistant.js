@@ -407,6 +407,7 @@ async function sendMessage(question) {
                 currentUser: {
                     ...(state.user || {}),
                     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
+                    timezone_offset_minutes: new Date().getTimezoneOffset(),
                 },
                 history: messages.slice(-10),
                 automationState: automationState // Pass automation state for multi-step flows
