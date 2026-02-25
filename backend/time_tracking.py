@@ -1104,6 +1104,51 @@ def list_logs():
                     
                 out.append(log_entry)
             
+            # Merge local logs that may not yet exist in Dataverse (best effort).
+            # This prevents missing same-day entries in team/my timesheet when Dataverse
+            # upsert is delayed or fails but local fallback write succeeded.
+            try:
+                local_logs = _read_logs()
+                existing_keys = set()
+                for rec in out:
+                    rec_key = (
+                        str(rec.get("employee_id") or "").upper(),
+                        str(rec.get("work_date") or "")[:10],
+                        str(rec.get("project_id") or ""),
+                        str(rec.get("task_guid") or rec.get("task_id") or ""),
+                    )
+                    existing_keys.add(rec_key)
+
+                merged_count = 0
+                for r in local_logs:
+                    # Match current request scope
+                    if employee_id != "ALL" and str(r.get("employee_id") or "") != employee_id:
+                        continue
+
+                    local_date = str(r.get("work_date") or "")[:10]
+                    if start_date and local_date < start_date:
+                        continue
+                    if end_date and local_date > end_date:
+                        continue
+
+                    local_key = (
+                        str(r.get("employee_id") or "").upper(),
+                        local_date,
+                        str(r.get("project_id") or ""),
+                        str(r.get("task_guid") or r.get("task_id") or ""),
+                    )
+                    if local_key in existing_keys:
+                        continue
+
+                    out.append(r)
+                    existing_keys.add(local_key)
+                    merged_count += 1
+
+                if merged_count:
+                    print(f"[TIME_TRACKER] Merged {merged_count} local logs not present in Dataverse response")
+            except Exception as merge_err:
+                print(f"[TIME_TRACKER] Local merge warning: {merge_err}")
+
             print(f"[TIME_TRACKER] Successfully fetched {len(out)} logs from Dataverse")
             return jsonify({"success": True, "logs": out, "source": "dataverse"}), 200
         else:
