@@ -346,16 +346,17 @@ const renderClickableStepper = (currentStage, record) => {
             case 1: return record.personal_updated_at || record.created_at;
             case 2: return record.mail_updated_at || record.interview_updated_at || record.interview_date;
             case 3: return record.mail_updated_at || (record.mail_reply && record.mail_reply !== 'Pending' ? record.mail_updated_at : null);
-            case 4: return record.doj || record.completed_at;
+            case 4: return record.completed_at || record.doj;
             case 5: return record.document_updated_at;
             default: return null;
         }
     };
     const item = (s, i) => {
+        const stageStatus = getStageStatus(record, s.num, currentStage);
         const ts = tsFor(s.num);
         const tsHtml = ts ? `<div class="timestamp">${fmt(ts)}</div>` : '';
         return `
-        <button onclick="window.gotoRecordStage('${record.id}', ${s.num})" class="stepper-item ${s.num < currentStage ? 'completed' : ''} ${s.num === currentStage ? 'active' : ''}"
+        <button onclick="window.gotoRecordStage('${record.id}', ${s.num})" class="stepper-item ${stageStatus === 'completed' ? 'completed' : ''} ${stageStatus === 'in_progress' ? 'active' : ''}"
             style="appearance:none; background:transparent; border:none; cursor:pointer; display:flex; align-items:center; gap:8px;">
             <div class="stepper-circle">${s.num}</div>
             <div class="stepper-label">
@@ -803,7 +804,7 @@ const renderStepper = (currentStage, record) => {
             case 1: return record.personal_updated_at || record.created_at;
             case 2: return record.mail_updated_at || record.interview_updated_at || record.interview_date;
             case 3: return record.mail_updated_at;
-            case 4: return record.doj || record.completed_at;
+            case 4: return record.completed_at || record.doj;
             case 5: return record.document_updated_at;
             default: return null;
         }
@@ -845,13 +846,13 @@ const renderStepper = (currentStage, record) => {
     return `
         <div class="stepper onboarding-main-stepper">
             ${stages.map((stage, index) => `
-                <div class="stepper-item ${stage.num < currentStage ? 'completed' : ''} ${stage.num === currentStage ? 'active' : ''} ${canAccessStage(stage.num, record) ? '' : 'disabled'}" ${canAccessStage(stage.num, record) ? `onclick="window.scrollToStage(${stage.num})"` : ''} title="${canAccessStage(stage.num, record) ? stage.label : 'Locked'}">
+                <div class="stepper-item ${getStageStatus(record, stage.num, currentStage) === 'completed' ? 'completed' : ''} ${getStageStatus(record, stage.num, currentStage) === 'in_progress' ? 'active' : ''} ${canAccessStage(stage.num, record) ? '' : 'disabled'}" ${canAccessStage(stage.num, record) ? `onclick="window.scrollToStage(${stage.num})"` : ''} title="${canAccessStage(stage.num, record) ? stage.label : 'Locked'}">
                     ${(() => {
             const ts = tsFor(stage.num);
             return ts ? `<span class="stepper-label-ts">${fmt(ts)}</span>` : '<span class="stepper-label-ts stepper-label-ts-empty"></span>';
         })()}
                     <div class="stepper-circle">
-                        ${stage.num < currentStage ? '<i class="fa-solid fa-check"></i>' : stage.num}
+                        ${getStageStatus(record, stage.num, currentStage) === 'completed' ? '<i class="fa-solid fa-check"></i>' : stage.num}
                     </div>
                     <div class="stepper-label">
                         <span class="stepper-label-main"><i class="fa-solid ${stage.icon}"></i>Stage ${stage.num} - ${stage.label}</span>
