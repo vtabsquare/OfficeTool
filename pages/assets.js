@@ -206,7 +206,7 @@ export const showAssetModal = async (assetId) => {
   const employeeIdReadonlyAttr = hasEmployeeOptions ? "readonly" : "";
 
   const formHTML = `
-      <div class="modal-form modern-form asset-form">
+      <div class="modal-form modern-form leave-form asset-form-v2">
           <!-- Section 1: Asset Information -->
           <div class="form-section">
               <div class="form-section-header">
@@ -217,29 +217,41 @@ export const showAssetModal = async (assetId) => {
                   <p class="form-section-copy">Enter the core details for this asset.</p>
               </div>
               <div class="form-grid two-col">
-                  <div class="form-field">
+                  <div class="form-field with-icon">
                       <label class="form-label" for="assetName">Asset Name</label>
-                      <input class="input-control" type="text" id="assetName" required value="${asset?.name || ""}" placeholder="Dell Laptop">
+                      <div class="input-wrapper">
+                          <i class="fa-solid fa-laptop"></i>
+                          <input class="input-control" type="text" id="assetName" required value="${asset?.name || ""}" placeholder="Dell Laptop">
+                      </div>
                   </div>
-                  <div class="form-field">
+                  <div class="form-field with-icon">
                       <label class="form-label" for="serialNo">Serial Number</label>
-                      <input class="input-control" type="text" id="serialNo" required value="${asset?.serialNo || ""}" placeholder="SN123456789">
+                      <div class="input-wrapper">
+                          <i class="fa-solid fa-barcode"></i>
+                          <input class="input-control" type="text" id="serialNo" required value="${asset?.serialNo || ""}" placeholder="SN123456789">
+                      </div>
                   </div>
-                  <div class="form-field">
+                  <div class="form-field with-icon">
                       <label class="form-label" for="assetCategory">Category</label>
-                      <select class="input-control" id="assetCategory" required>
-                          <option value="" disabled ${!asset?.category ? 'selected' : ''}>Select category</option>
-                          <option ${asset?.category === "Laptop" ? "selected" : ""}>Laptop</option>
-                          <option ${asset?.category === "Monitor" ? "selected" : ""}>Monitor</option>
-                          <option ${asset?.category === "Charger" ? "selected" : ""}>Charger</option>
-                          <option ${asset?.category === "Keyboard" ? "selected" : ""}>Keyboard</option>
-                          <option ${asset?.category === "Headset" ? "selected" : ""}>Headset</option>
-                          <option ${asset?.category === "Accessory" ? "selected" : ""}>Accessory</option>
-                      </select>
+                      <div class="input-wrapper">
+                          <i class="fa-solid fa-layer-group"></i>
+                          <select class="input-control" id="assetCategory" required>
+                              <option value="" disabled ${!asset?.category ? 'selected' : ''}>Select category</option>
+                              <option ${asset?.category === "Laptop" ? "selected" : ""}>Laptop</option>
+                              <option ${asset?.category === "Monitor" ? "selected" : ""}>Monitor</option>
+                              <option ${asset?.category === "Charger" ? "selected" : ""}>Charger</option>
+                              <option ${asset?.category === "Keyboard" ? "selected" : ""}>Keyboard</option>
+                              <option ${asset?.category === "Headset" ? "selected" : ""}>Headset</option>
+                              <option ${asset?.category === "Accessory" ? "selected" : ""}>Accessory</option>
+                          </select>
+                      </div>
                   </div>
-                  <div class="form-field">
+                  <div class="form-field with-icon">
                       <label class="form-label" for="assetLocation">Location</label>
-                      <input class="input-control" type="text" id="assetLocation" required value="${asset?.location || ""}" placeholder="Office Building A">
+                      <div class="input-wrapper">
+                          <i class="fa-solid fa-location-dot"></i>
+                          <input class="input-control" type="text" id="assetLocation" required value="${asset?.location || ""}" placeholder="Office Building A">
+                      </div>
                   </div>
               </div>
           </div>
@@ -251,28 +263,41 @@ export const showAssetModal = async (assetId) => {
                       <p class="form-eyebrow">Assignment & Status</p>
                       <h3>Assignment Information</h3>
                   </div>
+                  <p class="form-section-copy">Track current ownership and lifecycle state for this asset.</p>
               </div>
               <div class="form-grid two-col">
-                  <div class="form-field">
+                  <div class="form-field with-icon">
                       <label class="form-label" for="assetStatus">Status</label>
-                      <select class="input-control" id="assetStatus">
-                          <option ${asset?.status === "In Use" ? "selected" : ""}>In Use</option>
-                          <option ${asset?.status === "Not Use" ? "selected" : ""}>Not Use</option>
-                          <option ${asset?.status === "Repair" ? "selected" : ""}>Repair</option>
-                      </select>
+                      <div class="input-wrapper">
+                          <i class="fa-solid fa-signal"></i>
+                          <select class="input-control" id="assetStatus">
+                              <option ${asset?.status === "In Use" ? "selected" : ""}>In Use</option>
+                              <option ${asset?.status === "Not Use" ? "selected" : ""}>Not Use</option>
+                              <option ${asset?.status === "Repair" ? "selected" : ""}>Repair</option>
+                          </select>
+                      </div>
                   </div>
-                  <div class="form-field">
+                  <div class="form-field with-icon">
                       <label class="form-label" for="assignedOn">Assigned On</label>
-                      <input class="input-control" type="date" id="assignedOn" value="${asset?.assignedOn || ""}">
+                      <div class="input-wrapper">
+                          <i class="fa-regular fa-calendar"></i>
+                          <input class="input-control" type="date" id="assignedOn" value="${asset?.assignedOn || ""}">
+                      </div>
                   </div>
-                  <div class="form-field">
+                  <div class="form-field with-icon">
                       <label class="form-label" for="assignedTo">Assigned To</label>
-                      ${assignedDropdownHTML}
-                     <p class="helper-text">Select the employee currently using this asset.</p>
+                      <div class="input-wrapper">
+                          <i class="fa-solid fa-user"></i>
+                          ${assignedDropdownHTML}
+                      </div>
+                      <p class="helper-text">Select the employee currently using this asset.</p>
                   </div>
-                  <div class="form-field">
+                  <div class="form-field with-icon">
                       <label class="form-label" for="employeeId">Employee ID</label>
-                      <input class="input-control" type="text" id="employeeId" value="${asset?.employeeId || ""}" placeholder="EMP-001" ${employeeIdReadonlyAttr}>
+                      <div class="input-wrapper">
+                          <i class="fa-solid fa-id-badge"></i>
+                          <input class="input-control" type="text" id="employeeId" value="${asset?.employeeId || ""}" placeholder="EMP-001" ${employeeIdReadonlyAttr}>
+                      </div>
                   </div>
               </div>
           </div>
