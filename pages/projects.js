@@ -800,63 +800,79 @@ async function fetchProjects() {
 
 function projectFormHTML(p = {}) {
   return `
-  <div class="modal-form modern-form project-form">
+  <div class="modal-form modern-form leave-form project-form-v2">
     <div class="form-section">
       <div class="form-section-header">
         <div>
           <p class="form-eyebrow">Project</p>
           <h3>Project Details</h3>
         </div>
+        <p class="form-section-copy">Capture project ownership, timeline, and delivery details.</p>
       </div>
       <div class="form-grid two-col">
-        <div class="form-field">
+        <div class="form-field with-icon">
           <label class="form-label" for="pj-name">Project Name</label>
-          <input class="input-control" id="pj-name" type="text" value="${p.name || ""
-    }">
+          <div class="input-wrapper">
+            <i class="fa-solid fa-diagram-project"></i>
+            <input class="input-control" id="pj-name" type="text" value="${p.name || ""}">
+          </div>
         </div>
 
-        <div class="form-field">
+        <div class="form-field with-icon">
           <label class="form-label" for="pj-client">Client</label>
-          <select class="input-control" id="pj-client">
-            <option value="">Select Client</option>
-          </select>
+          <div class="input-wrapper">
+            <i class="fa-solid fa-building"></i>
+            <select class="input-control" id="pj-client">
+              <option value="">Select Client</option>
+            </select>
+          </div>
         </div>
 
-        <div class="form-field">
+        <div class="form-field with-icon">
           <label class="form-label" for="pj-manager">Manager</label>
-          <select class="input-control" id="pj-manager">
-            <option value="">Select Manager</option>
-          </select>
+          <div class="input-wrapper">
+            <i class="fa-solid fa-user-gear"></i>
+            <select class="input-control" id="pj-manager">
+              <option value="">Select Manager</option>
+            </select>
+          </div>
         </div>
 
-        <div class="form-field">
+        <div class="form-field with-icon">
           <label class="form-label" for="pj-cost">Estimation Cost</label>
-          <input class="input-control" id="pj-cost" type="number" value="${p.estimatedCost || ""
-    }">
+          <div class="input-wrapper">
+            <i class="fa-solid fa-sack-dollar"></i>
+            <input class="input-control" id="pj-cost" type="number" value="${p.estimatedCost || ""}">
+          </div>
         </div>
 
-        <div class="form-field">
+        <div class="form-field with-icon">
           <label class="form-label" for="pj-status">Project Status</label>
-          <select class="input-control" id="pj-status">
-            <option ${p.status === "Active" ? "selected" : ""}>Active</option>
-            <option ${p.status === "Inactive" ? "selected" : ""}>Inactive</option>
-            <option ${p.status === "Completed" ? "selected" : ""}>Completed</option>
-            <option ${p.status === "Pending" ? "selected" : ""}>Pending</option>
-          </select>
+          <div class="input-wrapper">
+            <i class="fa-solid fa-signal"></i>
+            <select class="input-control" id="pj-status">
+              <option ${p.status === "Active" ? "selected" : ""}>Active</option>
+              <option ${p.status === "Inactive" ? "selected" : ""}>Inactive</option>
+              <option ${p.status === "Completed" ? "selected" : ""}>Completed</option>
+              <option ${p.status === "Pending" ? "selected" : ""}>Pending</option>
+            </select>
+          </div>
         </div>
 
-        <div class="form-field">
+        <div class="form-field with-icon">
           <label class="form-label" for="pj-start">Start date</label>
-          <input class="input-control" id="pj-start" type="date" onkeydown="return false;" value="${toISO(
-      p.start
-    )}">
+          <div class="input-wrapper">
+            <i class="fa-regular fa-calendar"></i>
+            <input class="input-control" id="pj-start" type="date" onkeydown="return false;" value="${toISO(p.start)}">
+          </div>
         </div>
 
-        <div class="form-field">
+        <div class="form-field with-icon">
           <label class="form-label" for="pj-end">End date</label>
-          <input class="input-control" id="pj-end" type="date" onkeydown="return false;" value="${toISO(
-      p.end
-    )}">
+          <div class="input-wrapper">
+            <i class="fa-regular fa-calendar-check"></i>
+            <input class="input-control" id="pj-end" type="date" onkeydown="return false;" value="${toISO(p.end)}">
+          </div>
         </div>
 
         <div class="form-field" style="grid-column:1 / -1;">
