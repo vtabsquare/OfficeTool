@@ -2134,39 +2134,52 @@ function showContributorModal(projectId, contributor = null) {
   const isEdit = !!contributor;
 
   const formHtml = `
-    <div class="modal-form modern-form contributor-form">
+    <div class="modal-form modern-form leave-form contributor-form-v2">
       <div class="form-section">
         <div class="form-section-header">
           <div>
             <p class="form-eyebrow">Contributor</p>
             <h3>${isEdit ? "Edit contributor" : "Add contributor"}</h3>
           </div>
+          <p class="form-section-copy">Assign employees to this project and set billing details.</p>
         </div>
         <div class="form-grid two-col">
-          <div class="form-field">
+          <div class="form-field with-icon">
             <label class="form-label" for="ct-empname">Employee Name</label>
-            <select class="input-control" id="ct-empname">
-              <option value="">-- Select Employee --</option>
-            </select>
+            <div class="input-wrapper">
+              <i class="fa-solid fa-user"></i>
+              <select class="input-control" id="ct-empname">
+                <option value="">-- Select Employee --</option>
+              </select>
+            </div>
             <small id="emp-error" class="helper-text" style="margin-top:2px;"></small>
           </div>
 
-          <div class="form-field">
+          <div class="form-field with-icon">
             <label class="form-label" for="ct-empid">Employee ID</label>
-            <input class="input-control readonly-input" type="text" id="ct-empid" readonly />
+            <div class="input-wrapper">
+              <i class="fa-solid fa-id-badge"></i>
+              <input class="input-control readonly-input" type="text" id="ct-empid" readonly />
+            </div>
           </div>
 
-          <div class="form-field">
+          <div class="form-field with-icon">
             <label class="form-label" for="ct-billing">Billing Type</label>
-            <select class="input-control" id="ct-billing">
-              <option value="Billable">Billable</option>
-              <option value="Non-billable">Non-billable</option>
-            </select>
+            <div class="input-wrapper">
+              <i class="fa-solid fa-file-invoice-dollar"></i>
+              <select class="input-control" id="ct-billing">
+                <option value="Billable">Billable</option>
+                <option value="Non-billable">Non-billable</option>
+              </select>
+            </div>
           </div>
 
-          <div class="form-field">
+          <div class="form-field with-icon">
             <label class="form-label" for="ct-date">Assigned Date</label>
-            <input class="input-control" type="date" id="ct-date" />
+            <div class="input-wrapper">
+              <i class="fa-regular fa-calendar"></i>
+              <input class="input-control" type="date" id="ct-date" />
+            </div>
           </div>
         </div>
       </div>
@@ -2546,18 +2559,22 @@ function showBoardModal(projectId, board = null) {
   const isEdit = !!board;
 
   const formHtml = `
-    <div class="modal-form modern-form board-form">
+    <div class="modal-form modern-form leave-form board-form-v2">
       <div class="form-section">
         <div class="form-section-header">
           <div>
             <p class="form-eyebrow">Board</p>
             <h3>${isEdit ? "Edit board" : "Add board"}</h3>
           </div>
+          <p class="form-section-copy">Create and organize boards within the project for task tracking.</p>
         </div>
         <div class="form-grid two-col">
-          <div class="form-field" style="grid-column:1 / -1;">
+          <div class="form-field with-icon" style="grid-column:1 / -1;">
             <label class="form-label" for="bd-name">Board Name</label>
-            <input class="input-control" type="text" id="bd-name" placeholder="Enter board name" />
+            <div class="input-wrapper">
+              <i class="fa-solid fa-chalkboard"></i>
+              <input class="input-control" type="text" id="bd-name" placeholder="Enter board name" />
+            </div>
           </div>
 
           <div class="form-field" style="grid-column:1 / -1;">
