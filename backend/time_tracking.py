@@ -203,6 +203,91 @@ def _safe_date_part(value):
     return str(value or "").strip()[:10]
 
 
+def _task_identity_candidates(task_guid=None, task_id=None):
+    out = []
+    g = str(task_guid or "").strip().upper()
+    t = str(task_id or "").strip().upper()
+    if g:
+        out.append(g)
+    if t:
+        out.append(t)
+    return out
+
+
+def _same_task_identity(left_guid=None, left_id=None, right_guid=None, right_id=None):
+    left = set(_task_identity_candidates(left_guid, left_id))
+    right = set(_task_identity_candidates(right_guid, right_id))
+    if not left or not right:
+        return False
+    return bool(left.intersection(right))
+
+
+def _coalesce_logs(records):
+    """
+    Merge logs that represent the same logical task/day row.
+
+    Key: employee + work_date + project + canonical task identity.
+    Canonical identity prefers task_id; falls back to task_guid.
+    """
+    if not isinstance(records, list) or not records:
+        return []
+
+    # Learn task_id from rows that already contain both guid and task_id.
+    guid_to_task_id = {}
+    for rec in records:
+        g = str(rec.get("task_guid") or "").strip().upper()
+        t = str(rec.get("task_id") or "").strip()
+        if g and t:
+            guid_to_task_id[g] = t
+
+    merged = {}
+    order = []
+
+    for rec in records:
+        employee = str(rec.get("employee_id") or "").strip().upper()
+        work_date = _safe_date_part(rec.get("work_date"))
+        project_id = str(rec.get("project_id") or "").strip()
+        task_guid = str(rec.get("task_guid") or "").strip()
+        task_id = str(rec.get("task_id") or "").strip()
+
+        mapped_task_id = guid_to_task_id.get(task_guid.upper(), "") if task_guid else ""
+        canonical_task_id = task_id or mapped_task_id
+        identity = f"ID:{canonical_task_id.upper()}" if canonical_task_id else f"GUID:{task_guid.upper()}"
+
+        key = (employee, work_date, project_id, identity)
+        if key not in merged:
+            row = dict(rec)
+            if mapped_task_id and not row.get("task_id"):
+                row["task_id"] = mapped_task_id
+            merged[key] = row
+            order.append(key)
+            continue
+
+        dst = merged[key]
+        try:
+            dst_secs = int(dst.get("seconds") or 0)
+        except Exception:
+            dst_secs = 0
+        try:
+            src_secs = int(rec.get("seconds") or 0)
+        except Exception:
+            src_secs = 0
+        dst["seconds"] = dst_secs + src_secs
+
+        if not dst.get("task_guid") and task_guid:
+            dst["task_guid"] = task_guid
+        if not dst.get("task_id") and canonical_task_id:
+            dst["task_id"] = canonical_task_id
+        if not dst.get("task_name") and rec.get("task_name"):
+            dst["task_name"] = rec.get("task_name")
+        if not dst.get("description") and rec.get("description"):
+            dst["description"] = rec.get("description")
+
+        dst["manual"] = bool(dst.get("manual")) or bool(rec.get("manual"))
+
+    return [merged[k] for k in order]
+
+
 def _hoursworked_to_seconds(raw_value, formatted_value=None):
     """
     Convert Dataverse crc6f_hoursworked variants to seconds.
@@ -899,7 +984,13 @@ def create_task_log():
                 if project_id:
                     safe_project = project_id.replace("'", "''")
                     filter_parts.append(f"crc6f_projectid eq '{safe_project}'")
-                if task_guid:
+                if task_guid and task_id:
+                    safe_task_guid = task_guid.replace("'", "''")
+                    safe_task_id = task_id.replace("'", "''")
+                    filter_parts.append(
+                        f"(crc6f_taskguid eq '{safe_task_guid}' or crc6f_taskid eq '{safe_task_id}')"
+                    )
+                elif task_guid:
                     safe_task_guid = task_guid.replace("'", "''")
                     filter_parts.append(f"crc6f_taskguid eq '{safe_task_guid}'")
                 elif task_id:
@@ -953,7 +1044,12 @@ def create_task_log():
             for i, r in enumerate(logs):
                 if (
                     r.get("employee_id") == employee_id
-                    and (r.get("task_guid") or r.get("task_id")) == (task_guid or task_id)
+                    and _same_task_identity(
+                        r.get("task_guid"),
+                        r.get("task_id"),
+                        task_guid,
+                        task_id,
+                    )
                     and r.get("work_date") == seg_work_date
                 ):
                     idx = i
@@ -1149,6 +1245,8 @@ def list_logs():
             except Exception as merge_err:
                 print(f"[TIME_TRACKER] Local merge warning: {merge_err}")
 
+            out = _coalesce_logs(out)
+
             print(f"[TIME_TRACKER] Successfully fetched {len(out)} logs from Dataverse")
             return jsonify({"success": True, "logs": out, "source": "dataverse"}), 200
         else:
@@ -1171,6 +1269,8 @@ def list_logs():
                 if end_date and r.get("work_date", "") > end_date:
                     continue
                 out.append(r)
+
+            out = _coalesce_logs(out)
             
             if employee_id == "ALL":
                 print(f"[TIME_TRACKER] Filtered to {len(out)} logs for ALL employees")

@@ -546,6 +546,8 @@ export const renderMyTasksPage = async () => {
     const setPersistedSecs = (guid, secs) => { try { localStorage.setItem(PER_TASK_KEY(empId, guid, todayStr()), String(Math.max(0, secs | 0))); } catch { } };
 
     const postTimesheetLog = async ({ seconds, task, started_at = null, ended_at = null }) => {
+        const safeSeconds = Math.max(0, Number(seconds || 0) | 0);
+        if (safeSeconds <= 0) return true;
         console.log('[MY_TASKS] postTimesheetLog called with:', { seconds, task, started_at, ended_at });
         const body = {
             employee_id: empId,
@@ -553,7 +555,7 @@ export const renderMyTasksPage = async () => {
             task_guid: task.guid,
             task_id: task.task_id,
             task_name: task.task_name,
-            seconds: Math.max(1, seconds | 0),
+            seconds: safeSeconds,
             work_date: todayStr(), // legacy fallback
             description: '',
             session_start_ms: started_at || null,
@@ -738,11 +740,12 @@ export const renderMyTasksPage = async () => {
             const totalAccumulated = (cur.accumulated || 0) + elapsed;
             setActive({ ...cur, accumulated: totalAccumulated, paused: true, started_at: null });
             setPersistedSecs(t.guid, totalAccumulated);
-            await postTimesheetLog({ seconds: totalAccumulated, task: t, started_at: cur.started_at, ended_at: Date.now() });
+            await postTimesheetLog({ seconds: elapsed, task: t, started_at: cur.started_at, ended_at: Date.now() });
             await stopTaskTimer(t);
             render();
             return;
         }
+
         // If another task is running, stop it first
         if (cur && cur.task_guid && cur.task_guid !== t.guid && !cur.paused) {
             // Auto-pause current and upsert
@@ -751,7 +754,7 @@ export const renderMyTasksPage = async () => {
             // Persist for the old task
             setPersistedSecs(cur.task_guid, totalAccumulated);
             await postTimesheetLog({
-                seconds: totalAccumulated,
+                seconds: elapsed,
                 task: { guid: cur.task_guid, task_id: cur.task_id, task_name: cur.task_name, project_id: cur.project_id },
                 started_at: cur.started_at,
                 ended_at: Date.now()
@@ -783,15 +786,17 @@ export const renderMyTasksPage = async () => {
         if (!cur || cur.task_guid !== t.guid) return;
 
         // Calculate total seconds (accumulated + current session if running)
-        let totalSeconds = cur.accumulated || 0;
+        let segmentSeconds = 0;
+        let segmentStartedAt = null;
         if (!cur.paused && cur.started_at) {
-            totalSeconds += Math.floor((Date.now() - Number(cur.started_at)) / 1000);
+            segmentStartedAt = cur.started_at;
+            segmentSeconds = Math.floor((Date.now() - Number(cur.started_at)) / 1000);
         }
-        totalSeconds = Math.max(1, totalSeconds);
+        const totalSeconds = Math.max(0, (cur.accumulated || 0) + segmentSeconds);
 
         // persist and upsert
         setPersistedSecs(t.guid, totalSeconds);
-        const ok = await postTimesheetLog({ seconds: totalSeconds, task: t, started_at: cur.started_at, ended_at: Date.now() });
+        const ok = await postTimesheetLog({ seconds: segmentSeconds, task: t, started_at: segmentStartedAt, ended_at: Date.now() });
         await stopTaskTimer(t);
         if (ok) {
             clearActive();
@@ -1105,12 +1110,29 @@ export const renderMyTimesheetPage = async () => {
         return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
     };
 
+    const taskIdByGuid = new Map();
+
+    const seedTaskIdentityMap = (rows = []) => {
+        (rows || []).forEach((row) => {
+            const guid = String(row?.task_guid || row?.taskGuid || '').trim();
+            const taskId = String(row?.task_id || row?.taskId || '').trim();
+            if (guid && taskId) {
+                taskIdByGuid.set(guid.toUpperCase(), taskId);
+            }
+        });
+    };
+
     const taskIdentityFor = (row) => {
+        const guid = String(row?.task_guid || row?.taskGuid || '').trim();
+        const taskId = String(row?.task_id || row?.taskId || '').trim();
+        if (guid && taskId) {
+            taskIdByGuid.set(guid.toUpperCase(), taskId);
+        }
+        const mappedTaskId = guid ? (taskIdByGuid.get(guid.toUpperCase()) || '') : '';
         return String(
-            row?.task_guid ||
-            row?.taskGuid ||
-            row?.task_id ||
-            row?.taskId ||
+            taskId ||
+            mappedTaskId ||
+            guid ||
             ''
         ).trim();
     };
@@ -1135,6 +1157,10 @@ export const renderMyTimesheetPage = async () => {
             const logDate = (log.work_date || '').slice(0, 10);
             return logDate <= todayStr;
         });
+
+        taskIdByGuid.clear();
+        seedTaskIdentityMap(tasks);
+        seedTaskIdentityMap(logs);
 
         // manual rows: load from sessionStorage per week range
         const weekKey = `ts_manual_${fmt(s)}_${fmt(e)}`;
