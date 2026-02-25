@@ -1,11 +1,13 @@
 import { state } from '../state.js';
-import { isAdminUser, isL3User, isManagerOrAdmin, isL2OrL3User } from '../utils/accessControl.js';
+import { isAdminUser, isManagerOrAdmin, isL2OrL3User, getUserAccessContext } from '../utils/accessControl.js';
 
 export const getSidebarHTML = () => {
     const isAdmin = isAdminUser();
-    const isL3 = isL3User();
+    const { role } = getUserAccessContext();
     const isL2OrL3 = isL2OrL3User();
     const canManage = isManagerOrAdmin();
+    const canViewEmployeeModule = isL2OrL3;
+    const canViewSettings = role === 'L3' || isAdmin;
     
     return `
     <div class="sidebar-header">
@@ -18,7 +20,7 @@ export const getSidebarHTML = () => {
         <li><p class="nav-section-title">APPLICATIONS</p></li>
         <li><a href="#/" class="nav-link" data-page="home"><i class="fa-solid fa-house"></i> Home</a></li>
         ${
-          isL3
+          canViewEmployeeModule
             ? `
         <li class="nav-group" data-group="employee-module">
             <a href="#" class="nav-link nav-toggle">
@@ -111,7 +113,7 @@ export const getSidebarHTML = () => {
         </li>
         <li><a href="#/assets" class="nav-link" data-page="assets"><i class="fa-solid fa-box"></i> Assets</a></li>
         ${
-          isL2OrL3
+          canViewSettings
             ? `
         <li class="nav-group" data-group="settings">
             <a href="#" class="nav-link nav-toggle">
