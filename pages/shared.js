@@ -2394,43 +2394,63 @@ const attachClientsEvents = () => {
 };
 
 const clientFormHTML = (data = {}) => `
-  <div class="modal-form modern-form client-form">
+  <div class="modal-form modern-form leave-form client-form-v2">
     <div class="form-section">
       <div class="form-section-header">
         <div>
           <p class="form-eyebrow">Client</p>
           <h3>Client details</h3>
         </div>
+        <p class="form-section-copy">Add or update client information used across projects and timesheets.</p>
       </div>
       <div class="form-grid two-col">
-        <div class="form-field">
+        <div class="form-field with-icon">
           <label class="form-label" for="cl-clientid">Client ID</label>
-          <input class="input-control" type="text" id="cl-clientid" value="${data.crc6f_clientid || ''}" ${data._isEdit ? '' : 'placeholder="Auto-generated if empty"'}>
+          <div class="input-wrapper">
+            <i class="fa-solid fa-id-card"></i>
+            <input class="input-control" type="text" id="cl-clientid" value="${data.crc6f_clientid || ''}" ${data._isEdit ? '' : 'placeholder="Auto-generated if empty"'}>
+          </div>
         </div>
-        <div class="form-field">
+        <div class="form-field with-icon">
           <label class="form-label" for="cl-name">Client Name</label>
-          <input class="input-control" type="text" id="cl-name" value="${data.crc6f_clientname || ''}" required>
+          <div class="input-wrapper">
+            <i class="fa-solid fa-user-tie"></i>
+            <input class="input-control" type="text" id="cl-name" value="${data.crc6f_clientname || ''}" required>
+          </div>
         </div>
-        <div class="form-field">
+        <div class="form-field with-icon">
           <label class="form-label" for="cl-company">Company Name</label>
-          <input class="input-control" type="text" id="cl-company" value="${data.crc6f_companyname || ''}">
+          <div class="input-wrapper">
+            <i class="fa-solid fa-building"></i>
+            <input class="input-control" type="text" id="cl-company" value="${data.crc6f_companyname || ''}">
+          </div>
         </div>
-        <div class="form-field">
+        <div class="form-field with-icon">
           <label class="form-label" for="cl-email">Email</label>
-          <input class="input-control" type="email" id="cl-email" value="${data.crc6f_email || ''}">
+          <div class="input-wrapper">
+            <i class="fa-solid fa-envelope"></i>
+            <input class="input-control" type="email" id="cl-email" value="${data.crc6f_email || ''}">
+          </div>
         </div>
-        <div class="form-field">
+        <div class="form-field with-icon">
           <label class="form-label" for="cl-phone">Phone</label>
-          <input class="input-control" type="text" id="cl-phone" value="${data.crc6f_phone || ''}" required>
+          <div class="input-wrapper">
+            <i class="fa-solid fa-phone"></i>
+            <input class="input-control" type="text" id="cl-phone" value="${data.crc6f_phone || ''}" required>
+          </div>
         </div>
-        <div class="form-field">
+        <div class="form-field with-icon">
           <label class="form-label" for="cl-country">Country</label>
-          <input class="input-control" type="text" id="cl-country" value="${data.crc6f_country || ''}">
+          <div class="input-wrapper">
+            <i class="fa-solid fa-earth-asia"></i>
+            <input class="input-control" type="text" id="cl-country" value="${data.crc6f_country || ''}">
+          </div>
         </div>
         <div class="form-field" style="grid-column:1 / -1;">
           <label class="form-label" for="cl-address">Address</label>
           <textarea class="input-control" id="cl-address" rows="3">${data.crc6f_address || ''}</textarea>
         </div>
+
       </div>
     </div>
   </div>`;
