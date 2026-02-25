@@ -24,11 +24,30 @@ const normalizeRole = (value) => {
 };
 
 export const getUserAccessContext = () => {
+  let persistedRole = '';
+  let persistedAuthUser = null;
+  try {
+    persistedRole = localStorage.getItem('role') || '';
+    const rawAuth = localStorage.getItem('auth');
+    if (rawAuth) {
+      const parsed = JSON.parse(rawAuth);
+      persistedAuthUser = parsed?.user || null;
+    }
+  } catch {
+    persistedRole = '';
+    persistedAuthUser = null;
+  }
+
   const role = normalizeRole(
     state.user?.access_level ||
     state.user?.accessLevel ||
     state.user?.access ||
-    state.user?.role
+    state.user?.role ||
+    persistedAuthUser?.access_level ||
+    persistedAuthUser?.accessLevel ||
+    persistedAuthUser?.access ||
+    persistedAuthUser?.role ||
+    persistedRole
   );
   const empId = String(state.user?.id || '').trim().toUpperCase();
   const email = String(state.user?.email || '').trim().toLowerCase();

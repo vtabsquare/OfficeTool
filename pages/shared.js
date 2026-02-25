@@ -2493,7 +2493,7 @@ export const renderInboxPage = async () => {
 
     const isAdmin = isAdminUser();
     const canViewTeamQueues = isManagerOrAdmin();
-    const showAwaitingTab = isAdmin; // Only admins can act on approvals
+    const showAwaitingTab = canViewTeamQueues;
     console.log('👤 User is admin:', isAdmin, '| can view team queues:', canViewTeamQueues);
 
     // Initial static content
@@ -3982,6 +3982,7 @@ const handleAddProject = async (projectId, triggerBtn) => {
 
 const loadInboxLeaves = async () => {
     const isAdmin = isAdminUser();
+    const canViewTeamQueues = isManagerOrAdmin();
     const listContainer = document.querySelector('.inbox-list');
 
     if (!listContainer) return;
@@ -4020,7 +4021,7 @@ const loadInboxLeaves = async () => {
             _raw: r,
         });
 
-        if (currentInboxTab === 'awaiting' && isAdmin) {
+        if (currentInboxTab === 'awaiting' && canViewTeamQueues) {
             // Fetch all pending leaves for admin
             const pendingLeaves = await fetchPendingLeaves();
             const compPending = compAll.filter(r => (r.status || 'pending').toLowerCase() === 'pending').map(normalizeComp);
@@ -4197,6 +4198,7 @@ const loadInboxLeaves = async () => {
 
 const loadInboxTimesheets = async () => {
     const isAdmin = isAdminUser();
+    const canViewTeamQueues = isManagerOrAdmin();
     const listContainer = document.querySelector('.inbox-list');
 
     if (!listContainer) return;
@@ -4220,7 +4222,9 @@ const loadInboxTimesheets = async () => {
 
         // Build query string based on role and tab
         const params = new URLSearchParams();
-        if (!isAdmin) {
+        if (currentInboxTab === 'awaiting' && canViewTeamQueues) {
+            params.set('status', 'pending');
+        } else if (!isAdmin) {
             const empId = await resolveCurrentEmployeeId();
             if (!empId) {
                 listContainer.innerHTML = `
@@ -4235,8 +4239,6 @@ const loadInboxTimesheets = async () => {
             if (currentInboxTab === 'requests') {
                 params.set('status', 'pending');
             }
-        } else if (currentInboxTab === 'awaiting') {
-            params.set('status', 'pending');
         }
 
         const qs = params.toString() ? `?${params.toString()}` : '';
@@ -4251,10 +4253,9 @@ const loadInboxTimesheets = async () => {
 
         // For completed tab, keep only Accepted/Rejected
         if (currentInboxTab === 'completed') {
-            items = items.filter(r => {
-                const s = String(r.status || '').toLowerCase();
-                return s === 'accepted' || s === 'rejected';
-            });
+            items = items.filter(r =>
+                r.status?.toLowerCase() === 'accepted' || r.status?.toLowerCase() === 'rejected'
+            );
         }
 
         // Sort by submitted date (latest first)
@@ -4352,6 +4353,7 @@ const loadInboxTimesheets = async () => {
 
 const loadInboxCompOff = async () => {
     const isAdmin = isAdminUser();
+    const canViewTeamQueues = isManagerOrAdmin();
     const listContainer = document.querySelector('.inbox-list');
     if (!listContainer) return;
     listContainer.innerHTML = `
@@ -4366,10 +4368,10 @@ const loadInboxCompOff = async () => {
         const all = JSON.parse(localStorage.getItem('compoff_requests') || '[]');
         let items = all;
 
-        if (isAdmin) {
-            if (currentInboxTab === 'awaiting') {
-                items = all.filter(r => (r.status || 'pending').toLowerCase() === 'pending');
-            } else if (currentInboxTab === 'completed') {
+        if (currentInboxTab === 'awaiting' && canViewTeamQueues) {
+            items = all.filter(r => (r.status || 'pending').toLowerCase() === 'pending');
+        } else if (isAdmin) {
+            if (currentInboxTab === 'completed') {
                 items = all.filter(r => ['approved', 'rejected'].includes((r.status || '').toLowerCase()));
             }
         } else {
@@ -4612,6 +4614,7 @@ export const handleTimesheetReject = async (e) => {
 
 const loadInboxAttendance = async () => {
     const isAdmin = isAdminUser();
+    const canViewTeamQueues = isManagerOrAdmin();
     const listContainer = document.querySelector('.inbox-list');
 
     if (!listContainer) return;
@@ -4626,7 +4629,7 @@ const loadInboxAttendance = async () => {
     try {
         // Build query for submissions based on current tab
         let qs = '';
-        if (currentInboxTab === 'awaiting' && isAdmin) {
+        if (currentInboxTab === 'awaiting' && canViewTeamQueues) {
             qs = '?status=pending';
         } else if (currentInboxTab === 'completed') {
             // Completed = approved or rejected. We'll fetch all and client-filter.
