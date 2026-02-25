@@ -626,17 +626,6 @@ export const renderLeaveTrackerPage = async (
     })
     .join("");
 
-  const columnsPanelItems = activeColumns
-    .map(
-      (col) => `
-                        <label class="columns-option">
-                            <input type="checkbox" checked data-column-key="${col.key}">
-                            <span>${col.label}</span>
-                        </label>
-                    `
-    )
-    .join("");
-
   let emptyMessage = "";
   const extraCols = leaveViewMode === "team" ? 6 : 8;
   if (fetchError) {
@@ -745,43 +734,6 @@ export const renderLeaveTrackerPage = async (
       ? "Live balances for your team members"
       : "Timeline of your leave requests and approvals"
     }</p>
-                </div>
-                <div class="leave-table-toolbar">
-                    <div class="leave-table-filters">
-                        <button type="button" class="filter-chip">
-                            <i class="fa-solid fa-filter"></i>
-                            <span>Filters</span>
-                            <span class="filter-chip-count">0</span>
-                        </button>
-                    </div>
-                    <div class="leave-table-actions">
-                        <div class="columns-control">
-                            <input type="checkbox" id="leave-columns-toggle" class="columns-toggle-input" />
-                            <label for="leave-columns-toggle" class="columns-button">
-                                <i class="fa-solid fa-table-columns"></i>
-                                <span>Columns</span>
-                                <i class="fa-solid fa-chevron-down columns-button-caret"></i>
-                            </label>
-                            <div class="columns-panel" aria-labelledby="leave-columns-toggle">
-                                <div class="columns-panel-header">
-                                    <span class="columns-panel-title">Columns</span>
-                                </div>
-                                <div class="columns-panel-search">
-                                    <i class="fa-solid fa-search"></i>
-                                    <input type="text" placeholder="Search column type" />
-                                </div>
-                                <div class="columns-panel-body">
-                                    <label class="columns-option columns-select-all">
-                                        <input type="checkbox" checked />
-                                        <span>Select all</span>
-                                    </label>
-                                    <div class="columns-option-list">
-                                        ${columnsPanelItems}
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
                 </div>
             </div>
             <div class="table-container leave-table-scroll">
