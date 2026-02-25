@@ -55,6 +55,35 @@ const loadEmployeeDirectoryForAssets = async () => {
   }
 };
 
+const loadClientDirectoryForAssets = async () => {
+  try {
+    const res = await fetch(`${API_BASE_URL}/api/clients?page=1&pageSize=5000&sort=name`);
+    const data = await res.json();
+    const rawClients = Array.isArray(data) ? data : data?.clients || [];
+
+    const dedup = new Map();
+    for (const entry of rawClients) {
+      const clientName = String(entry?.crc6f_clientname || "").trim();
+      const companyName = String(entry?.crc6f_companyname || "").trim();
+      const clientId = String(entry?.crc6f_clientid || "").trim();
+      const value = clientName || companyName || clientId;
+      if (!value) continue;
+
+      const key = value.toLowerCase();
+      if (dedup.has(key)) continue;
+      const label = clientId ? `${value} (${clientId})` : value;
+      dedup.set(key, { value, label });
+    }
+
+    return Array.from(dedup.values()).sort((a, b) =>
+      a.value.localeCompare(b.value, undefined, { sensitivity: "base" })
+    );
+  } catch (err) {
+    console.warn("Failed to load clients for assets", err);
+    return [];
+  }
+};
+
 // -------------------- FETCH ASSETS --------------------
 export const fetchAssets = async () => {
   try {
@@ -65,6 +94,7 @@ export const fetchAssets = async () => {
       name: a.crc6f_assetname,
       serialNo: a.crc6f_serialnumber,
       category: a.crc6f_assetcategory,
+      client: a.crc6f_client,
       location: a.crc6f_location,
       status: a.crc6f_assetstatus,
       assignedTo: a.crc6f_assignedto,
@@ -94,6 +124,7 @@ export const renderAssetsPage = async () => {
             <td>${asset.name}</td>
             <td>${asset.serialNo}</td>
             <td>${asset.category}</td>
+            <td>${asset.client || "-"}</td>
             <td>${asset.assignedTo || "-"}</td>
             <td>${asset.employeeId || "-"}</td>
             <td>${asset.assignedOn || "-"}</td>
@@ -121,6 +152,7 @@ export const renderAssetsPage = async () => {
                             <th>Asset Name</th>
                             <th>Serial No</th>
                             <th>Category</th>
+                            <th>Client</th>
                             <th>Assigned To</th>
                             <th>Employee ID</th>
                             <th>Assigned On</th>
@@ -131,7 +163,7 @@ export const renderAssetsPage = async () => {
                     </thead>
                     <tbody>
                         ${tableRows ||
-      `<tr><td colspan="10">No assets found. Click ADD NEW ASSET to add one.</td></tr>`
+      `<tr><td colspan="11">No assets found. Click ADD NEW ASSET to add one.</td></tr>`
       }
                     </tbody>
                 </table>
@@ -172,7 +204,10 @@ export const showAssetModal = async (assetId) => {
   const isEditMode = Boolean(assetId);
   const asset = isEditMode ? state.assets.find((a) => a.id === assetId) : null;
 
-  const employees = await loadEmployeeDirectoryForAssets();
+  const [employees, clients] = await Promise.all([
+    loadEmployeeDirectoryForAssets(),
+    loadClientDirectoryForAssets(),
+  ]);
   let hasPrefilledSelection = false;
   const employeeOptions = employees
     .map((emp) => {
@@ -204,6 +239,37 @@ export const showAssetModal = async (assetId) => {
       </select>
   `;
   const employeeIdReadonlyAttr = hasEmployeeOptions ? "readonly" : "";
+
+  const selectedClientValue = String(asset?.client || "").trim();
+  let hasClientPrefilledSelection = false;
+  const clientOptions = clients
+    .map((client) => {
+      const isSelected = Boolean(
+        selectedClientValue &&
+          client.value &&
+          client.value.toLowerCase() === selectedClientValue.toLowerCase()
+      );
+      if (isSelected) hasClientPrefilledSelection = true;
+      return `<option value="${escapeHtml(client.value)}"${isSelected ? " selected" : ""}>${escapeHtml(client.label)}</option>`;
+    })
+    .join("");
+
+  let clientFallbackOption = "";
+  if (!hasClientPrefilledSelection && selectedClientValue) {
+    clientFallbackOption = `<option value="${escapeHtml(selectedClientValue)}" selected>${escapeHtml(selectedClientValue)} • Not in clients list</option>`;
+    hasClientPrefilledSelection = true;
+  }
+
+  const clientPlaceholderSelectedAttr = hasClientPrefilledSelection ? "" : " selected";
+  const clientPlaceholderLabel = clients.length ? "Select client" : "No clients available";
+  const clientDisabledAttr = clients.length ? "" : " disabled";
+  const clientDropdownHTML = `
+      <select class="input-control" id="assetClient"${clientDisabledAttr}>
+          <option value=""${clientPlaceholderSelectedAttr}>${clientPlaceholderLabel}</option>
+          ${clientFallbackOption}
+          ${clientOptions || ""}
+      </select>
+  `;
 
   const formHTML = `
       <div class="modal-form modern-form leave-form asset-form-v2">
@@ -244,6 +310,13 @@ export const showAssetModal = async (assetId) => {
                               <option ${asset?.category === "Headset" ? "selected" : ""}>Headset</option>
                               <option ${asset?.category === "Accessory" ? "selected" : ""}>Accessory</option>
                           </select>
+                      </div>
+                  </div>
+                  <div class="form-field with-icon">
+                      <label class="form-label" for="assetClient">Client</label>
+                      <div class="input-wrapper">
+                          <i class="fa-solid fa-building"></i>
+                          ${clientDropdownHTML}
                       </div>
                   </div>
                   <div class="form-field with-icon">
@@ -361,6 +434,7 @@ export const handleSaveAsset = async (assetId) => {
     crc6f_assetname: document.getElementById("assetName").value,
     crc6f_serialnumber: document.getElementById("serialNo").value,
     crc6f_assetcategory: category,
+    crc6f_client: document.getElementById("assetClient")?.value || "",
     crc6f_location: document.getElementById("assetLocation").value,
     crc6f_assetstatus: document.getElementById("assetStatus").value,
     crc6f_assignedto: assignedEmployeeName || "",
