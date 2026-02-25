@@ -13376,9 +13376,15 @@ def ai_query():
             "chat_reply": {"module": "chat", "min_role": "L1"},
             "fetch_my_projects": {"module": "projects", "min_role": "L1"},
             "create_project": {"module": "projects", "min_role": "L2"},
+            "delete_project": {"module": "projects", "min_role": "L2"},
+            "edit_project": {"module": "projects", "min_role": "L2"},
             "fetch_clients": {"module": "clients", "min_role": "L1"},
             "create_client": {"module": "clients", "min_role": "L2"},
+            "delete_client": {"module": "clients", "min_role": "L2"},
+            "edit_client": {"module": "clients", "min_role": "L2"},
             "fetch_inbox_approvals": {"module": "inbox", "min_role": "L1"},
+            "approve_inbox_submission": {"module": "inbox", "min_role": "L2"},
+            "reject_inbox_submission": {"module": "inbox", "min_role": "L2"},
         }
 
         ROLE_LEVELS = {"L1": 1, "L2": 2, "L3": 3, "L4": 3}
@@ -13592,6 +13598,9 @@ What would you like to say to {employee_name}?"""
                     elif action.get("type") in (
                         "fetch_my_projects", "fetch_clients", "fetch_inbox_approvals",
                         "create_project", "create_client",
+                        "delete_project", "edit_project",
+                        "delete_client", "edit_client",
+                        "approve_inbox_submission", "reject_inbox_submission",
                     ):
                         response_data["answer"] = action_result.get("message", "Done.")
                     else:

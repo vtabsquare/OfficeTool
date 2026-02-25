@@ -154,6 +154,12 @@ AUTOMATION_REGISTRY: Dict[str, Dict[str, Any]] = {
     "client_view": {"min_role": "L1", "handler": "handle_client_view_flow", "description": "View clients", "audit": "client.view"},
     "client_creation": {"min_role": "L2", "handler": "handle_client_creation_flow", "description": "Create client", "audit": "client.create"},
     "inbox_view": {"min_role": "L1", "handler": "handle_inbox_view_flow", "description": "View inbox approvals", "audit": "inbox.view"},
+    "inbox_approve": {"min_role": "L2", "handler": "handle_inbox_approve_flow", "description": "Approve an inbox submission", "audit": "inbox.approve"},
+    "inbox_reject": {"min_role": "L2", "handler": "handle_inbox_reject_flow", "description": "Reject an inbox submission", "audit": "inbox.reject"},
+    "project_delete": {"min_role": "L2", "handler": "handle_project_delete_flow", "description": "Delete a project", "audit": "project.delete"},
+    "project_edit": {"min_role": "L2", "handler": "handle_project_edit_flow", "description": "Edit a project", "audit": "project.edit"},
+    "client_delete": {"min_role": "L2", "handler": "handle_client_delete_flow", "description": "Delete a client", "audit": "client.delete"},
+    "client_edit": {"min_role": "L2", "handler": "handle_client_edit_flow", "description": "Edit a client", "audit": "client.edit"},
     "chat_send_message": {"min_role": "L1", "handler": "handle_chat_send_message_flow", "description": "Send internal chat", "audit": "chat.send"},
     "chat_read_messages": {"min_role": "L1", "handler": "handle_chat_read_messages_flow", "description": "Read messages", "audit": "chat.read"},
     "chat_read_conversation": {"min_role": "L1", "handler": "handle_chat_read_conversation_flow", "description": "Read conversation", "audit": "chat.conversation"},
@@ -988,6 +994,331 @@ def handle_inbox_view_flow(
     return "📥 Fetching inbox approvals…", state, action
 
 
+def _extract_employee_id_from_text(text: str) -> Optional[str]:
+    """Extract an employee ID like EMP001 or emp012 from text."""
+    import re as _re
+    m = _re.search(r'\b(emp\d{2,})\b', text, _re.IGNORECASE)
+    return m.group(1).upper() if m else None
+
+
+def handle_inbox_approve_flow(
+    user_message: str,
+    state: 'ConversationState',
+    user_employee_id: Optional[str] = None,
+) -> Tuple[str, 'ConversationState', Optional[Dict[str, Any]]]:
+    """Approve a pending inbox submission (L2+). Extracts employee ID from message."""
+    state.reset()
+    emp_id = _extract_employee_id_from_text(user_message)
+    if not emp_id:
+        return "Please specify which employee's submission to approve, e.g. **approve EMP012**.", state, None
+    action = {
+        "type": "approve_inbox_submission",
+        "target_employee_id": emp_id,
+        "decided_by": user_employee_id or "",
+    }
+    return f"✅ Approving submissions for **{emp_id}**…", state, action
+
+
+def handle_inbox_reject_flow(
+    user_message: str,
+    state: 'ConversationState',
+    user_employee_id: Optional[str] = None,
+) -> Tuple[str, 'ConversationState', Optional[Dict[str, Any]]]:
+    """Reject a pending inbox submission (L2+). Extracts employee ID from message."""
+    state.reset()
+    emp_id = _extract_employee_id_from_text(user_message)
+    if not emp_id:
+        return "Please specify which employee's submission to reject, e.g. **reject EMP012**.", state, None
+    # Try to extract a reason after the employee ID
+    import re as _re
+    reason = ""
+    m = _re.search(r'emp\d{2,}\s*[:\-]?\s*(.*)', user_message, _re.IGNORECASE)
+    if m:
+        reason = m.group(1).strip()
+    action = {
+        "type": "reject_inbox_submission",
+        "target_employee_id": emp_id,
+        "decided_by": user_employee_id or "",
+        "reason": reason,
+    }
+    return f"❌ Rejecting submissions for **{emp_id}**…", state, action
+
+
+def handle_project_delete_flow(
+    user_message: str,
+    state: 'ConversationState',
+) -> Tuple[str, 'ConversationState', Optional[Dict[str, Any]]]:
+    """Multi-step project delete: ask for project name/ID, confirm, then delete."""
+    if state.active_flow != "project_delete":
+        state.active_flow = "project_delete"
+        state.current_step = 0
+        state.collected_data = {}
+        state.awaiting_confirmation = False
+        # Try to extract project name from initial message
+        cleaned = user_message.strip()
+        for prefix in ["delete project", "remove project", "delete a project", "remove a project"]:
+            if cleaned.lower().startswith(prefix):
+                remainder = cleaned[len(prefix):].strip()
+                if remainder:
+                    state.collected_data["project_identifier"] = remainder
+                    state.current_step = 1
+                    state.awaiting_confirmation = True
+                    return (
+                        f"⚠️ Are you sure you want to delete the project **{remainder}**?\n\n"
+                        "Type **'yes'** to confirm or **'no'** to cancel."
+                    ), state, None
+        return "Okay, which project do you want to delete? Please provide the **Project ID** or **Project Name**.", state, None
+
+    if user_message.strip().lower() in {"cancel", "stop", "quit"}:
+        state.reset()
+        return "Project deletion cancelled.", state, None
+
+    if state.current_step == 0:
+        state.collected_data["project_identifier"] = user_message.strip()
+        state.current_step = 1
+        state.awaiting_confirmation = True
+        return (
+            f"⚠️ Are you sure you want to delete the project **{user_message.strip()}**?\n\n"
+            "Type **'yes'** to confirm or **'no'** to cancel."
+        ), state, None
+
+    if state.awaiting_confirmation:
+        answer = user_message.strip().lower()
+        if answer in {"yes", "y", "confirm"}:
+            action = {
+                "type": "delete_project",
+                "project_identifier": state.collected_data.get("project_identifier", ""),
+            }
+            state.reset()
+            return "🗑️ Deleting project…", state, action
+        if answer in {"no", "n"}:
+            state.reset()
+            return "Project deletion cancelled.", state, None
+        return "Please type **'yes'** to confirm or **'no'** to cancel.", state, None
+
+    return "I didn't understand that. Please try again.", state, None
+
+
+def handle_project_edit_flow(
+    user_message: str,
+    state: 'ConversationState',
+) -> Tuple[str, 'ConversationState', Optional[Dict[str, Any]]]:
+    """Multi-step project edit: project ID → field → new value → confirm."""
+    if state.active_flow != "project_edit":
+        state.active_flow = "project_edit"
+        state.current_step = 0
+        state.collected_data = {}
+        state.awaiting_confirmation = False
+        return (
+            "Which project do you want to edit? Please provide the **Project ID** or **Project Name**."
+        ), state, None
+
+    if user_message.strip().lower() in {"cancel", "stop", "quit"}:
+        state.reset()
+        return "Project edit cancelled.", state, None
+
+    if state.current_step == 0:
+        state.collected_data["project_identifier"] = user_message.strip()
+        state.current_step = 1
+        return (
+            f"Editing project **{user_message.strip()}**.\n\n"
+            "Which field do you want to change?\n"
+            "• **name** – Project name\n"
+            "• **client** – Client name\n"
+            "• **status** – Project status\n"
+            "• **manager** – Manager\n"
+            "• **description** – Description\n"
+            "• **start_date** – Start date\n"
+            "• **end_date** – End date"
+        ), state, None
+
+    if state.current_step == 1:
+        field_map = {
+            "name": "crc6f_projectname",
+            "project name": "crc6f_projectname",
+            "client": "crc6f_client",
+            "status": "crc6f_projectstatus",
+            "manager": "crc6f_manager",
+            "description": "crc6f_projectdescription",
+            "start_date": "crc6f_startdate",
+            "start date": "crc6f_startdate",
+            "end_date": "crc6f_enddate",
+            "end date": "crc6f_enddate",
+        }
+        chosen = user_message.strip().lower()
+        dv_field = field_map.get(chosen)
+        if not dv_field:
+            return "Invalid field. Please choose one of: name, client, status, manager, description, start_date, end_date.", state, None
+        state.collected_data["field_name"] = chosen
+        state.collected_data["dv_field"] = dv_field
+        state.current_step = 2
+        return f"What should the new value for **{chosen}** be?", state, None
+
+    if state.current_step == 2:
+        state.collected_data["new_value"] = user_message.strip()
+        state.current_step = 3
+        state.awaiting_confirmation = True
+        return (
+            f"Update **{state.collected_data['field_name']}** to **{user_message.strip()}** "
+            f"for project **{state.collected_data['project_identifier']}**?\n\n"
+            "Type **'yes'** to confirm or **'no'** to cancel."
+        ), state, None
+
+    if state.awaiting_confirmation:
+        answer = user_message.strip().lower()
+        if answer in {"yes", "y", "confirm"}:
+            action = {
+                "type": "edit_project",
+                "project_identifier": state.collected_data.get("project_identifier", ""),
+                "field": state.collected_data.get("dv_field", ""),
+                "value": state.collected_data.get("new_value", ""),
+            }
+            state.reset()
+            return "✏️ Updating project…", state, action
+        if answer in {"no", "n"}:
+            state.reset()
+            return "Project edit cancelled.", state, None
+        return "Please type **'yes'** to confirm or **'no'** to cancel.", state, None
+
+    return "I didn't understand that. Please try again.", state, None
+
+
+def handle_client_delete_flow(
+    user_message: str,
+    state: 'ConversationState',
+) -> Tuple[str, 'ConversationState', Optional[Dict[str, Any]]]:
+    """Multi-step client delete: ask for client name/ID, confirm, then delete."""
+    if state.active_flow != "client_delete":
+        state.active_flow = "client_delete"
+        state.current_step = 0
+        state.collected_data = {}
+        state.awaiting_confirmation = False
+        # Try to extract from initial message
+        cleaned = user_message.strip()
+        for prefix in ["delete client", "remove client", "delete a client", "remove a client"]:
+            if cleaned.lower().startswith(prefix):
+                remainder = cleaned[len(prefix):].strip()
+                if remainder:
+                    state.collected_data["client_identifier"] = remainder
+                    state.current_step = 1
+                    state.awaiting_confirmation = True
+                    return (
+                        f"⚠️ Are you sure you want to delete the client **{remainder}**?\n\n"
+                        "Type **'yes'** to confirm or **'no'** to cancel."
+                    ), state, None
+        return "Okay, which client do you want to delete? Please provide the **Client ID** or **Client Name**.", state, None
+
+    if user_message.strip().lower() in {"cancel", "stop", "quit"}:
+        state.reset()
+        return "Client deletion cancelled.", state, None
+
+    if state.current_step == 0:
+        state.collected_data["client_identifier"] = user_message.strip()
+        state.current_step = 1
+        state.awaiting_confirmation = True
+        return (
+            f"⚠️ Are you sure you want to delete the client **{user_message.strip()}**?\n\n"
+            "Type **'yes'** to confirm or **'no'** to cancel."
+        ), state, None
+
+    if state.awaiting_confirmation:
+        answer = user_message.strip().lower()
+        if answer in {"yes", "y", "confirm"}:
+            action = {
+                "type": "delete_client",
+                "client_identifier": state.collected_data.get("client_identifier", ""),
+            }
+            state.reset()
+            return "🗑️ Deleting client…", state, action
+        if answer in {"no", "n"}:
+            state.reset()
+            return "Client deletion cancelled.", state, None
+        return "Please type **'yes'** to confirm or **'no'** to cancel.", state, None
+
+    return "I didn't understand that. Please try again.", state, None
+
+
+def handle_client_edit_flow(
+    user_message: str,
+    state: 'ConversationState',
+) -> Tuple[str, 'ConversationState', Optional[Dict[str, Any]]]:
+    """Multi-step client edit: client ID → field → new value → confirm."""
+    if state.active_flow != "client_edit":
+        state.active_flow = "client_edit"
+        state.current_step = 0
+        state.collected_data = {}
+        state.awaiting_confirmation = False
+        return (
+            "Which client do you want to edit? Please provide the **Client ID** or **Client Name**."
+        ), state, None
+
+    if user_message.strip().lower() in {"cancel", "stop", "quit"}:
+        state.reset()
+        return "Client edit cancelled.", state, None
+
+    if state.current_step == 0:
+        state.collected_data["client_identifier"] = user_message.strip()
+        state.current_step = 1
+        return (
+            f"Editing client **{user_message.strip()}**.\n\n"
+            "Which field do you want to change?\n"
+            "• **name** – Client name\n"
+            "• **company** – Company name\n"
+            "• **email** – Email\n"
+            "• **phone** – Phone\n"
+            "• **country** – Country\n"
+            "• **address** – Address"
+        ), state, None
+
+    if state.current_step == 1:
+        field_map = {
+            "name": "crc6f_clientname",
+            "client name": "crc6f_clientname",
+            "company": "crc6f_companyname",
+            "company name": "crc6f_companyname",
+            "email": "crc6f_email",
+            "phone": "crc6f_phone",
+            "country": "crc6f_country",
+            "address": "crc6f_address",
+        }
+        chosen = user_message.strip().lower()
+        dv_field = field_map.get(chosen)
+        if not dv_field:
+            return "Invalid field. Please choose one of: name, company, email, phone, country, address.", state, None
+        state.collected_data["field_name"] = chosen
+        state.collected_data["dv_field"] = dv_field
+        state.current_step = 2
+        return f"What should the new value for **{chosen}** be?", state, None
+
+    if state.current_step == 2:
+        state.collected_data["new_value"] = user_message.strip()
+        state.current_step = 3
+        state.awaiting_confirmation = True
+        return (
+            f"Update **{state.collected_data['field_name']}** to **{user_message.strip()}** "
+            f"for client **{state.collected_data['client_identifier']}**?\n\n"
+            "Type **'yes'** to confirm or **'no'** to cancel."
+        ), state, None
+
+    if state.awaiting_confirmation:
+        answer = user_message.strip().lower()
+        if answer in {"yes", "y", "confirm"}:
+            action = {
+                "type": "edit_client",
+                "client_identifier": state.collected_data.get("client_identifier", ""),
+                "field": state.collected_data.get("dv_field", ""),
+                "value": state.collected_data.get("new_value", ""),
+            }
+            state.reset()
+            return "✏️ Updating client…", state, action
+        if answer in {"no", "n"}:
+            state.reset()
+            return "Client edit cancelled.", state, None
+        return "Please type **'yes'** to confirm or **'no'** to cancel.", state, None
+
+    return "I didn't understand that. Please try again.", state, None
+
+
 def handle_project_creation_flow(
     user_message: str,
     state: 'ConversationState',
@@ -1706,6 +2037,56 @@ AUTOMATION_INTENTS = {
         ],
         "flow": "inbox_view",
         "description": "View inbox approvals"
+    },
+    "approve_inbox": {
+        "keywords": [
+            "approve emp", "approve submission", "accept submission",
+            "approve timesheet", "approve attendance", "accept attendance",
+            "accept timesheet"
+        ],
+        "flow": "inbox_approve",
+        "description": "Approve an inbox submission"
+    },
+    "reject_inbox": {
+        "keywords": [
+            "reject emp", "reject submission", "deny submission",
+            "reject timesheet", "reject attendance", "deny attendance",
+            "deny timesheet"
+        ],
+        "flow": "inbox_reject",
+        "description": "Reject an inbox submission"
+    },
+    "delete_project": {
+        "keywords": [
+            "delete project", "remove project", "delete a project",
+            "remove a project"
+        ],
+        "flow": "project_delete",
+        "description": "Delete a project"
+    },
+    "edit_project": {
+        "keywords": [
+            "edit project", "update project", "modify project",
+            "change project", "edit a project", "update a project"
+        ],
+        "flow": "project_edit",
+        "description": "Edit a project"
+    },
+    "delete_client": {
+        "keywords": [
+            "delete client", "remove client", "delete a client",
+            "remove a client"
+        ],
+        "flow": "client_delete",
+        "description": "Delete a client"
+    },
+    "edit_client": {
+        "keywords": [
+            "edit client", "update client", "modify client",
+            "change client", "edit a client", "update a client"
+        ],
+        "flow": "client_edit",
+        "description": "Edit a client"
     },
 }
 
@@ -3095,6 +3476,54 @@ def process_automation(
                 "state": state.to_dict(),
                 "action": action,
             }
+        elif state.active_flow == "project_delete":
+            denied = _ensure_flow("project_delete")
+            if denied:
+                return denied
+            response, state, action = handle_project_delete_flow(user_message, state)
+            _log_automation_event("project_delete", user_employee_id, {"success": True, "message": response})
+            return {
+                "is_automation": True,
+                "response": response,
+                "state": state.to_dict(),
+                "action": action,
+            }
+        elif state.active_flow == "project_edit":
+            denied = _ensure_flow("project_edit")
+            if denied:
+                return denied
+            response, state, action = handle_project_edit_flow(user_message, state)
+            _log_automation_event("project_edit", user_employee_id, {"success": True, "message": response})
+            return {
+                "is_automation": True,
+                "response": response,
+                "state": state.to_dict(),
+                "action": action,
+            }
+        elif state.active_flow == "client_delete":
+            denied = _ensure_flow("client_delete")
+            if denied:
+                return denied
+            response, state, action = handle_client_delete_flow(user_message, state)
+            _log_automation_event("client_delete", user_employee_id, {"success": True, "message": response})
+            return {
+                "is_automation": True,
+                "response": response,
+                "state": state.to_dict(),
+                "action": action,
+            }
+        elif state.active_flow == "client_edit":
+            denied = _ensure_flow("client_edit")
+            if denied:
+                return denied
+            response, state, action = handle_client_edit_flow(user_message, state)
+            _log_automation_event("client_edit", user_employee_id, {"success": True, "message": response})
+            return {
+                "is_automation": True,
+                "response": response,
+                "state": state.to_dict(),
+                "action": action,
+            }
     
     # Check for new automation intent
     intent = detect_automation_intent(user_message)
@@ -3376,6 +3805,78 @@ def process_automation(
                 return denied
             response, state, action = handle_inbox_view_flow(user_message, state, user_employee_id, user_access)
             _log_automation_event("inbox_view", user_employee_id, {"success": True, "message": response})
+            return {
+                "is_automation": True,
+                "response": response,
+                "state": state.to_dict(),
+                "action": action,
+            }
+        elif intent["flow"] == "inbox_approve":
+            denied = _ensure_flow("inbox_approve")
+            if denied:
+                return denied
+            response, state, action = handle_inbox_approve_flow(user_message, state, user_employee_id)
+            _log_automation_event("inbox_approve", user_employee_id, {"success": True, "message": response})
+            return {
+                "is_automation": True,
+                "response": response,
+                "state": state.to_dict(),
+                "action": action,
+            }
+        elif intent["flow"] == "inbox_reject":
+            denied = _ensure_flow("inbox_reject")
+            if denied:
+                return denied
+            response, state, action = handle_inbox_reject_flow(user_message, state, user_employee_id)
+            _log_automation_event("inbox_reject", user_employee_id, {"success": True, "message": response})
+            return {
+                "is_automation": True,
+                "response": response,
+                "state": state.to_dict(),
+                "action": action,
+            }
+        elif intent["flow"] == "project_delete":
+            denied = _ensure_flow("project_delete")
+            if denied:
+                return denied
+            response, state, action = handle_project_delete_flow(user_message, state)
+            _log_automation_event("project_delete", user_employee_id, {"success": True, "message": response})
+            return {
+                "is_automation": True,
+                "response": response,
+                "state": state.to_dict(),
+                "action": action,
+            }
+        elif intent["flow"] == "project_edit":
+            denied = _ensure_flow("project_edit")
+            if denied:
+                return denied
+            response, state, action = handle_project_edit_flow(user_message, state)
+            _log_automation_event("project_edit", user_employee_id, {"success": True, "message": response})
+            return {
+                "is_automation": True,
+                "response": response,
+                "state": state.to_dict(),
+                "action": action,
+            }
+        elif intent["flow"] == "client_delete":
+            denied = _ensure_flow("client_delete")
+            if denied:
+                return denied
+            response, state, action = handle_client_delete_flow(user_message, state)
+            _log_automation_event("client_delete", user_employee_id, {"success": True, "message": response})
+            return {
+                "is_automation": True,
+                "response": response,
+                "state": state.to_dict(),
+                "action": action,
+            }
+        elif intent["flow"] == "client_edit":
+            denied = _ensure_flow("client_edit")
+            if denied:
+                return denied
+            response, state, action = handle_client_edit_flow(user_message, state)
+            _log_automation_event("client_edit", user_employee_id, {"success": True, "message": response})
             return {
                 "is_automation": True,
                 "response": response,
@@ -5285,6 +5786,337 @@ Please review in HR Tool.
         except Exception as e:
             import traceback; traceback.print_exc()
             return {"success": False, "error": f"Error creating client: {e}"}
+
+    # ==================== DELETE PROJECT ====================
+    if action["type"] == "delete_project":
+        try:
+            import requests as req
+            import os as _os
+            from dataverse_helper import get_access_token
+
+            identifier = (action.get("project_identifier") or "").strip()
+            if not identifier:
+                return {"success": False, "error": "Project identifier is required."}
+
+            tk = get_access_token()
+            headers = {
+                "Authorization": f"Bearer {tk}",
+                "Accept": "application/json",
+                "OData-Version": "4.0",
+            }
+            dv = _os.getenv("RESOURCE", "")
+            api = "/api/data/v9.2"
+
+            safe_id = identifier.replace("'", "''")
+            search_url = (
+                f"{dv}{api}/crc6f_hr_projectheaders?"
+                f"$filter=crc6f_projectid eq '{safe_id}' or crc6f_projectname eq '{safe_id}'"
+                "&$select=crc6f_hr_projectheaderid,crc6f_projectid,crc6f_projectname"
+                "&$top=1"
+            )
+            resp = req.get(search_url, headers=headers, timeout=30)
+            records = resp.json().get("value", []) if resp.ok else []
+            if not records:
+                return {"success": False, "error": f"Project '{identifier}' not found."}
+
+            record_id = records[0].get("crc6f_hr_projectheaderid")
+            proj_name = records[0].get("crc6f_projectname") or identifier
+
+            del_resp = req.delete(
+                f"{BACKEND_API_INTERNAL_URL}/api/projects/{record_id}",
+                timeout=20,
+            )
+            if del_resp.ok:
+                return {"success": True, "message": f"🗑️ Project **{proj_name}** deleted successfully."}
+            return {"success": False, "error": del_resp.text or "Delete failed"}
+        except Exception as e:
+            import traceback; traceback.print_exc()
+            return {"success": False, "error": f"Error deleting project: {e}"}
+
+    # ==================== EDIT PROJECT ====================
+    if action["type"] == "edit_project":
+        try:
+            import requests as req
+            import os as _os
+            from dataverse_helper import get_access_token
+
+            identifier = (action.get("project_identifier") or "").strip()
+            field = action.get("field", "")
+            value = action.get("value", "")
+            if not identifier or not field:
+                return {"success": False, "error": "Project identifier and field are required."}
+
+            tk = get_access_token()
+            headers = {
+                "Authorization": f"Bearer {tk}",
+                "Accept": "application/json",
+                "OData-Version": "4.0",
+            }
+            dv = _os.getenv("RESOURCE", "")
+            api = "/api/data/v9.2"
+
+            safe_id = identifier.replace("'", "''")
+            search_url = (
+                f"{dv}{api}/crc6f_hr_projectheaders?"
+                f"$filter=crc6f_projectid eq '{safe_id}' or crc6f_projectname eq '{safe_id}'"
+                "&$select=crc6f_hr_projectheaderid,crc6f_projectid,crc6f_projectname"
+                "&$top=1"
+            )
+            resp = req.get(search_url, headers=headers, timeout=30)
+            records = resp.json().get("value", []) if resp.ok else []
+            if not records:
+                return {"success": False, "error": f"Project '{identifier}' not found."}
+
+            record_id = records[0].get("crc6f_hr_projectheaderid")
+            proj_name = records[0].get("crc6f_projectname") or identifier
+
+            patch_resp = req.patch(
+                f"{BACKEND_API_INTERNAL_URL}/api/projects/{record_id}",
+                json={field: value},
+                timeout=20,
+            )
+            if patch_resp.ok:
+                return {"success": True, "message": f"✏️ Project **{proj_name}** updated successfully."}
+            return {"success": False, "error": patch_resp.text or "Update failed"}
+        except Exception as e:
+            import traceback; traceback.print_exc()
+            return {"success": False, "error": f"Error editing project: {e}"}
+
+    # ==================== DELETE CLIENT ====================
+    if action["type"] == "delete_client":
+        try:
+            import requests as req
+            import os as _os
+            from dataverse_helper import get_access_token
+
+            identifier = (action.get("client_identifier") or "").strip()
+            if not identifier:
+                return {"success": False, "error": "Client identifier is required."}
+
+            tk = get_access_token()
+            headers = {
+                "Authorization": f"Bearer {tk}",
+                "Accept": "application/json",
+                "OData-Version": "4.0",
+            }
+            dv = _os.getenv("RESOURCE", "")
+            api = "/api/data/v9.2"
+
+            safe_id = identifier.replace("'", "''")
+            search_url = (
+                f"{dv}{api}/crc6f_hr_clients?"
+                f"$filter=crc6f_clientid eq '{safe_id}' or crc6f_clientname eq '{safe_id}'"
+                "&$select=crc6f_hr_clientid,crc6f_clientid,crc6f_clientname"
+                "&$top=1"
+            )
+            resp = req.get(search_url, headers=headers, timeout=30)
+            records = resp.json().get("value", []) if resp.ok else []
+            if not records:
+                return {"success": False, "error": f"Client '{identifier}' not found."}
+
+            record_id = records[0].get("crc6f_hr_clientid")
+            cl_name = records[0].get("crc6f_clientname") or identifier
+
+            del_resp = req.delete(
+                f"{BACKEND_API_INTERNAL_URL}/api/clients/{record_id}",
+                timeout=20,
+            )
+            if del_resp.ok:
+                return {"success": True, "message": f"🗑️ Client **{cl_name}** deleted successfully."}
+            return {"success": False, "error": del_resp.text or "Delete failed"}
+        except Exception as e:
+            import traceback; traceback.print_exc()
+            return {"success": False, "error": f"Error deleting client: {e}"}
+
+    # ==================== EDIT CLIENT ====================
+    if action["type"] == "edit_client":
+        try:
+            import requests as req
+            import os as _os
+            from dataverse_helper import get_access_token
+
+            identifier = (action.get("client_identifier") or "").strip()
+            field = action.get("field", "")
+            value = action.get("value", "")
+            if not identifier or not field:
+                return {"success": False, "error": "Client identifier and field are required."}
+
+            tk = get_access_token()
+            headers = {
+                "Authorization": f"Bearer {tk}",
+                "Accept": "application/json",
+                "OData-Version": "4.0",
+            }
+            dv = _os.getenv("RESOURCE", "")
+            api = "/api/data/v9.2"
+
+            safe_id = identifier.replace("'", "''")
+            search_url = (
+                f"{dv}{api}/crc6f_hr_clients?"
+                f"$filter=crc6f_clientid eq '{safe_id}' or crc6f_clientname eq '{safe_id}'"
+                "&$select=crc6f_hr_clientid,crc6f_clientid,crc6f_clientname"
+                "&$top=1"
+            )
+            resp = req.get(search_url, headers=headers, timeout=30)
+            records = resp.json().get("value", []) if resp.ok else []
+            if not records:
+                return {"success": False, "error": f"Client '{identifier}' not found."}
+
+            record_id = records[0].get("crc6f_hr_clientid")
+            cl_name = records[0].get("crc6f_clientname") or identifier
+
+            patch_resp = req.patch(
+                f"{BACKEND_API_INTERNAL_URL}/api/clients/{record_id}",
+                json={field: value},
+                timeout=20,
+            )
+            if patch_resp.ok:
+                return {"success": True, "message": f"✏️ Client **{cl_name}** updated successfully."}
+            return {"success": False, "error": patch_resp.text or "Update failed"}
+        except Exception as e:
+            import traceback; traceback.print_exc()
+            return {"success": False, "error": f"Error editing client: {e}"}
+
+    # ==================== APPROVE INBOX SUBMISSION ====================
+    if action["type"] == "approve_inbox_submission":
+        try:
+            import requests as req
+            target_emp = action.get("target_employee_id", "")
+            decided_by = action.get("decided_by", "")
+            if not target_emp:
+                return {"success": False, "error": "Target employee ID is required."}
+
+            approved_count = 0
+            errors = []
+
+            # Approve timesheet submissions
+            try:
+                ts_resp = req.get(
+                    f"{BACKEND_API_INTERNAL_URL}/time-tracker/timesheet/submissions",
+                    params={"employee_id": target_emp, "status": "pending"},
+                    timeout=20,
+                )
+                if ts_resp.ok:
+                    for item in ts_resp.json().get("items", []):
+                        entry_id = item.get("id") or item.get("entry_id")
+                        if entry_id:
+                            r = req.post(
+                                f"{BACKEND_API_INTERNAL_URL}/time-tracker/timesheet/{entry_id}/approve",
+                                json={"decided_by": decided_by},
+                                timeout=15,
+                            )
+                            if r.ok and r.json().get("success"):
+                                approved_count += 1
+                            else:
+                                errors.append(f"Timesheet {entry_id}: {r.text}")
+            except Exception as te:
+                errors.append(f"Timesheet error: {te}")
+
+            # Approve attendance submissions
+            try:
+                att_resp = req.get(
+                    f"{BACKEND_API_INTERNAL_URL}/api/attendance/submissions",
+                    params={"employee_id": target_emp, "status": "pending"},
+                    timeout=20,
+                )
+                if att_resp.ok:
+                    for item in att_resp.json().get("items", []):
+                        marker_id = item.get("id") or item.get("marker_id")
+                        if marker_id:
+                            r = req.post(
+                                f"{BACKEND_API_INTERNAL_URL}/api/attendance/submissions/{marker_id}/approve",
+                                json={},
+                                timeout=15,
+                            )
+                            if r.ok and r.json().get("success"):
+                                approved_count += 1
+                            else:
+                                errors.append(f"Attendance {marker_id}: {r.text}")
+            except Exception as ae:
+                errors.append(f"Attendance error: {ae}")
+
+            if approved_count == 0 and errors:
+                return {"success": False, "error": f"Could not approve submissions for {target_emp}. {'; '.join(errors)}"}
+            if approved_count == 0:
+                return {"success": True, "message": f"📥 No pending submissions found for **{target_emp}**."}
+            msg = f"✅ Approved **{approved_count}** submission(s) for **{target_emp}**."
+            if errors:
+                msg += f"\n⚠️ Some failed: {'; '.join(errors)}"
+            return {"success": True, "message": msg}
+        except Exception as e:
+            import traceback; traceback.print_exc()
+            return {"success": False, "error": f"Error approving submissions: {e}"}
+
+    # ==================== REJECT INBOX SUBMISSION ====================
+    if action["type"] == "reject_inbox_submission":
+        try:
+            import requests as req
+            target_emp = action.get("target_employee_id", "")
+            decided_by = action.get("decided_by", "")
+            reason = action.get("reason", "")
+            if not target_emp:
+                return {"success": False, "error": "Target employee ID is required."}
+
+            rejected_count = 0
+            errors = []
+
+            # Reject timesheet submissions
+            try:
+                ts_resp = req.get(
+                    f"{BACKEND_API_INTERNAL_URL}/time-tracker/timesheet/submissions",
+                    params={"employee_id": target_emp, "status": "pending"},
+                    timeout=20,
+                )
+                if ts_resp.ok:
+                    for item in ts_resp.json().get("items", []):
+                        entry_id = item.get("id") or item.get("entry_id")
+                        if entry_id:
+                            r = req.post(
+                                f"{BACKEND_API_INTERNAL_URL}/time-tracker/timesheet/{entry_id}/reject",
+                                json={"decided_by": decided_by, "comment": reason},
+                                timeout=15,
+                            )
+                            if r.ok and r.json().get("success"):
+                                rejected_count += 1
+                            else:
+                                errors.append(f"Timesheet {entry_id}: {r.text}")
+            except Exception as te:
+                errors.append(f"Timesheet error: {te}")
+
+            # Reject attendance submissions
+            try:
+                att_resp = req.get(
+                    f"{BACKEND_API_INTERNAL_URL}/api/attendance/submissions",
+                    params={"employee_id": target_emp, "status": "pending"},
+                    timeout=20,
+                )
+                if att_resp.ok:
+                    for item in att_resp.json().get("items", []):
+                        marker_id = item.get("id") or item.get("marker_id")
+                        if marker_id:
+                            r = req.post(
+                                f"{BACKEND_API_INTERNAL_URL}/api/attendance/submissions/{marker_id}/reject",
+                                json={"reason": reason},
+                                timeout=15,
+                            )
+                            if r.ok and r.json().get("success"):
+                                rejected_count += 1
+                            else:
+                                errors.append(f"Attendance {marker_id}: {r.text}")
+            except Exception as ae:
+                errors.append(f"Attendance error: {ae}")
+
+            if rejected_count == 0 and errors:
+                return {"success": False, "error": f"Could not reject submissions for {target_emp}. {'; '.join(errors)}"}
+            if rejected_count == 0:
+                return {"success": True, "message": f"📥 No pending submissions found for **{target_emp}**."}
+            msg = f"❌ Rejected **{rejected_count}** submission(s) for **{target_emp}**."
+            if errors:
+                msg += f"\n⚠️ Some failed: {'; '.join(errors)}"
+            return {"success": True, "message": msg}
+        except Exception as e:
+            import traceback; traceback.print_exc()
+            return {"success": False, "error": f"Error rejecting submissions: {e}"}
 
     return {
         "success": False,
