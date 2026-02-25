@@ -7545,15 +7545,14 @@ input[type="file"]:hover {
   overflow-y: visible;
 }
 
-.login-details-card:first-child .table-container {
+.login-details-card .table-container {
   overflow-x: auto;
-  display: flex;
-  justify-content: center;
+  display: block;
 }
 
-.login-details-card:first-child .table {
-  width: auto;
-  margin: 0 auto;
+.login-details-card .table {
+  width: 100%;
+  margin: 0;
 }
 
 /* ==================== LOGIN PAGE STYLES - GLASS MORPHISM ==================== */

@@ -488,10 +488,12 @@ const renderAttendanceTrackerPage = async (mode) => {
             <div class="login-details-grid">
                 <div class="login-details-card">
                     <h4 class="login-details-title">Current Day Login Details</h4>
-                    <table class="table">
-                    <thead><tr><th>Date</th><th>First in</th><th>Last out</th><th>Total in-time</th></tr></thead>
-                    <tbody>${firstLastOutRows}</tbody>
-                    </table>
+                    <div class="table-container">
+                        <table class="table">
+                        <thead><tr><th>Date</th><th>First in</th><th>Last out</th><th>Total in-time</th></tr></thead>
+                        <tbody>${firstLastOutRows}</tbody>
+                        </table>
+                    </div>
                 </div>
                 <div class="login-details-card">
                     <div class="login-details-header">
