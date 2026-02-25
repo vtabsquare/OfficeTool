@@ -10646,8 +10646,8 @@ def fetch_latest_progress_timestamps(token, onboarding_id):
         1: "personal_updated_at",
         2: "interview_updated_at",
         3: "mail_updated_at",
-        4: "document_updated_at",
-        5: "completed_at",
+        4: "completed_at",
+        5: "document_updated_at",
     }
 
     for r in rows:
@@ -10672,10 +10672,10 @@ def fetch_latest_progress_timestamps(token, onboarding_id):
                 key = "interview_updated_at"
             elif "offer" in stage or "mail" in stage:
                 key = "mail_updated_at"
-            elif "document" in stage or "verification" in stage:
-                key = "document_updated_at"
             elif "onboarding" in stage or "complete" in stage:
                 key = "completed_at"
+            elif "document" in stage or "verification" in stage:
+                key = "document_updated_at"
 
         if key and key not in mapping:
             mapping[key] = ts
@@ -10708,9 +10708,14 @@ def _fill_stage_ts_fallbacks(formatted_item: dict, raw_record: dict):
         if not formatted_item.get('mail_updated_at') and mr and mr.lower() != 'pending':
             formatted_item['mail_updated_at'] = modified_on
 
-        # Stage 4: Onboarding (DOJ-based timestamp)
-        if not formatted_item.get('completed_at') and formatted_item.get('doj'):
-            formatted_item['completed_at'] = formatted_item.get('doj')
+        # Stage 4: Onboarding
+        # Prefer modified_on when onboarding has actually been reached/completed,
+        # otherwise avoid forcing a completion timestamp from DOJ.
+        if not formatted_item.get('completed_at'):
+            progress = (formatted_item.get('progress_step') or '').strip().lower()
+            reached_stage4 = progress in ['onboarding', 'physical document verification', 'document verification', 'completed']
+            if reached_stage4:
+                formatted_item['completed_at'] = modified_on or formatted_item.get('doj')
 
         # Stage 5: Physical Document Verification
         if not formatted_item.get('document_updated_at') and (formatted_item.get('document_status') or '').lower() == 'verified':
@@ -11851,8 +11856,7 @@ def update_document_status_only(record_id):
         if status_val == 'Verified':
             try:
                 # Progress log entries when verification is completed from Stage 5
-                create_progress_log_row(token, record_id, "Physical Document Verification", 4, _now_iso())
-                create_progress_log_row(token, record_id, "Onboarding", 5, _now_iso())
+                create_progress_log_row(token, record_id, "Completed", 5, _now_iso())
             except Exception:
                 pass
 
