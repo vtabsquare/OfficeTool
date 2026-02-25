@@ -1206,7 +1206,7 @@ AUTOMATION_INTENTS = {
     },
     "create_task_record": {
         "keywords": [
-            "create task", "add new task", "log a task", "open task", "new project task",
+            "create task", "create a task", "add new task", "log a task", "open task", "new project task",
             "create project task", "add task card"
         ],
         "flow": "task_creation",
@@ -1335,6 +1335,23 @@ AUTOMATION_INTENTS = {
 }
 
 
+def _keyword_matches_message(message_lower: str, keyword: str) -> bool:
+    """Match keyword safely: whole-word match for single terms, substring for phrases."""
+    key = (keyword or "").strip().lower()
+    if not key:
+        return False
+
+    normalized_msg = re.sub(r"\s+", " ", message_lower)
+    normalized_key = re.sub(r"\s+", " ", key)
+
+    # Multi-word phrases rely on normalized substring matching.
+    if " " in normalized_key:
+        return normalized_key in normalized_msg
+
+    # Single tokens should match whole words only (prevents 'ask' matching 'task').
+    return re.search(rf"\b{re.escape(normalized_key)}\b", normalized_msg) is not None
+
+
 def detect_automation_intent(message: str) -> Optional[Dict[str, Any]]:
     """
     Detect if the user message triggers an automation flow.
@@ -1344,7 +1361,7 @@ def detect_automation_intent(message: str) -> Optional[Dict[str, Any]]:
     
     for intent_key, intent_config in AUTOMATION_INTENTS.items():
         for keyword in intent_config["keywords"]:
-            if keyword in message_lower:
+            if _keyword_matches_message(message_lower, keyword):
                 return {
                     "intent": intent_key,
                     "flow": intent_config["flow"],

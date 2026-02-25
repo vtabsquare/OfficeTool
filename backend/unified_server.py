@@ -2779,10 +2779,10 @@ def checkin():
             # CRITICAL: Clear checkout fields in Dataverse when re-checking in (continuation)
             # This ensures get_status won't think user is checked out after a re-checkin
             try:
-                update_record(ATTENDANCE_ENTITY, record_id, {
-                    FIELD_CHECKOUT: None,  # Clear checkout time
-                    FIELD_CHECKIN: formatted_time,  # Update checkin time to current
-                })
+                clear_payload = {FIELD_CHECKOUT: None}  # reopen active session
+                if not attendance_record.get(FIELD_CHECKIN):
+                    clear_payload[FIELD_CHECKIN] = formatted_time
+                update_record(ATTENDANCE_ENTITY, record_id, clear_payload)
                 print(f"[OK] Cleared checkout field for continuation check-in: {record_id}")
             except Exception as clear_err:
                 print(f"[WARN] Failed to clear checkout field on continuation: {clear_err}")
@@ -13176,6 +13176,33 @@ def ai_query():
                         f"* Comp Off (CO): {balance.get('CO', 0)}\\n"
                         f"* Total: {balance.get('Total', 0)}"
                     )
+
+            if any(kw in q for kw in ["leave approval", "leave approvals", "pending leaves", "awaiting approval", "approve leaves"]):
+                org_scope = bool(meta.get("is_admin") or meta.get("is_l3"))
+                summary = context.get("leave_summary") if org_scope else context.get("my_leaves")
+                summary = summary or {}
+                by_status = summary.get("by_status") or {}
+                by_status_norm = {str(k).strip().lower(): int(v or 0) for k, v in by_status.items()}
+                pending_count = by_status_norm.get("pending", 0)
+                approved_count = by_status_norm.get("approved", 0)
+                rejected_count = by_status_norm.get("rejected", 0)
+
+                if org_scope:
+                    return (
+                        "Leave approvals summary (organization):\\n\\n"
+                        f"* Pending: {pending_count}\\n"
+                        f"* Approved: {approved_count}\\n"
+                        f"* Rejected: {rejected_count}\\n"
+                        f"* Total Requests: {summary.get('total_leave_requests', 0)}"
+                    )
+
+                return (
+                    "Your leave approval summary:\\n\\n"
+                    f"* Pending: {pending_count}\\n"
+                    f"* Approved: {approved_count}\\n"
+                    f"* Rejected: {rejected_count}\\n"
+                    f"* Total Requests: {summary.get('total_leave_requests', 0)}"
+                )
 
             if any(
                 kw in q

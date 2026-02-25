@@ -342,12 +342,15 @@ def checkin_v2():
             record_id = existing_att.get(FIELD_RECORD_ID) or existing_att.get("crc6f_table13id")
             attendance_id = existing_att.get(FIELD_ATTENDANCE_ID) or generate_attendance_id()
             
-            # Clear checkout field for continuation
+            # Clear checkout field for continuation.
+            # IMPORTANT: preserve original check-in time for the day to avoid
+            # rewriting historical first check-in when user resumes a session.
             try:
-                update_record(ATTENDANCE_ENTITY, record_id, {
-                    FIELD_CHECKOUT: None,
-                    FIELD_CHECKIN: checkin_time
-                })
+                update_payload = {FIELD_CHECKOUT: None}
+                existing_checkin = existing_att.get(FIELD_CHECKIN)
+                if not existing_checkin:
+                    update_payload[FIELD_CHECKIN] = checkin_time
+                update_record(ATTENDANCE_ENTITY, record_id, update_payload)
             except Exception as e:
                 print(f"[ATTENDANCE-V2] Update attendance record error: {e}")
         else:
