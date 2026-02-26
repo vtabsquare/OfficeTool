@@ -347,7 +347,7 @@ const renderList = () => {
   const rows = pageItems
     .map(
       (p) => `
-    <tr>
+    <tr data-project-id="${p.id}">
       <td class="project-link" data-id="${p.id}">${p.name || ""}</td>
       <td>${p.code || ""}</td>
       <td>${p.client || ""}</td>
@@ -430,6 +430,7 @@ const renderList = () => {
       .table thead th .like-th:focus{ outline:none; box-shadow:none; }
       .table td, .table th{ padding:16px 20px; }
       .table tr:hover{ background:#f9f9f9; }
+      .projects-table tbody tr[data-project-id]{ cursor:pointer; }
       .actions-cell{
         text-align:center;
         width:120px;
@@ -706,17 +707,24 @@ const renderList = () => {
   document.querySelectorAll(".actions-cell").forEach((cell) => {
     cell.style.display = canManage ? "" : "none";
   });
+  const navigateToProjectDetails = (projectId) => {
+    if (!projectId) return;
+    window.location.hash = `#/time-projects?id=${encodeURIComponent(
+      projectId
+    )}&tab=details`;
+  };
 
-
-  // Make project rows clickable
-  document.querySelectorAll(".project-link").forEach((td) => {
-    td.addEventListener("click", (e) => {
-      const projectId = e.currentTarget.getAttribute("data-id");
-      window.location.hash = `#/time-projects?id=${encodeURIComponent(
-        projectId
-      )}&tab=details`;
+  // Make entire table row clickable (except action controls)
+  document
+    .querySelectorAll('#projects-table-view tbody tr[data-project-id]')
+    .forEach((row) => {
+      row.addEventListener('click', (e) => {
+        if (e.target.closest('.actions-cell, .proj-del, .proj-edit, button')) {
+          return;
+        }
+        navigateToProjectDetails(row.getAttribute('data-project-id'));
+      });
     });
-  });
 
   document.querySelectorAll(".project-card").forEach((card) => {
     card.addEventListener("click", (e) => {
@@ -724,10 +732,7 @@ const renderList = () => {
       const link = card.querySelector(".project-link");
       if (!link) return;
       const projectId = link.getAttribute("data-id");
-      if (!projectId) return;
-      window.location.hash = `#/time-projects?id=${encodeURIComponent(
-        projectId
-      )}&tab=details`;
+      navigateToProjectDetails(projectId);
     });
   });
 };
