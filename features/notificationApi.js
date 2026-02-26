@@ -2,6 +2,7 @@
 import { state } from '../state.js';
 import { fetchPendingLeaves, fetchEmployeeLeaves } from './leaveApi.js';
 import { showLeaveApprovalToast, showLeaveRejectionToast } from '../components/toast.js';
+import { isAdminUser } from '../utils/accessControl.js';
 
 /**
  * Update notification badge count based on pending leaves
@@ -27,8 +28,8 @@ export const updateNotificationBadge = async () => {
 
         _badgeLastUpdated = now;
 
-        // Check if user is admin
-        const isAdmin = employeeId.toUpperCase() === 'EMP001' || email.toLowerCase() === 'bala.t@vtab.com';
+        // Check if user is admin (L3 access)
+        const isAdmin = isAdminUser();
         
         let count = 0;
         if (isAdmin) {
@@ -61,7 +62,7 @@ export const updateNotificationBadge = async () => {
 export const handleNotificationBellClick = () => {
     const employeeId = state.user?.id || state.user?.employee_id;
     const email = state.user?.email || '';
-    const isAdmin = employeeId?.toUpperCase() === 'EMP001' || email?.toLowerCase() === 'bala.t@vtab.com';
+    const isAdmin = isAdminUser();
     
     // Navigate to inbox
     window.location.hash = '#/inbox';
@@ -179,8 +180,8 @@ export const checkForNewLeaveNotifications = async () => {
         
         if (!employeeId) return;
         
-        // Skip for admin users
-        const isAdmin = employeeId.toUpperCase() === 'EMP001' || email.toLowerCase() === 'bala.t@vtab.com';
+        // Skip for admin users (L3 access)
+        const isAdmin = isAdminUser();
         if (isAdmin) return;
         
         console.log('🔔 Checking for new leave notifications...');
