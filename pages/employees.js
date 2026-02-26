@@ -1,7 +1,8 @@
 import { state } from '../state.js';
 import { getPageContentHTML } from '../utils.js';
 import { renderModal, closeModal } from '../components/modal.js';
-import { listEmployees, createEmployee, updateEmployee, deleteEmployee } from '../features/employeeApi.js';
+import { listEmployees, listAllEmployees, createEmployee, updateEmployee, deleteEmployee } from '../features/employeeApi.js';
+
 import { cachedFetch, TTL, clearCacheByPrefix } from '../features/cache.js';
 import { API_BASE_URL } from '../config.js';
 
@@ -208,13 +209,7 @@ export const renderEmployeesPage = async (filter = '', page = empCurrentPage) =>
 
     let paginator = '';
     try {
-        // When searching, fetch all employees; otherwise use pagination
-        const fetchAll = filter && filter.trim().length > 0;
-        const fetchPageSize = fetchAll ? 10000 : EMP_PAGE_SIZE;
-        const fetchPage = fetchAll ? 1 : page;
-        
-        const { items, total, page: cur, pageSize } = await listEmployees(fetchPage, fetchPageSize);
-        empCurrentPage = fetchAll ? 1 : (cur || page);
+        const items = await listAllEmployees();
         state.employees = (items || []).map(e => ({
             id: e.employee_id,
             name: `${e.first_name || ''} ${e.last_name || ''}`.trim(),
@@ -250,30 +245,39 @@ export const renderEmployeesPage = async (filter = '', page = empCurrentPage) =>
             applyHeaderAvatar();
         }
 
-        const totalCount = typeof total === 'number' ? total : undefined;
-        const totalPages = totalCount ? Math.max(1, Math.ceil(totalCount / (pageSize || EMP_PAGE_SIZE))) : undefined;
-        const prevDisabled = empCurrentPage <= 1 ? 'disabled' : '';
-        const nextDisabled = totalPages && empCurrentPage >= totalPages ? 'disabled' : '';
-        const prevPage = Math.max(1, (empCurrentPage - 1));
-        const nextPage = totalPages ? Math.min(totalPages, empCurrentPage + 1) : (empCurrentPage + 1);
-        paginator = `
-            <div class="pagination">
-                <button id="emp-prev" class="btn" ${prevDisabled} data-target-page="${prevPage}"><i class="fa-solid fa-chevron-left"></i> Prev</button>
-                <span class="page-indicator">Page ${empCurrentPage}${totalPages ? ` of ${totalPages}` : ''}</span>
-                <button id="emp-next" class="btn" ${nextDisabled} data-target-page="${nextPage}">Next <i class="fa-solid fa-chevron-right"></i></button>
-            </div>
-        `;
-
     } catch (err) {
         console.error('Failed to load employees from backend:', err);
     }
 
-    const filteredEmployees = state.employees
+    const isSearching = !!(filter && filter.trim());
+    const sortedEmployees = state.employees
         .filter(e =>
             e.name.toLowerCase().includes(filter.toLowerCase()) ||
             e.id.toLowerCase().includes(filter.toLowerCase())
         )
         .sort(compareEmployeeIdAsc);
+
+    let filteredEmployees = sortedEmployees;
+    if (!isSearching) {
+        const totalPages = Math.max(1, Math.ceil(sortedEmployees.length / EMP_PAGE_SIZE));
+        empCurrentPage = Math.min(Math.max(1, page), totalPages);
+
+        const startIdx = (empCurrentPage - 1) * EMP_PAGE_SIZE;
+        const endIdx = startIdx + EMP_PAGE_SIZE;
+        filteredEmployees = sortedEmployees.slice(startIdx, endIdx);
+
+        const prevDisabled = empCurrentPage <= 1 ? 'disabled' : '';
+        const nextDisabled = empCurrentPage >= totalPages ? 'disabled' : '';
+        const prevPage = Math.max(1, empCurrentPage - 1);
+        const nextPage = Math.min(totalPages, empCurrentPage + 1);
+        paginator = `
+            <div class="pagination">
+                <button id="emp-prev" class="btn" ${prevDisabled} data-target-page="${prevPage}"><i class="fa-solid fa-chevron-left"></i> Prev</button>
+                <span class="page-indicator">Page ${empCurrentPage} of ${totalPages}</span>
+                <button id="emp-next" class="btn" ${nextDisabled} data-target-page="${nextPage}">Next <i class="fa-solid fa-chevron-right"></i></button>
+            </div>
+        `;
+    }
 
     const pastelColors = ['#bfdbfe', '#c7d2fe', '#fecdd3', '#fde68a', '#bbf7d0', '#fcd34d'];
     const getAvatarColor = (seed = '') => {
