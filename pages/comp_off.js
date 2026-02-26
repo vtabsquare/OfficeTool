@@ -1,9 +1,10 @@
 import { state } from "../state.js";
 import { getPageContentHTML } from "../utils.js";
 import { renderModal, closeModal } from "../components/modal.js";
-import { notifyAdminCompOffRequest } from "../features/notificationApi.js";
+import { updateNotificationBadge } from "../features/notificationApi.js";
 import { API_BASE_URL } from '../config.js';
 import { isL3User } from "../utils/accessControl.js";
+import { createCompOffRequest, fetchCompOffRequests } from "../features/compOffApi.js";
 
 
 const API_BASE = API_BASE_URL;
@@ -130,9 +131,25 @@ export const renderCompOffPage = async () => {
 
   // 2️⃣ Clear old data before reloading
   state.compOffs = [];
+  state.compOffRequests = [];
 
   // 3️⃣ Fetch from backend
-  await fetchCompOffData();
+  await Promise.all([
+    fetchCompOffData(),
+    (async () => {
+      try {
+        const empId = state.user?.id || state.user?.employee_id;
+        if (!empId) {
+          state.compOffRequests = [];
+          return;
+        }
+        state.compOffRequests = await fetchCompOffRequests({ employeeId: empId });
+      } catch (err) {
+        console.error("Error fetching comp off requests:", err);
+        state.compOffRequests = [];
+      }
+    })(),
+  ]);
 
   // 4️⃣ Render actual content
   const controls = `
@@ -201,23 +218,35 @@ export const showRequestCompOffModal = () => {
   renderModal("Request Compensatory Off", formHTML, "submit-compoff-btn");
 };
 
-export const handleRequestCompOff = (e) => {
+export const handleRequestCompOff = async (e) => {
   e.preventDefault();
 
-  const newRequest = {
-    id: state.compOffRequests.length + 1,
-    employeeId: state.user.id,
-    employeeName: state.user.name,
-    dateWorked: document.getElementById("dateWorked").value,
-    reason: document.getElementById("reason").value,
-    status: "Pending",
-    appliedDate: new Date().toISOString().split("T")[0],
-  };
+  const employeeId = state.user?.id || state.user?.employee_id;
+  const employeeName = state.user?.name || "";
+  const dateWorked = document.getElementById("dateWorked")?.value || "";
+  const reason = document.getElementById("reason")?.value || "";
 
-  state.compOffRequests.unshift(newRequest);
-  try { notifyAdminCompOffRequest(newRequest); } catch { }
-  closeModal();
-  renderCompOffPage();
+  if (!employeeId || !dateWorked || !reason.trim()) {
+    alert("Please fill all required fields.");
+    return;
+  }
+
+  try {
+    await createCompOffRequest({
+      employee_id: employeeId,
+      employee_name: employeeName,
+      date_worked: dateWorked,
+      reason: reason.trim(),
+      applied_date: new Date().toISOString().split("T")[0],
+      total_days: 1,
+    });
+    closeModal();
+    await renderCompOffPage();
+    await updateNotificationBadge();
+  } catch (err) {
+    console.error("Error creating comp off request:", err);
+    alert(`❌ Failed to submit comp off request: ${err.message || err}`);
+  }
 };
 
 export const showEditCompOffBalanceModal = (employeeId) => {

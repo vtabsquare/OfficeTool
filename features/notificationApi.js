@@ -3,6 +3,7 @@ import { state } from '../state.js';
 import { fetchPendingLeaves, fetchEmployeeLeaves } from './leaveApi.js';
 import { showLeaveApprovalToast, showLeaveRejectionToast } from '../components/toast.js';
 import { isAdminUser } from '../utils/accessControl.js';
+import { fetchCompOffRequests } from './compOffApi.js';
 
 /**
  * Update notification badge count based on pending leaves
@@ -34,13 +35,13 @@ export const updateNotificationBadge = async () => {
         let count = 0;
         if (isAdmin) {
             const pendingLeaves = await fetchPendingLeaves();
-            const compOffAll = JSON.parse(localStorage.getItem('compoff_requests') || '[]');
+            const compOffAll = await fetchCompOffRequests({ status: 'Pending' });
             const pendingCompOff = compOffAll.filter(r => (r.status || 'pending').toLowerCase() === 'pending');
             count = (pendingLeaves?.length || 0) + (pendingCompOff.length || 0);
         } else {
             const allLeaves = await fetchEmployeeLeaves(employeeId);
             const myPendingLeaves = allLeaves.filter(l => l.status?.toLowerCase() === 'pending');
-            const compOffAll = JSON.parse(localStorage.getItem('compoff_requests') || '[]');
+            const compOffAll = await fetchCompOffRequests({ status: 'Pending', employeeId });
             const myPendingCompOff = compOffAll.filter(r => String(r.employeeId).toUpperCase() === String(employeeId).toUpperCase() && (r.status || 'pending').toLowerCase() === 'pending');
             count = (myPendingLeaves.length || 0) + (myPendingCompOff.length || 0);
         }
@@ -110,10 +111,7 @@ export const notifyEmployeeCompOffRejected = async (requestId, employeeId, reaso
 
 export const notifyAdminCompOffRequest = async (request) => {
     try {
-        const list = JSON.parse(localStorage.getItem('compoff_requests') || '[]');
-        const req = { ...request, status: request.status || 'Pending', id: request.id || `CO-${Date.now()}` };
-        list.unshift(req);
-        localStorage.setItem('compoff_requests', JSON.stringify(list));
+        // Comp-off requests are now backend-backed; just refresh badge.
         await updateNotificationBadge();
     } catch (e) {}
 };

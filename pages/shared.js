@@ -8,6 +8,7 @@ import { showToast } from '../components/toast.js';
 import { listClients, createClient, updateClient, deleteClient, getNextClientId } from '../features/clientApi.js';
 import { fetchPendingLeaves } from '../features/leaveApi.js';
 import { notifyEmployeeLeaveApproval, notifyEmployeeLeaveRejection, updateNotificationBadge, notifyEmployeeCompOffGranted, notifyEmployeeCompOffRejected } from '../features/notificationApi.js';
+import { fetchCompOffRequests, approveCompOffRequest, rejectCompOffRequest } from '../features/compOffApi.js';
 import { listEmployees } from '../features/employeeApi.js';
 import { apiBase } from '../config.js';
 import { cachedFetch, TTL } from '../features/cache.js';
@@ -4048,8 +4049,14 @@ const loadInboxLeaves = async () => {
         });
 
         let leaves = [];
-        // Pull Comp Off requests from localStorage and normalize into leave-like objects
-        const compAll = JSON.parse(localStorage.getItem('compoff_requests') || '[]');
+        let compAll = [];
+        try {
+            compAll = await fetchCompOffRequests();
+        } catch (compErr) {
+            console.warn('Failed to fetch comp off requests for inbox leaves:', compErr);
+            compAll = [];
+        }
+        // Normalize comp off requests into leave-like objects
         const normalizeComp = (r) => ({
             leave_id: `CO-${r.id}`,
             employee_id: r.employeeId,
@@ -4408,7 +4415,7 @@ const loadInboxCompOff = async () => {
 
     try {
         const empId = await resolveCurrentEmployeeId();
-        const all = JSON.parse(localStorage.getItem('compoff_requests') || '[]');
+        const all = await fetchCompOffRequests();
         let items = all;
 
         if (currentInboxTab === 'awaiting' && canViewTeamQueues) {
@@ -4499,47 +4506,49 @@ const loadInboxCompOff = async () => {
 const handleCompOffApprove = async (requestId) => {
     if (!confirm('Grant this Comp Off request?')) return;
     try {
-        const list = JSON.parse(localStorage.getItem('compoff_requests') || '[]');
-        const idx = list.findIndex(r => String(r.id) === String(requestId));
-        if (idx >= 0) {
-            const req = { ...list[idx], status: 'Approved' };
-            list[idx] = req;
-            localStorage.setItem('compoff_requests', JSON.stringify(list));
+        const allRequests = await fetchCompOffRequests();
+        const req = allRequests.find(r => String(r.id) === String(requestId));
+        const adminId = await resolveCurrentEmployeeId();
 
-            // Credit the comp off balance in the backend
-            const employeeId = req.employeeId;
-            if (employeeId) {
-                try {
-                    // Fetch current comp off balance
-                    const balResp = await fetch(`${apiBase}/api/comp-off`);
-                    if (balResp.ok) {
-                        const balData = await balResp.json();
-                        const empData = (balData.data || []).find(
-                            e => (e.employee_id || '').toUpperCase() === employeeId.toUpperCase()
-                        );
-                        const currentBalance = empData ? (empData.raw_compoff || 0) : 0;
-                        const newBalance = currentBalance + 1;
-                        // Update the comp off balance
-                        const updateResp = await fetch(`${apiBase}/api/comp-off/${encodeURIComponent(employeeId)}`, {
-                            method: 'PUT',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ available_compoff: newBalance })
-                        });
-                        if (updateResp.ok) {
-                            console.log(`✅ Comp Off balance updated for ${employeeId}: ${currentBalance} -> ${newBalance}`);
-                        } else {
-                            console.error(`❌ Failed to update comp off balance for ${employeeId}`);
-                        }
+        await approveCompOffRequest(requestId, adminId || state.user?.id || 'EMP001');
+
+        // Credit the comp off balance in the backend
+        const employeeId = req?.employeeId;
+        const reqDays = Number(req?.totalDays || 1) || 1;
+        if (employeeId) {
+            try {
+                // Fetch current comp off balance
+                const balResp = await fetch(`${apiBase}/api/comp-off`);
+                if (balResp.ok) {
+                    const balData = await balResp.json();
+                    const empData = (balData.data || []).find(
+                        e => (e.employee_id || '').toUpperCase() === employeeId.toUpperCase()
+                    );
+                    const currentBalance = empData ? Number(empData.raw_compoff || 0) : 0;
+                    const newBalance = currentBalance + reqDays;
+                    // Update the comp off balance
+                    const updateResp = await fetch(`${apiBase}/api/comp-off/${encodeURIComponent(employeeId)}`, {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ available_compoff: newBalance })
+                    });
+                    if (updateResp.ok) {
+                        console.log(`✅ Comp Off balance updated for ${employeeId}: ${currentBalance} -> ${newBalance}`);
+                    } else {
+                        console.error(`❌ Failed to update comp off balance for ${employeeId}`);
                     }
-                } catch (balErr) {
-                    console.error('❌ Error updating comp off balance:', balErr);
                 }
+            } catch (balErr) {
+                console.error('❌ Error updating comp off balance:', balErr);
             }
+        }
 
-            try { await notifyEmployeeCompOffGranted(req.id, req.employeeId); } catch { }
+        if (req?.employeeId) {
+            try { await notifyEmployeeCompOffGranted(req.id || requestId, req.employeeId); } catch { }
         }
         alert('✅ Comp Off granted');
         await loadInboxCompOff();
+        await updateNotificationBadge();
     } catch (err) {
         console.error('❌ Error granting comp off:', err);
         alert('❌ Failed to grant comp off');
@@ -4563,17 +4572,19 @@ export const handleCompOffReject = async (e) => {
     const reason = document.getElementById('compoffRejectionReason')?.value || '';
     if (!requestId) { alert('Error: Request ID not found'); return; }
     try {
-        const list = JSON.parse(localStorage.getItem('compoff_requests') || '[]');
-        const idx = list.findIndex(r => String(r.id) === String(requestId));
-        if (idx >= 0) {
-            const req = { ...list[idx], status: 'Rejected', rejectionReason: reason };
-            list[idx] = req;
-            localStorage.setItem('compoff_requests', JSON.stringify(list));
-            try { await notifyEmployeeCompOffRejected(req.id, req.employeeId, reason); } catch { }
+        const allRequests = await fetchCompOffRequests();
+        const req = allRequests.find(r => String(r.id) === String(requestId));
+        const adminId = await resolveCurrentEmployeeId();
+
+        await rejectCompOffRequest(requestId, adminId || state.user?.id || 'EMP001', reason);
+
+        if (req?.employeeId) {
+            try { await notifyEmployeeCompOffRejected(req.id || requestId, req.employeeId, reason); } catch { }
         }
         closeModal();
         alert('✅ Comp Off rejected');
         await loadInboxCompOff();
+        await updateNotificationBadge();
     } catch (err) {
         console.error('❌ Error rejecting comp off:', err);
         alert('❌ Failed to reject comp off');
