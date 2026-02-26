@@ -47,16 +47,23 @@ const getNewJoiners = (employees = []) => {
         }));
 };
 
-const getDepartmentSnapshot = (employees = []) => {
-    const counts = employees.reduce((acc, emp) => {
-        const dept = emp.department || 'Unassigned';
-        acc[dept] = (acc[dept] || 0) + 1;
-        return acc;
-    }, {});
-    return Object.entries(counts)
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 4)
-        .map(([dept, total]) => ({ dept, total }));
+const getProjectSnapshot = async () => {
+    try {
+        const res = await fetch('http://localhost:8000/api/projects');
+        const data = await res.json();
+        const list = (data && data.projects) || [];
+        return list
+            .map((r) => ({
+                name: r.crc6f_projectname,
+                contributors: Number(r.crc6f_noofcontributors || 0)
+            }))
+            .filter(p => p.name && p.contributors > 0)
+            .sort((a, b) => b.contributors - a.contributors)
+            .slice(0, 4);
+    } catch (error) {
+        console.error('Error fetching project snapshot:', error);
+        return [];
+    }
 };
 
 const findDobField = (emp = {}) => Object.keys(emp).find(k => k.toLowerCase().includes('birth'));
@@ -399,18 +406,18 @@ const buildDashboardLayout = (data) => {
         'No recent joiners'
     );
 
-    const departmentMarkup = buildListMarkup(
-        data.departmentSnapshot,
-        dept => `
+    const projectMarkup = buildListMarkup(
+        data.projectSnapshot,
+        project => `
             <li>
                 <div>
-                    <h4>${dept.dept}</h4>
-                    <p>Team members</p>
+                    <h4>${project.name}</h4>
+                    <p>Contributors</p>
                 </div>
-                <span class="badge">${dept.total}</span>
+                <span class="badge">${project.contributors}</span>
             </li>
         `,
-        'No department data available'
+        'No project data available'
     );
 
     const peopleOnLeaveMarkup = buildListMarkup(
@@ -554,10 +561,10 @@ const buildDashboardLayout = (data) => {
 
                 <section class="card">
                     <header class="card-heading">
-                        <p class="eyebrow">Teams</p>
-                        <h3>Department Snapshot</h3>
+                        <p class="eyebrow">Projects</p>
+                        <h3>Project Snapshot</h3>
                     </header>
-                    ${departmentMarkup}
+                    ${projectMarkup}
                 </section>
 
                 <section class="card">
@@ -920,7 +927,7 @@ const loadDashboardData = async () => {
 
     const upcomingHolidays = getUpcomingHolidays(holidays);
     const newJoiners = getNewJoiners(employees);
-    const departmentSnapshot = getDepartmentSnapshot(employees);
+    const projectSnapshot = await getProjectSnapshot();
     const attendanceSummary = buildAttendanceSummary(attendanceRecords);
     const workProgress = buildWorkProgressSeries(attendanceRecords, today);
     const birthdays = getUpcomingBirthdays(employees);
@@ -930,7 +937,7 @@ const loadDashboardData = async () => {
         resolvedEmployeeId,
         upcomingHolidays,
         newJoiners,
-        departmentSnapshot,
+        projectSnapshot,
         attendanceSummary,
         workProgress,
         peopleOnLeave: peopleOnLeaveData,
