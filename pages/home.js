@@ -595,7 +595,7 @@ const buildDashboardLayout = (data) => {
                         <p class="eyebrow">Attendance</p>
                         <h3>Overview</h3>
                         <button id="refresh-attendance-btn" class="btn btn-sm btn-outline" style="padding: 0.25rem 0.75rem; font-size: 0.875rem;">
-                            <i class="fa-solid fa-refresh"></i> Refresh
+                            <i class="fa-solid fa-refresh"></i>
                         </button>
                     </header>
                     <div class="chart-row">
