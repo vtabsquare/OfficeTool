@@ -637,7 +637,7 @@ export const showAddEmployeeModal = () => {
     const previewClass = 'avatar-preview';
     const previewStyle = '';
     const formHTML = `
-        <div class="modal-form modern-form leave-form employee-form">
+        <div class="modal-form modern-form leave-form">
             <div class="form-section">
                 <div class="form-section-header">
                     <div>
