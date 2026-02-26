@@ -860,6 +860,8 @@ COMPOFF_REQUEST_ENTITY_CANDIDATES = [
     "crc6f_compensatoryrequest",
     "crc6f_hr_compensatoryrequests",
     "crc6f_hr_compensatoryrequestses",
+    LEAVE_ENTITY,
+    "crc6f_table14s",
 ]
 COMPOFF_REQUEST_ENTITY_RESOLVED = None
 
@@ -13072,10 +13074,23 @@ def _compoff_normalize_status(value):
     return "Pending"
 
 
+def _is_compoff_leave_entity(entity_set):
+    return str(entity_set or "").strip().lower() in {
+        str(LEAVE_ENTITY or "").strip().lower(),
+        "crc6f_table14s",
+    }
+
+
+def _is_compoff_leave_type(value):
+    raw = str(value or "").strip().lower()
+    return raw in {"compensatory off", "comp off", "compoff", "co"}
+
+
 def _compoff_normalize_employee_id(value):
     raw = str(value or "").strip().upper()
     if not raw:
         return ""
+
     if raw.isdigit():
         return format_employee_id(int(raw))
     return raw
@@ -13121,7 +13136,7 @@ def _normalize_compoff_request_row(row):
     status = _compoff_normalize_status(_compoff_pick(row, ["crc6f_status", "status"], "Pending"))
     total_days = _compoff_to_float(_compoff_pick(row, ["crc6f_totaldays", "total_days"], 1), 1)
     date_worked = str(_compoff_pick(row, ["crc6f_dateworked", "crc6f_workeddate", "crc6f_date", "crc6f_startdate", "date_worked"], "")).strip()
-    reason = str(_compoff_pick(row, ["crc6f_reason", "crc6f_comments", "crc6f_description", "reason"], "")).strip()
+    reason = str(_compoff_pick(row, ["crc6f_reason", "crc6f_comments", "crc6f_description", "crc6f_rejectionreason", "reason"], "")).strip()
     rejection_reason = str(_compoff_pick(row, ["crc6f_rejectionreason", "crc6f_rejectreason", "rejection_reason"], "")).strip()
     applied_raw = _compoff_pick(row, ["crc6f_applieddate", "crc6f_requestdate", "createdon", "applied_date"], "")
     applied_date = str(applied_raw).split("T")[0] if applied_raw else ""
@@ -13177,6 +13192,11 @@ def list_comp_off_requests():
             }), response.status_code
 
         records = response.json().get('value', [])
+        if _is_compoff_leave_entity(compoff_entity):
+            records = [
+                row for row in records
+                if _is_compoff_leave_type(_compoff_pick(row, ["crc6f_leavetype", "leave_type", "leaveType"], ""))
+            ]
         requests_out = [_normalize_compoff_request_row(row) for row in records]
         return jsonify({"success": True, "requests": requests_out, "count": len(requests_out)}), 200
     except Exception as e:
@@ -13200,46 +13220,87 @@ def create_comp_off_request():
         reason = str(data.get('reason') or '').strip()
         applied_date = str(data.get('applied_date') or data.get('appliedDate') or datetime.now().date().isoformat()).strip()
         total_days = _compoff_to_float(data.get('total_days') or data.get('totalDays') or 1, 1)
+        is_leave_backed = _is_compoff_leave_entity(compoff_entity)
+        leave_date = date_worked or applied_date or datetime.now().date().isoformat()
 
         if total_days <= 0:
             total_days = 1
 
-        payload = {
-            "crc6f_employeeid": employee_id,
-            "crc6f_status": "Pending",
-            "crc6f_totaldays": str(total_days),
-        }
-        if reason:
-            payload["crc6f_reason"] = reason
-        if date_worked:
-            payload["crc6f_dateworked"] = date_worked
-        if applied_date:
-            payload["crc6f_applieddate"] = applied_date
+        if is_leave_backed:
+            payload = {
+                "crc6f_leaveid": generate_leave_id(),
+                "crc6f_employeeid": employee_id,
+                "crc6f_leavetype": "Compensatory Off",
+                "crc6f_startdate": leave_date,
+                "crc6f_enddate": leave_date,
+                "crc6f_paidunpaid": "Paid",
+                "crc6f_status": "Pending",
+                "crc6f_totaldays": str(total_days),
+            }
+            if reason:
+                payload["crc6f_rejectionreason"] = reason
+        else:
+            payload = {
+                "crc6f_employeeid": employee_id,
+                "crc6f_status": "Pending",
+                "crc6f_totaldays": str(total_days),
+            }
+            if reason:
+                payload["crc6f_reason"] = reason
+            if date_worked:
+                payload["crc6f_dateworked"] = date_worked
+            if applied_date:
+                payload["crc6f_applieddate"] = applied_date
 
         try:
             created = create_record(compoff_entity, payload)
         except Exception as full_payload_err:
             print(f"[WARN] Comp off create with optional fields failed, retrying minimal payload: {full_payload_err}")
-            created = create_record(compoff_entity, {
-                "crc6f_employeeid": employee_id,
-                "crc6f_status": "Pending",
-                "crc6f_totaldays": str(total_days),
-            })
+            if is_leave_backed:
+                created = create_record(compoff_entity, {
+                    "crc6f_leaveid": generate_leave_id(),
+                    "crc6f_employeeid": employee_id,
+                    "crc6f_leavetype": "Compensatory Off",
+                    "crc6f_startdate": leave_date,
+                    "crc6f_enddate": leave_date,
+                    "crc6f_paidunpaid": "Paid",
+                    "crc6f_status": "Pending",
+                    "crc6f_totaldays": str(total_days),
+                })
+            else:
+                created = create_record(compoff_entity, {
+                    "crc6f_employeeid": employee_id,
+                    "crc6f_status": "Pending",
+                    "crc6f_totaldays": str(total_days),
+                })
 
         created = created if isinstance(created, dict) else {}
-        normalized = _normalize_compoff_request_row({
+        normalized_seed = {
             **created,
             "crc6f_employeeid": created.get("crc6f_employeeid") or employee_id,
             "crc6f_status": created.get("crc6f_status") or "Pending",
             "crc6f_totaldays": created.get("crc6f_totaldays") or str(total_days),
-            "crc6f_dateworked": created.get("crc6f_dateworked") or date_worked,
-            "crc6f_reason": created.get("crc6f_reason") or reason,
-            "crc6f_applieddate": created.get("crc6f_applieddate") or applied_date,
-        })
+        }
+        if is_leave_backed:
+            normalized_seed.update({
+                "crc6f_startdate": created.get("crc6f_startdate") or leave_date,
+                "crc6f_enddate": created.get("crc6f_enddate") or leave_date,
+                "crc6f_leavetype": created.get("crc6f_leavetype") or "Compensatory Off",
+                "crc6f_rejectionreason": created.get("crc6f_rejectionreason") or reason,
+                "crc6f_applieddate": created.get("createdon") or applied_date,
+            })
+        else:
+            normalized_seed.update({
+                "crc6f_dateworked": created.get("crc6f_dateworked") or date_worked,
+                "crc6f_reason": created.get("crc6f_reason") or reason,
+                "crc6f_applieddate": created.get("crc6f_applieddate") or applied_date,
+            })
+        normalized = _normalize_compoff_request_row(normalized_seed)
 
         if not normalized.get("id"):
             safe_emp = employee_id.replace("'", "''")
-            safe_date = date_worked.replace("'", "''") if date_worked else ""
+            raw_lookup_date = leave_date if is_leave_backed else date_worked
+            safe_date = raw_lookup_date.replace("'", "''") if raw_lookup_date else ""
             token = get_access_token()
             headers = {
                 "Authorization": f"Bearer {token}",
@@ -13248,7 +13309,11 @@ def create_comp_off_request():
                 "OData-Version": "4.0",
             }
             filters = [f"crc6f_employeeid eq '{safe_emp}'", "crc6f_status eq 'Pending'"]
-            if safe_date:
+            if is_leave_backed:
+                filters.append("crc6f_leavetype eq 'Compensatory Off'")
+                if safe_date:
+                    filters.append(f"crc6f_startdate eq '{safe_date}'")
+            elif safe_date:
                 filters.append(f"crc6f_dateworked eq '{safe_date}'")
             lookup_url = f"{BASE_URL}/{compoff_entity}?$filter={' and '.join(filters)}&$orderby=createdon desc&$top=1"
             lookup = requests.get(lookup_url, headers=headers, timeout=30)
@@ -13355,11 +13420,17 @@ def get_comp_off():
             comp_req_url = f"{BASE_URL}/{compoff_entity}"
             comp_req_resp = requests.get(comp_req_url, headers={"Authorization": f"Bearer {token}"})
             if comp_req_resp.status_code == 200:
-                normalized_requests = [{
-                    "employee_id": (r.get("crc6f_employeeid") or "").upper(),
-                    "status": (r.get("crc6f_status") or "").strip().lower(),
-                    "days": float(r.get("crc6f_totaldays") or 0)
-                } for r in comp_req_resp.json().get("value", [])]
+                normalized_requests = []
+                for r in comp_req_resp.json().get("value", []):
+                    if _is_compoff_leave_entity(compoff_entity):
+                        lt_raw = _compoff_pick(r, ["crc6f_leavetype", "leave_type", "leaveType"], "")
+                        if not _is_compoff_leave_type(lt_raw):
+                            continue
+                    normalized_requests.append({
+                        "employee_id": (r.get("crc6f_employeeid") or "").upper(),
+                        "status": (r.get("crc6f_status") or "").strip().lower(),
+                        "days": float(r.get("crc6f_totaldays") or 0)
+                    })
         except Exception as pending_err:
             print(f"[WARN] Failed to load comp-off requests: {pending_err}")
 
