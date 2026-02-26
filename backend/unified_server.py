@@ -7079,11 +7079,16 @@ def list_employees():
                 if simple_resp.status_code == 200:
                     body = simple_resp.json()
                     all_records = body.get("value", [])
+                    all_records = sorted(
+                        all_records,
+                        key=lambda rec: str(rec.get(field_map.get('id')) or '').strip().upper()
+                    )
                     print(f"   [DATA] Found {len(all_records)} total records in Dataverse")
                     # Slice for requested page
                     start_idx = skip
                     end_idx = start_idx + page_size
                     records = all_records[start_idx:end_idx]
+                    
                     items = []
                     def _pick_email(rec: dict, field_map: dict):
                         # Primary
@@ -7208,6 +7213,10 @@ def list_employees():
             }), 500
         body = resp.json()
         all_records = body.get("value", [])
+        all_records = sorted(
+            all_records,
+            key=lambda rec: str(rec.get(field_map.get('id')) or '').strip().upper()
+        )
         print(f"   [OK] Successfully retrieved {len(all_records)} records from Dataverse")
         total_count = len(all_records)  # Total fetched so far
         
