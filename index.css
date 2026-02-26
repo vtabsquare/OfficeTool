@@ -2018,12 +2018,18 @@ body.dark-theme .badge-coming-soon {
 
 .home-dashboard .card-heading {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 0.75rem;
   margin-bottom: 1rem;
   border-bottom: 1px solid var(--border-color);
   padding-bottom: 0.75rem;
+}
+
+.home-dashboard .card-heading > div {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
 }
 
 .home-dashboard .card-heading h3,
@@ -2530,6 +2536,7 @@ body.dark-theme .badge-coming-soon {
   display: flex;
   gap: 1.5rem;
   align-items: center;
+  justify-content: center;
   flex-wrap: wrap;
 }
 
