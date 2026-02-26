@@ -1505,7 +1505,12 @@ def _probe_entity_set(token: str, entity_set: str) -> bool:
         # Minimal safe query - just get one record without selecting specific fields
         url = f"{RESOURCE}/api/data/v9.2/{entity_set}?$top=1"
         r = requests.get(url, headers=headers, timeout=15)
-        return r.status_code == 200
+        if r.status_code == 404:
+            return False
+        # 200 means readable; 401/403 still indicates the entity set exists.
+        if r.status_code in (200, 401, 403):
+            return True
+        return r.status_code < 500
     except Exception:
         return False
 
@@ -1557,6 +1562,56 @@ def get_inbox_entity_set(token: str) -> str:
     INBOX_ENTITY_RESOLVED = INBOX_ENTITY_CANDIDATES[0]
     return INBOX_ENTITY_RESOLVED
 
+def _discover_compoff_entity_candidates(token: str) -> list:
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/json",
+        "OData-MaxVersion": "4.0",
+        "OData-Version": "4.0",
+    }
+    try:
+        url = f"{RESOURCE}/api/data/v9.2/EntityDefinitions?$select=EntitySetName,LogicalName&$top=5000"
+        resp = requests.get(url, headers=headers, timeout=30)
+        if resp.status_code != 200:
+            print(f"[WARN] Could not read Dataverse metadata for comp-off entity discovery: {resp.status_code}")
+            return []
+
+        scored = []
+        for row in resp.json().get("value", []):
+            entity_set = str(row.get("EntitySetName") or "").strip()
+            logical = str(row.get("LogicalName") or "").strip().lower()
+            if not entity_set:
+                continue
+
+            name_low = entity_set.lower()
+            blob = f"{name_low} {logical}"
+            if not any(k in blob for k in ("comp", "compens", "off", "request")):
+                continue
+
+            score = 0
+            if "compens" in blob:
+                score += 4
+            if "comp" in blob:
+                score += 2
+            if "off" in blob:
+                score += 2
+            if "request" in blob:
+                score += 3
+            scored.append((score, entity_set))
+
+        scored.sort(key=lambda item: (-item[0], item[1]))
+        discovered = []
+        seen = set()
+        for _, cand in scored:
+            if cand in seen:
+                continue
+            discovered.append(cand)
+            seen.add(cand)
+        return discovered
+    except Exception as meta_err:
+        print(f"[WARN] Comp-off metadata discovery failed: {meta_err}")
+        return []
+
 def get_compoff_request_entity_set(token: str) -> str:
     global COMPOFF_REQUEST_ENTITY_RESOLVED
     if COMPOFF_REQUEST_ENTITY_RESOLVED:
@@ -1575,8 +1630,18 @@ def get_compoff_request_entity_set(token: str) -> str:
             print(f"[OK] Resolved comp-off request entity set: {cand}")
             return cand
 
-    COMPOFF_REQUEST_ENTITY_RESOLVED = candidates[0]
-    print(f"[WARN] Could not verify comp-off request entity; defaulting to {COMPOFF_REQUEST_ENTITY_RESOLVED}")
+    discovered_candidates = _discover_compoff_entity_candidates(token)
+    for cand in discovered_candidates:
+        if cand in seen:
+            continue
+        if _probe_entity_set(token, cand):
+            COMPOFF_REQUEST_ENTITY_RESOLVED = cand
+            print(f"[OK] Resolved comp-off request entity set via metadata: {cand}")
+            return cand
+
+    COMPOFF_REQUEST_ENTITY_RESOLVED = candidates[0] if candidates else COMPOFF_REQUEST_ENTITY
+    tried = candidates + [c for c in discovered_candidates if c not in seen]
+    print(f"[WARN] Could not verify comp-off request entity; defaulting to {COMPOFF_REQUEST_ENTITY_RESOLVED}. Tried: {tried}")
     return COMPOFF_REQUEST_ENTITY_RESOLVED
 
 def get_clients_entity(token: str) -> str:
