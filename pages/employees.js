@@ -38,6 +38,15 @@ const normalizePhoto = (photo) => {
     return `data:image/png;base64,${trimmed}`;
 };
 
+const compareEmployeeIdAsc = (a, b) => {
+    const idA = String(a?.id || '').trim();
+    const idB = String(b?.id || '').trim();
+    if (!idA && !idB) return 0;
+    if (!idA) return 1;
+    if (!idB) return -1;
+    return idA.localeCompare(idB, undefined, { numeric: true, sensitivity: 'base' });
+};
+
 const applyHeaderAvatar = () => {
     const headerAvatar = document.querySelector('.user-profile .user-avatar');
     if (!headerAvatar) return;
@@ -259,10 +268,12 @@ export const renderEmployeesPage = async (filter = '', page = empCurrentPage) =>
         console.error('Failed to load employees from backend:', err);
     }
 
-    const filteredEmployees = state.employees.filter(e =>
-        e.name.toLowerCase().includes(filter.toLowerCase()) ||
-        e.id.toLowerCase().includes(filter.toLowerCase())
-    );
+    const filteredEmployees = state.employees
+        .filter(e =>
+            e.name.toLowerCase().includes(filter.toLowerCase()) ||
+            e.id.toLowerCase().includes(filter.toLowerCase())
+        )
+        .sort(compareEmployeeIdAsc);
 
     const pastelColors = ['#bfdbfe', '#c7d2fe', '#fecdd3', '#fde68a', '#bbf7d0', '#fcd34d'];
     const getAvatarColor = (seed = '') => {
