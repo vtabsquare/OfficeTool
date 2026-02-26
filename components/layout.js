@@ -40,10 +40,6 @@ export const getSidebarHTML = () => {
             : ""
         }
         <li><a href="#/inbox" class="nav-link" data-page="inbox"><i class="fa-solid fa-inbox"></i> Inbox</a></li>
-        <li><a href="javascript:void(0)" class="nav-link nav-link-disabled" data-page="chat" title="Coming Soon" onclick="event.preventDefault(); return false;">
-            <i class="fa-solid fa-comments"></i> Chat <span class="badge-coming-soon">Coming Soon</span>
-        </a></li>
-        <li><a href="javascript:void(0)" class="nav-link nav-link-disabled" data-page="meet" title="Coming Soon" onclick="event.preventDefault(); return false;"><i class="fa-solid fa-video"></i> Meet <span class="badge-coming-soon">Coming Soon</span></a></li>
         ${
           canManage
             ? '<li><a href="#/onboarding" class="nav-link" data-page="onboarding"><i class="fa-solid fa-user-plus"></i> Onboarding</a></li>'

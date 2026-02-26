@@ -4456,7 +4456,8 @@ const loadInboxCompOff = async () => {
                         <p><strong>Applied:</strong> ${req.appliedDate || '-'}</p>
                         ${statusClass === 'rejected' && req.rejectionReason ? `
                             <div class="rejection-reason-box" style="background: #fff3cd; border-left: 4px solid #ffc107; padding: 12px; margin-top: 12px; border-radius: 4px;">
-                                <strong style="color: #856404;"><i class="fa-solid fa-info-circle"></i> Rejection Reason:</strong>
+                           
+                            <strong style="color: #856404;"><i class="fa-solid fa-info-circle"></i> Rejection Reason:</strong>
                                 <p style="margin: 8px 0 0 0; color: #856404;">${req.rejectionReason}</p>
                             </div>` : ''}
                     </div>

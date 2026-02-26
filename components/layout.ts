@@ -12,7 +12,6 @@ export const getSidebarHTML = () => `
         <li><a href="#/" class="nav-link" data-page="home"><i class="fa-solid fa-house"></i> Home</a></li>
         <li><a href="#/employees" class="nav-link" data-page="employees"><i class="fa-solid fa-users"></i> Employees</a></li>
         <li><a href="#/inbox" class="nav-link" data-page="inbox"><i class="fa-solid fa-inbox"></i> Inbox</a></li>
-        <li><a href="#/meet" class="nav-link" data-page="meet"><i class="fa-solid fa-video"></i> Meet</a></li>
         <li><a href="#/time-tracker" class="nav-link" data-page="time-tracker"><i class="fa-solid fa-clock"></i> Time tracker</a></li>
         
         <li class="nav-group" data-group="attendance-tracker">
