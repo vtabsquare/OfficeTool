@@ -853,6 +853,15 @@ FIELD_STATUS = (os.getenv("ATTENDANCE_STATUS_FIELD") or "").strip()
 # ================== LEAVE TRACKER CONFIGURATION ==================
 LEAVE_ENTITY = "crc6f_table14s"
 COMPOFF_REQUEST_ENTITY = os.getenv("COMPOFF_REQUEST_ENTITY", "crc6f_compensatoryrequests")
+COMPOFF_REQUEST_ENTITY_CANDIDATES = [
+    COMPOFF_REQUEST_ENTITY,
+    "crc6f_compensatoryrequests",
+    "crc6f_compensatoryrequestses",
+    "crc6f_compensatoryrequest",
+    "crc6f_hr_compensatoryrequests",
+    "crc6f_hr_compensatoryrequestses",
+]
+COMPOFF_REQUEST_ENTITY_RESOLVED = None
 
 # ================== LOGIN ACTIVITY CONFIGURATION ==================
 LOGIN_ACTIVITY_ENTITY = "crc6f_hr_loginactivitytbs"
@@ -1547,6 +1556,28 @@ def get_inbox_entity_set(token: str) -> str:
     # Fallback to first candidate so the error surfaces clearly
     INBOX_ENTITY_RESOLVED = INBOX_ENTITY_CANDIDATES[0]
     return INBOX_ENTITY_RESOLVED
+
+def get_compoff_request_entity_set(token: str) -> str:
+    global COMPOFF_REQUEST_ENTITY_RESOLVED
+    if COMPOFF_REQUEST_ENTITY_RESOLVED:
+        return COMPOFF_REQUEST_ENTITY_RESOLVED
+
+    candidates = []
+    seen = set()
+    for cand in COMPOFF_REQUEST_ENTITY_CANDIDATES:
+        if cand and cand not in seen:
+            candidates.append(cand)
+            seen.add(cand)
+
+    for cand in candidates:
+        if _probe_entity_set(token, cand):
+            COMPOFF_REQUEST_ENTITY_RESOLVED = cand
+            print(f"[OK] Resolved comp-off request entity set: {cand}")
+            return cand
+
+    COMPOFF_REQUEST_ENTITY_RESOLVED = candidates[0]
+    print(f"[WARN] Could not verify comp-off request entity; defaulting to {COMPOFF_REQUEST_ENTITY_RESOLVED}")
+    return COMPOFF_REQUEST_ENTITY_RESOLVED
 
 def get_clients_entity(token: str) -> str:
     """Resolve the correct clients entity set name by probing candidates."""
@@ -13050,6 +13081,7 @@ def list_comp_off_requests():
         employee_filter = _compoff_normalize_employee_id(request.args.get('employee_id', ''))
 
         token = get_access_token()
+        compoff_entity = get_compoff_request_entity_set(token)
         headers = {
             "Authorization": f"Bearer {token}",
             "Accept": "application/json",
@@ -13069,7 +13101,7 @@ def list_comp_off_requests():
         if filters:
             query_parts.append(f"$filter={' and '.join(filters)}")
         query_parts.append("$orderby=createdon desc")
-        url = f"{BASE_URL}/{COMPOFF_REQUEST_ENTITY}?{'&'.join(query_parts)}"
+        url = f"{BASE_URL}/{compoff_entity}?{'&'.join(query_parts)}"
 
         response = requests.get(url, headers=headers, timeout=30)
         if response.status_code != 200:
@@ -13096,10 +13128,14 @@ def create_comp_off_request():
         if not employee_id:
             return jsonify({"success": False, "error": "employee_id is required"}), 400
 
+        token = get_access_token()
+        compoff_entity = get_compoff_request_entity_set(token)
+
         date_worked = str(data.get('date_worked') or data.get('dateWorked') or '').strip()
         reason = str(data.get('reason') or '').strip()
         applied_date = str(data.get('applied_date') or data.get('appliedDate') or datetime.now().date().isoformat()).strip()
         total_days = _compoff_to_float(data.get('total_days') or data.get('totalDays') or 1, 1)
+
         if total_days <= 0:
             total_days = 1
 
@@ -13116,10 +13152,10 @@ def create_comp_off_request():
             payload["crc6f_applieddate"] = applied_date
 
         try:
-            created = create_record(COMPOFF_REQUEST_ENTITY, payload)
+            created = create_record(compoff_entity, payload)
         except Exception as full_payload_err:
             print(f"[WARN] Comp off create with optional fields failed, retrying minimal payload: {full_payload_err}")
-            created = create_record(COMPOFF_REQUEST_ENTITY, {
+            created = create_record(compoff_entity, {
                 "crc6f_employeeid": employee_id,
                 "crc6f_status": "Pending",
                 "crc6f_totaldays": str(total_days),
@@ -13149,7 +13185,7 @@ def create_comp_off_request():
             filters = [f"crc6f_employeeid eq '{safe_emp}'", "crc6f_status eq 'Pending'"]
             if safe_date:
                 filters.append(f"crc6f_dateworked eq '{safe_date}'")
-            lookup_url = f"{BASE_URL}/{COMPOFF_REQUEST_ENTITY}?$filter={' and '.join(filters)}&$orderby=createdon desc&$top=1"
+            lookup_url = f"{BASE_URL}/{compoff_entity}?$filter={' and '.join(filters)}&$orderby=createdon desc&$top=1"
             lookup = requests.get(lookup_url, headers=headers, timeout=30)
             if lookup.status_code == 200 and lookup.json().get('value'):
                 latest = lookup.json().get('value', [])[0]
@@ -13174,13 +13210,15 @@ def approve_comp_off_request(request_id):
     try:
         data = request.get_json() or {}
         approved_by = _compoff_normalize_employee_id(data.get('approved_by') or data.get('approvedBy') or 'EMP001')
+        token = get_access_token()
+        compoff_entity = get_compoff_request_entity_set(token)
 
-        update_record(COMPOFF_REQUEST_ENTITY, request_id, {
+        update_record(compoff_entity, request_id, {
             "crc6f_status": "Approved",
         })
         if approved_by:
             try:
-                update_record(COMPOFF_REQUEST_ENTITY, request_id, {
+                update_record(compoff_entity, request_id, {
                     "crc6f_approvedby": approved_by,
                 })
             except Exception as meta_err:
@@ -13198,8 +13236,10 @@ def reject_comp_off_request(request_id):
         data = request.get_json() or {}
         rejected_by = _compoff_normalize_employee_id(data.get('rejected_by') or data.get('rejectedBy') or 'EMP001')
         rejection_reason = str(data.get('reason') or '').strip()
+        token = get_access_token()
+        compoff_entity = get_compoff_request_entity_set(token)
 
-        update_record(COMPOFF_REQUEST_ENTITY, request_id, {
+        update_record(compoff_entity, request_id, {
             "crc6f_status": "Rejected",
         })
 
@@ -13210,7 +13250,7 @@ def reject_comp_off_request(request_id):
             optional_update["crc6f_rejectionreason"] = rejection_reason
         if optional_update:
             try:
-                update_record(COMPOFF_REQUEST_ENTITY, request_id, optional_update)
+                update_record(compoff_entity, request_id, optional_update)
             except Exception as meta_err:
                 print(f"[WARN] Could not update reject metadata for comp off request {request_id}: {meta_err}")
         return jsonify({"success": True, "message": "Comp Off request rejected", "request_id": request_id}), 200
@@ -13244,9 +13284,10 @@ def get_comp_off():
                         leave_balances_map[emp_id.upper()] = bal
                 except Exception:
                     pass
+        compoff_entity = get_compoff_request_entity_set(token)
         normalized_requests = []
         try:
-            comp_req_url = f"{BASE_URL}/{COMPOFF_REQUEST_ENTITY}"
+            comp_req_url = f"{BASE_URL}/{compoff_entity}"
             comp_req_resp = requests.get(comp_req_url, headers={"Authorization": f"Bearer {token}"})
             if comp_req_resp.status_code == 200:
                 normalized_requests = [{
