@@ -4824,10 +4824,13 @@ def get_monthly_attendance(employee_id, year, month):
             # Overlay live timer if employee is still checked in for that date
             live_hours = 0.0
             if date_str and (not is_manual_override):
-                live_hours = _live_session_progress_hours(normalized_emp_id, date_str)
-            augmented_hours = duration_hours + max(0.0, live_hours)
-            effective_hours = augmented_hours if augmented_hours > duration_hours else duration_hours
-
+                live_hours = max(0.0, _live_session_progress_hours(normalized_emp_id, date_str))
+            # IMPORTANT: live_hours already represents the total worked hours for the day
+            # (base + elapsed) in the V2 login-activity path, so adding duration_hours
+            # again causes inflated totals. Use the larger value instead of summing.
+            effective_hours = live_hours if live_hours > duration_hours else duration_hours
+            live_augmented = effective_hours > duration_hours
+            
             # Prefer persisted manual/status field; fallback to hour-based classification
             persisted_status = (r.get(FIELD_STATUS) or "").strip().upper() if FIELD_STATUS else ""
             if persisted_status == "H":
@@ -4851,7 +4854,7 @@ def get_monthly_attendance(employee_id, year, month):
                     pass
 
             duration_text = r.get(FIELD_DURATION_INTEXT)
-            if (not is_manual_override) and augmented_hours > duration_hours:
+            if (not is_manual_override) and live_augmented:
                 duration_text = _format_duration_text_from_hours(effective_hours)
             
             formatted_records.append({
@@ -4864,7 +4867,7 @@ def get_monthly_attendance(employee_id, year, month):
                 "duration_text": duration_text,
                 "status": status,
                 "isManual": is_manual_override,
-                "liveAugmented": augmented_hours > duration_hours
+                "liveAugmented": live_augmented
             })
         
         # Overlay employee-specific leaves into the same month range (CL/SL/CO)
