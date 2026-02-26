@@ -49,7 +49,8 @@ const getNewJoiners = (employees = []) => {
 
 const getProjectSnapshot = async () => {
     try {
-        const res = await fetch('http://localhost:8000/api/projects');
+        const apiRoot = apiBase.replace(/\/$/, '');
+        const res = await fetch(`${apiRoot}/api/projects`);
         const data = await res.json();
         const list = (data && data.projects) || [];
         return list
@@ -57,7 +58,7 @@ const getProjectSnapshot = async () => {
                 name: r.crc6f_projectname,
                 contributors: Number(r.crc6f_noofcontributors || 0)
             }))
-            .filter(p => p.name && p.contributors > 0)
+            .filter(p => p.name)
             .sort((a, b) => b.contributors - a.contributors)
             .slice(0, 4);
     } catch (error) {
