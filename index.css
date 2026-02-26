@@ -4918,6 +4918,21 @@ body.dark-theme .btn-secondary:hover {
   color: var(--primary-color);
 }
 
+.btn-outline {
+  background: transparent;
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  transition: all 0.2s ease;
+}
+
+.btn-outline:hover {
+  background: var(--primary-color);
+  border-color: var(--primary-color);
+  color: white;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(79, 70, 229, 0.3);
+}
+
 body.dark-theme .btn-outline {
   border-color: var(--border-color);
   color: var(--text-primary);
