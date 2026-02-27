@@ -4510,6 +4510,7 @@ const loadInboxCompOff = async () => {
         `;
     }
 };
+
 const handleCompOffApprove = async (requestId) => {
     if (!confirm('Grant this Comp Off request?')) return;
     try {
@@ -4532,14 +4533,41 @@ const handleCompOffApprove = async (requestId) => {
     }
 };
 
-const showCompOffRejectModal = (requestId) => {
-    const formHTML = `
-        <div class="form-group">
-            <label for="compoffRejectionReason">Rejection Reason (Optional)</label>
-            <textarea id="compoffRejectionReason" name="rejectionReason" rows="4" placeholder="Enter reason for rejection..."></textarea>
+const buildRejectReasonForm = ({
+    eyebrow,
+    textareaId,
+    hiddenId,
+    hiddenValue,
+    helperText = 'This comment is shared with the employee.'
+}) => `
+    <div class="leave-form">
+        <div class="form-section">
+            <div class="form-section-header">
+                <div>
+                    <p class="form-eyebrow">${eyebrow}</p>
+                    <h3>Rejection reason</h3>
+                </div>
+                <p class="form-section-copy">${helperText}</p>
+            </div>
+            <div class="form-field">
+                <div class="field-header">
+                    <label class="form-label" for="${textareaId}">Reason (Optional)</label>
+                    <span class="field-hint">Be specific and actionable</span>
+                </div>
+                <textarea class="input-control" id="${textareaId}" name="rejectionReason" rows="4" placeholder="Enter reason for rejection..."></textarea>
+            </div>
         </div>
-        <input type="hidden" id="compoffRejectId" value="${requestId}">
-    `;
+    </div>
+    <input type="hidden" id="${hiddenId}" value="${hiddenValue}">
+`;
+
+const showCompOffRejectModal = (requestId) => {
+    const formHTML = buildRejectReasonForm({
+        eyebrow: 'Comp off review',
+        textareaId: 'compoffRejectionReason',
+        hiddenId: 'compoffRejectId',
+        hiddenValue: requestId
+    });
     renderModal('Reject Comp Off Request', formHTML, 'compoff-submit-reject-btn', 'normal', 'Reject');
 };
 
@@ -4547,6 +4575,7 @@ export const handleCompOffReject = async (e) => {
     e.preventDefault();
     const requestId = document.getElementById('compoffRejectId').value;
     const reason = document.getElementById('compoffRejectionReason')?.value || '';
+
     if (!requestId) { alert('Error: Request ID not found'); return; }
     try {
         const allRequests = await fetchCompOffRequests();
@@ -4568,44 +4597,14 @@ export const handleCompOffReject = async (e) => {
     }
 };
 
-const handleTimesheetApprove = async (entryId) => {
-    if (!confirm('Are you sure you want to APPROVE this timesheet entry?')) {
-        return;
-    }
-
-    try {
-        const adminId = await resolveCurrentEmployeeId();
-        const resp = await fetch(
-            `${apiBase}/api/time-tracker/timesheet/${encodeURIComponent(entryId)}/approve`,
-            {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ decided_by: adminId }),
-            }
-        );
-        const data = await resp.json().catch(() => ({}));
-
-        if (!resp.ok || !data.success) {
-            throw new Error(data.error || resp.status);
-        }
-
-        alert('✅ Timesheet entry approved successfully!');
-        await loadInboxTimesheets();
-    } catch (err) {
-        console.error('❌ Error approving timesheet entry:', err);
-        alert(`❌ Failed to approve timesheet entry: ${err.message || err}`);
-    }
-};
-
 const showTimesheetRejectModal = (entryId) => {
-    const formHTML = `
-        <div class="form-group">
-            <label for="timesheetRejectionReason">Rejection Reason (Optional)</label>
-            <textarea id="timesheetRejectionReason" name="rejectionReason" rows="4" placeholder="Enter reason for rejection..."></textarea>
-        </div>
-        <input type="hidden" id="timesheetRejectId" value="${entryId}">
-    `;
-    renderModal('Reject Timesheet Entry', formHTML, 'timesheet-submit-reject-btn', 'normal', 'Reject Timesheet');
+    const formHTML = buildRejectReasonForm({
+        eyebrow: 'Timesheet review',
+        textareaId: 'timesheetRejectionReason',
+        hiddenId: 'timesheetRejectId',
+        hiddenValue: entryId
+    });
+    renderModal('Reject Timesheet Entry', formHTML, 'timesheet-submit-reject-btn', 'normal', 'Reject');
 };
 
 export const handleTimesheetReject = async (e) => {
@@ -4641,6 +4640,109 @@ export const handleTimesheetReject = async (e) => {
     } catch (err) {
         console.error('❌ Error rejecting timesheet entry:', err);
         alert(`❌ Failed to reject timesheet entry: ${err.message || err}`);
+    }
+};
+
+const showInboxRejectModal = (leaveId) => {
+    const formHTML = buildRejectReasonForm({
+        eyebrow: 'Leave review',
+        textareaId: 'inboxRejectionReason',
+        hiddenId: 'inboxRejectLeaveId',
+        hiddenValue: leaveId
+    });
+
+    renderModal('Reject Leave Request', formHTML, 'inbox-submit-reject-btn', 'normal', 'Reject');
+};
+
+export const handleInboxRejectLeave = async (e) => {
+    e.preventDefault();
+
+    const leaveId = document.getElementById('inboxRejectLeaveId').value;
+    const reason = document.getElementById('inboxRejectionReason')?.value || '';
+
+    if (!leaveId) {
+        alert('Error: Leave ID not found');
+        return;
+    }
+
+    try {
+        // Find the leave details before rejection
+        const leaves = await fetchPendingLeaves();
+        const leave = leaves.find(l => l.leave_id === leaveId);
+
+        const adminId = await resolveCurrentEmployeeId();
+        await rejectLeave(leaveId, adminId, reason);
+
+        // Send notification to employee
+        if (leave) {
+            try {
+                await notifyEmployeeLeaveRejection(
+                    leaveId,
+                    leave.employee_id,
+                    leave.leave_type,
+                    reason
+                );
+            } catch (notifErr) {
+                console.warn('⚠️ Failed to send rejection notification:', notifErr);
+            }
+        }
+
+        closeModal();
+        alert(`✅ Leave ${leaveId} rejected successfully!`);
+        // Switch to completed tab to show the rejected leave
+        currentInboxTab = 'completed';
+        // Update tab UI
+        document.querySelectorAll('.inbox-tab').forEach(t => t.classList.remove('active'));
+        document.querySelector('.inbox-tab[data-tab="completed"]')?.classList.add('active');
+        await loadInboxLeaves();
+    } catch (err) {
+        console.error('❌ Error rejecting leave:', err);
+        alert(`❌ Failed to reject leave: ${err.message}`);
+    }
+};
+
+const showAttendanceRejectModal = (markerId) => {
+    const formHTML = buildRejectReasonForm({
+        eyebrow: 'Attendance review',
+        textareaId: 'attendanceRejectionReason',
+        hiddenId: 'rejectReportId',
+        hiddenValue: markerId,
+        helperText: 'This comment is shared with the submitter.'
+    });
+
+    renderModal('Reject Attendance Report', formHTML, 'attendance-submit-reject-btn', 'normal', 'Reject');
+};
+
+export const handleAttendanceRejectReport = async (e) => {
+    e.preventDefault();
+
+    const reportId = document.getElementById('rejectReportId').value;
+    const reason = document.getElementById('attendanceRejectionReason')?.value || '';
+
+    if (!reportId) {
+        alert('Error: Report ID not found');
+        return;
+    }
+
+    try {
+        const response = await fetch(`${apiBase}/api/attendance/submissions/${reportId}/reject`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ reason })
+        });
+
+        const data = await response.json();
+
+        if (!data.success) {
+            throw new Error(data.error || 'Failed to reject attendance report');
+        }
+
+        closeModal();
+        alert(`✅ Attendance report rejected successfully!`);
+        await loadInboxAttendance();
+    } catch (err) {
+        console.error('❌ Error rejecting attendance report:', err);
+        alert(`❌ Failed to reject attendance report: ${err.message}`);
     }
 };
 
@@ -4819,13 +4921,11 @@ const handleInboxApprove = async (leaveId) => {
 
         // Send notification to employee
         if (leave) {
-            try {
-                await notifyEmployeeLeaveApproval(
-                    leaveId,
-                    leave.employee_id,
-                    leave.leave_type
-                );
-            } catch (notifErr) {
+            try { await notifyEmployeeLeaveApproval(
+                leaveId,
+                leave.employee_id,
+                leave.leave_type
+            ); } catch (notifErr) {
                 console.warn('⚠️ Failed to send approval notification:', notifErr);
             }
         }
@@ -4841,79 +4941,6 @@ const handleInboxApprove = async (leaveId) => {
     } catch (err) {
         console.error('❌ Error approving leave:', err);
         alert(`❌ Failed to approve leave: ${err.message}`);
-    }
-};
-
-const showInboxRejectModal = (leaveId) => {
-    const formHTML = `
-        <div class="leave-form">
-            <div class="form-section">
-                <div class="form-section-header">
-                    <div>
-                        <p class="form-eyebrow">Leave review</p>
-                        <h3>Rejection reason</h3>
-                    </div>
-                    <p class="form-section-copy">This comment is shared with the employee.</p>
-                </div>
-                <div class="form-field">
-                    <div class="field-header">
-                        <label class="form-label" for="inboxRejectionReason">Reason (Optional)</label>
-                        <span class="field-hint">Be specific and actionable</span>
-                    </div>
-                    <textarea class="input-control" id="inboxRejectionReason" name="rejectionReason" rows="4" placeholder="Enter reason for rejection..."></textarea>
-                </div>
-            </div>
-        </div>
-        <input type="hidden" id="inboxRejectLeaveId" value="${leaveId}">
-    `;
-
-    renderModal('Reject Leave Request', formHTML, 'inbox-submit-reject-btn', 'normal', 'Reject Leave');
-};
-
-export const handleInboxRejectLeave = async (e) => {
-    e.preventDefault();
-
-    const leaveId = document.getElementById('inboxRejectLeaveId').value;
-    const reason = document.getElementById('inboxRejectionReason')?.value || '';
-
-    if (!leaveId) {
-        alert('Error: Leave ID not found');
-        return;
-    }
-
-    try {
-        // Find the leave details before rejection
-        const leaves = await fetchPendingLeaves();
-        const leave = leaves.find(l => l.leave_id === leaveId);
-
-        const adminId = await resolveCurrentEmployeeId();
-        await rejectLeave(leaveId, adminId, reason);
-
-        // Send notification to employee
-        if (leave) {
-            try {
-                await notifyEmployeeLeaveRejection(
-                    leaveId,
-                    leave.employee_id,
-                    leave.leave_type,
-                    reason
-                );
-            } catch (notifErr) {
-                console.warn('⚠️ Failed to send rejection notification:', notifErr);
-            }
-        }
-
-        closeModal();
-        alert(`✅ Leave ${leaveId} rejected successfully!`);
-        // Switch to completed tab to show the rejected leave
-        currentInboxTab = 'completed';
-        // Update tab UI
-        document.querySelectorAll('.inbox-tab').forEach(t => t.classList.remove('active'));
-        document.querySelector('.inbox-tab[data-tab="completed"]')?.classList.add('active');
-        await loadInboxLeaves();
-    } catch (err) {
-        console.error('❌ Error rejecting leave:', err);
-        alert(`❌ Failed to reject leave: ${err.message}`);
     }
 };
 
@@ -4939,51 +4966,6 @@ const handleAttendanceApprove = async (markerId) => {
     } catch (err) {
         console.error('❌ Error approving attendance report:', err);
         alert(`❌ Failed to approve attendance report: ${err.message}`);
-    }
-};
-
-const showAttendanceRejectModal = (markerId) => {
-    const formHTML = `
-        <div class="form-group">
-            <label for="attendanceRejectionReason">Rejection Reason (Optional)</label>
-            <textarea id="attendanceRejectionReason" name="rejectionReason" rows="4" placeholder="Enter reason for rejection..."></textarea>
-        </div>
-        <input type="hidden" id="rejectReportId" value="${markerId}">
-    `;
-
-    renderModal('Reject Attendance Report', formHTML, 'attendance-submit-reject-btn', 'normal', 'Reject Report');
-};
-
-export const handleAttendanceRejectReport = async (e) => {
-    e.preventDefault();
-
-    const reportId = document.getElementById('rejectReportId').value;
-    const reason = document.getElementById('attendanceRejectionReason')?.value || '';
-
-    if (!reportId) {
-        alert('Error: Report ID not found');
-        return;
-    }
-
-    try {
-        const response = await fetch(`${apiBase}/api/attendance/submissions/${reportId}/reject`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ reason })
-        });
-
-        const data = await response.json();
-
-        if (!data.success) {
-            throw new Error(data.error || 'Failed to reject attendance report');
-        }
-
-        closeModal();
-        alert(`✅ Attendance report rejected successfully!`);
-        await loadInboxAttendance();
-    } catch (err) {
-        console.error('❌ Error rejecting attendance report:', err);
-        alert(`❌ Failed to reject attendance report: ${err.message}`);
     }
 };
 
