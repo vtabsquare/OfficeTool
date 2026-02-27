@@ -7,10 +7,45 @@ Deletes all attendance, login activity, and employee records.
 import requests
 import json
 import os
+import sys
+from dotenv import load_dotenv
+
+# Load environment variables from id.env
+load_dotenv("id.env")
 
 # Config
-BASE_URL = os.getenv("BASE_URL", "https://org5b2f0b0a.crm4.dynamics.com")
+BASE_URL = os.getenv("RESOURCE", "https://org5b2f0b0a.crm4.dynamics.com")
 API_BASE = os.getenv("API_BASE", "http://localhost:5000")
+
+def get_access_token():
+    """Get Dataverse access token using existing system"""
+    import msal
+    
+    TENANT_ID = os.getenv("TENANT_ID")
+    CLIENT_ID = os.getenv("CLIENT_ID")
+    CLIENT_SECRET = os.getenv("CLIENT_SECRET")
+    
+    if not all([TENANT_ID, CLIENT_ID, CLIENT_SECRET]):
+        print("❌ Missing credentials in id.env")
+        print("   Required: TENANT_ID, CLIENT_ID, CLIENT_SECRET")
+        sys.exit(1)
+    
+    AUTHORITY = f"https://login.microsoftonline.com/{TENANT_ID}"
+    SCOPE = [f"{BASE_URL}/.default"]
+    
+    app = msal.ConfidentialClientApplication(
+        client_id=CLIENT_ID,
+        client_credential=CLIENT_SECRET,
+        authority=AUTHORITY
+    )
+    
+    result = app.acquire_token_for_client(scopes=SCOPE)
+    
+    if "access_token" in result:
+        return result["access_token"]
+    else:
+        print(f"❌ Failed to get token: {result}")
+        sys.exit(1)
 
 def delete_all_records(entity_name, primary_field, description):
     """Delete all records from a Dataverse entity"""
@@ -53,16 +88,6 @@ def clear_server_memory():
             print("   ✅ Cleared active_sessions")
     except:
         print("   ⚠️  Could not clear sessions (server not running?)")
-
-def get_access_token():
-    """Get Dataverse access token - replace with your actual token logic"""
-    # This is a placeholder - replace with your actual token retrieval
-    token = os.getenv("DATAVERSE_TOKEN")
-    if not token:
-        print("❌ DATAVERSE_TOKEN environment variable not set")
-        print("   Set it: export DATAVERSE_TOKEN='your_token_here'")
-        exit(1)
-    return token
 
 if __name__ == "__main__":
     print("=== COMPLETE DATA WIPE ===")
