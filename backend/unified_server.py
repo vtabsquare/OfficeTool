@@ -10481,15 +10481,9 @@ def list_attendance_submissions():
                 marker_year = marker_month = None
 
             raw = row.get(FIELD_DURATION_INTEXT) or ''
-            st = 'pending'
-            reason = ''
-            try:
-                import json
-                meta = json.loads(raw)
-                st = (meta.get('status') or 'pending').lower()
-                reason = meta.get('rejection_reason') or ''
-            except Exception:
-                pass
+            meta = _parse_submission_intext(raw)
+            st = (meta.get('status') or 'pending').lower()
+            reason = meta.get('rejection_reason') or ''
 
             if status_filter and st != status_filter:
                 continue
@@ -10518,21 +10512,52 @@ def list_attendance_submissions():
                     from calendar import monthrange
                     first_day = f"{y:04d}-{m:02d}-01"
                     last_day = f"{y:04d}-{m:02d}-{monthrange(y, m)[1]:02d}"
-                    # Attendance: count records with ATD- id within month
+                    # Attendance: fetch all monthly rows, then skip submission marker rows.
                     att_filter = (
                         f"?$filter={FIELD_EMPLOYEE_ID} eq '{emp_for_q}' and "
-                        f"{FIELD_DATE} ge {first_day} and {FIELD_DATE} le {last_day} and "
-                        f"startswith({FIELD_ATTENDANCE_ID_CUSTOM},'ATD-')"
+                        f"{FIELD_DATE} ge '{first_day}' and {FIELD_DATE} le '{last_day}'"
                     )
                     att_url = f"{RESOURCE}/api/data/v9.2/{ATTENDANCE_ENTITY}{att_filter}"
                     print(f"[DEBUG] Querying attendance for {emp_for_q} from {first_day} to {last_day}")
                     print(f"[DEBUG] URL: {att_url}")
                     att_resp = requests.get(att_url, headers=headers)
                     days_checked_in = 0
+                    halfdays = 0
                     if att_resp.status_code == 200:
-                        attendance_records = att_resp.json().get('value', [])
-                        days_checked_in = len(attendance_records)
-                        print(f"[DEBUG] Found {days_checked_in} attendance records")
+                        all_attendance_records = att_resp.json().get('value', [])
+                        attendance_records = []
+                        for record in all_attendance_records:
+                            attendance_id = str(record.get(FIELD_ATTENDANCE_ID_CUSTOM) or '').strip().upper()
+                            if attendance_id.startswith('SUBMIT-'):
+                                continue
+                            attendance_records.append(record)
+
+                        for record in attendance_records:
+                            status_val = ''
+                            if FIELD_STATUS:
+                                status_val = str(record.get(FIELD_STATUS) or '').strip().upper()
+                            if status_val == 'H':
+                                status_val = 'HL'
+
+                            if not status_val:
+                                try:
+                                    duration_hours = float(record.get(FIELD_DURATION) or 0)
+                                except Exception:
+                                    duration_hours = 0.0
+                                if duration_hours >= FULL_DAY_HOURS:
+                                    status_val = 'P'
+                                elif duration_hours >= HALF_DAY_HOURS:
+                                    status_val = 'HL'
+                                else:
+                                    status_val = 'A'
+
+                            if status_val in ('P', 'HL', 'CL', 'SL', 'CO', 'INL'):
+                                days_checked_in += 1
+                            if status_val == 'HL':
+                                halfdays += 1
+
+                        print(f"[DEBUG] Found {len(all_attendance_records)} attendance rows ({len(attendance_records)} non-marker rows)")
+                        print(f"[DEBUG] Computed days_checked_in={days_checked_in}, halfdays={halfdays}")
                         # Debug: print the dates found
                         for record in attendance_records[:3]:  # Print first 3 records
                             print(f"[DEBUG] Record: date={record.get(FIELD_DATE)}, id={record.get(FIELD_ATTENDANCE_ID_CUSTOM)}")
@@ -10543,27 +10568,30 @@ def list_attendance_submissions():
                     # Overlap condition: startdate <= last_day AND enddate >= first_day
                     lv_filter = (
                         f"?$filter=crc6f_employeeid eq '{emp_for_q}' and "
-                        f"crc6f_startdate le {last_day} and crc6f_enddate ge {first_day}"
+                        f"crc6f_startdate le '{last_day}' and crc6f_enddate ge '{first_day}'"
                     )
                     lv_url = f"{RESOURCE}/api/data/v9.2/{LEAVE_ENTITY}{lv_filter}"
                     lv_resp = requests.get(lv_url, headers=headers)
-                    halfdays = 0
+                    leave_halfdays = 0
                     leave_types = {}
                     if lv_resp.status_code == 200:
                         for lr in lv_resp.json().get('value', []):
                             lt = (lr.get('crc6f_leavetype') or '').strip()
+
                             td = lr.get('crc6f_totaldays')
                             try:
                                 td_f = float(td)
                             except Exception:
                                 td_f = 0.0
                             if abs(td_f - 0.5) < 1e-6:
-                                halfdays += 1
+                                leave_halfdays += 1
                             if lt:
                                 leave_types[lt] = leave_types.get(lt, 0.0) + td_f
+                    halfdays += leave_halfdays
                     # Attach
                     item_obj["days_checked_in"] = days_checked_in
                     item_obj["halfdays"] = halfdays
+
                     # Convert leave_types to array for frontend readability
                     item_obj["leave_types"] = [{"type": k, "days": v} for k, v in leave_types.items()]
             except Exception as enrich_err:
