@@ -56,8 +56,12 @@ const getCompOffContentHTML = () => {
     )
     .join("");
 
-  const requestRows = state.compOffRequests
+  // Deduplicate by id to prevent duplicate rows
+  const uniqueRequests = state.compOffRequests
     .filter((req) => req.employeeId === state.user.id)
+    .filter((req, idx, arr) => arr.findIndex(r => r.id === req.id) === idx);
+
+  const requestRows = uniqueRequests
     .map(
       (req) => `
          <tr>
