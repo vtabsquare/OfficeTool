@@ -435,7 +435,7 @@ const renderAttendanceTrackerPage = async (mode) => {
 
         const entryExitDetailsHTML = await buildWeekMonthRows();
 
-        const recentLogDays = todayLogData;
+        const recentLogDays = todayLogDays;
 
         const firstLastOutRows = recentLogDays.map(d => {
             // Use login activity data for today if available
