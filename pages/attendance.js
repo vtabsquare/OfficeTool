@@ -4,7 +4,7 @@ import { fetchMonthlyAttendance } from '../features/attendanceApi.js';
 import { getHolidays } from '../features/holidaysApi.js';
 import { renderModal, closeModal } from '../components/modal.js';
 import { clearCacheByPrefix } from '../features/cache.js';
-import { isAdminUser, isManagerOrAdmin } from '../utils/accessControl.js';
+import { isAdminUser, isManagerOrAdmin, isTeamLeadUser } from '../utils/accessControl.js';
 import { fetchLoginEvents } from '../features/loginSettingsApi.js';
 
 const isManagerUserAttendance = () => {
@@ -13,6 +13,14 @@ const isManagerUserAttendance = () => {
         const desig = String(state.user?.designation || '').toLowerCase();
         return desig.includes('manager');
     } catch { return false; }
+};
+
+const canViewTeamAttendance = () => {
+    try {
+        return isAdminUser() || isManagerUserAttendance() || isTeamLeadUser();
+    } catch {
+        return false;
+    }
 };
 
 // Store holidays globally for the current page
@@ -126,11 +134,11 @@ const renderAttendanceTrackerPage = async (mode) => {
 
         // Get all employee IDs from the attendance data
         const employeeIds = Object.keys(state.attendanceData);
-    const normalizedMeta = employeeIds.reduce((acc, id) => {
-        const entryName = state.attendanceData[id]?.employeeName;
-        if (entryName) acc[id] = entryName;
-        return acc;
-    }, {});
+        const normalizedMeta = employeeIds.reduce((acc, id) => {
+            const entryName = state.attendanceData[id]?.employeeName;
+            if (entryName) acc[id] = entryName;
+            return acc;
+        }, {});
         console.log('📊 Rendering team attendance for employees:', employeeIds);
 
         // Calculate stats from all attendance data for the entire month
@@ -996,14 +1004,14 @@ export const renderMyAttendancePage = async () => {
 
 export const renderTeamAttendancePage = async () => {
     // Check if user has access
-    if (!(isAdminUser() || isManagerUserAttendance())) {
-        console.warn('⚠️ Access denied: Only administrators and managers can view team attendance');
+    if (!canViewTeamAttendance()) {
+        console.warn('⚠️ Access denied: Only administrators, managers, and team leads can view team attendance');
         document.getElementById('app-content').innerHTML = `
             <div class="card access-denied-card">
                 <i class="fa-solid fa-lock access-denied-icon"></i>
                 <h2>Access Denied</h2>
                 <p>You don't have permission to view team attendance.</p>
-                <p>Only administrators and managers can access this page.</p>
+                <p>Only administrators, managers, and team leads can access this page.</p>
                 <button class="btn btn-primary" onclick="window.location.hash='#/attendance-my'" style="margin-top: 16px;">
                     <i class="fa-solid fa-arrow-left"></i> Go to My Attendance
                 </button>

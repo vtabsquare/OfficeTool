@@ -5,6 +5,8 @@ export const getSidebarHTML = () => {
     const isAdmin = isAdminUser();
     const { role } = getUserAccessContext();
     const isL2OrL3 = isL2OrL3User();
+    const canViewTeamTimesheet = isL2OrL3 || role === 'L4';
+    const canViewTeamAttendance = isL2OrL3 || role === 'L4';
     const canManage = isManagerOrAdmin();
     const canViewEmployeeModule = isL2OrL3;
     const canViewSettings = role === 'L3' || isAdmin;
@@ -57,7 +59,7 @@ export const getSidebarHTML = () => {
                 <li><a href="#/time-my-tasks" class="nav-link" data-page="time-my-tasks">My Tasks</a></li>
                 <li><a href="#/time-my-timesheet" class="nav-link" data-page="time-my-timesheet">My Timesheet</a></li>
                 ${
-                  isL2OrL3
+                  canViewTeamTimesheet
                     ? '<li><a href="#/time-team-timesheet" class="nav-link" data-page="time-team-timesheet">My Team Timesheet</a></li>'
                     : ""
                 }
@@ -81,7 +83,7 @@ export const getSidebarHTML = () => {
             <ul class="nav-submenu">
                 <li><a href="#/attendance-my" class="nav-link" data-page="attendance-my">My Attendance</a></li>
                 ${
-                  isL2OrL3
+                  canViewTeamAttendance
                     ? '<li><a href="#/attendance-team" class="nav-link" data-page="attendance-team">My Team Attendance</a></li>'
                     : ""
                 }

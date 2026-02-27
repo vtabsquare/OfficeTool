@@ -235,12 +235,15 @@ const attachTeamTsEvents = () => {
     const canEditTeamTimesheet = () => {
         try {
             const user = state?.user || window.state?.user || {};
+            const role = String(user.role || '').trim().toLowerCase();
+            if (role === 'l4') {
+                return false;
+            }
             const isAdmin = (() => {
                 const empId = String(user.id || '').trim().toUpperCase();
                 const email = String(user.email || '').trim().toLowerCase();
                 return empId === 'EMP001' || email === 'bala.t@vtab.com' || !!user.is_admin;
             })();
-            const role = String(user.role || '').toLowerCase();
             const isManager = !!user.is_manager || role === 'l2' || String(user.designation || '').toLowerCase().includes('manager');
             return isAdmin || isManager;
         } catch { return false; }

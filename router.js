@@ -1,4 +1,4 @@
-import { isAdminUser, isManagerOrAdmin, isL2OrL3User } from './utils/accessControl.js';
+import { isAdminUser, isManagerOrAdmin, isL2OrL3User, isTeamLeadUser } from './utils/accessControl.js';
 
 // Access denied page for non-admin users
 const renderAccessDenied = (redirectPath = '#/') => {
@@ -96,7 +96,13 @@ export const router = async () => {
       return;
     }
   }
-  if (path === '/time-team-timesheet' || path === '/time-clients') {
+  if (path === '/time-team-timesheet') {
+    if (!(isL2OrL3User() || isTeamLeadUser())) {
+      renderAccessDenied("#/time-my-timesheet");
+      return;
+    }
+  }
+  if (path === '/time-clients') {
     if (!isL2OrL3User()) {
       renderAccessDenied("#/time-my-timesheet");
       return;
@@ -118,7 +124,7 @@ export const router = async () => {
     }
   }
   if (path === '/attendance-team') {
-    if (!isL2OrL3User()) {
+    if (!(isL2OrL3User() || isTeamLeadUser())) {
       renderAccessDenied("#/attendance-my");
       return;
     }
