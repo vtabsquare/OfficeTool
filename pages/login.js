@@ -1640,6 +1640,7 @@ export const renderLoginPage = () => {
           JSON.stringify({ authenticated: true, user: state.user })
         );
         localStorage.setItem("role", role);
+        localStorage.setItem("auth_version", "2026-02-27-identity-fix");
       } catch {}
 
       try {
@@ -1819,6 +1820,7 @@ export const renderLoginPage = () => {
                 JSON.stringify({ authenticated: true, user: state.user })
               );
               localStorage.setItem("role", role);
+              localStorage.setItem("auth_version", "2026-02-27-identity-fix");
             } catch {}
             startNotificationPolling();
             setTimeout(() => {

@@ -768,7 +768,19 @@ const setupRealtimeCallClient = () => {
 };
 
 // --- INITIALIZATION ---
+const AUTH_VERSION = '2026-02-27-identity-fix';
 const init = async () => {
+  // Force re-login if auth version changed (e.g. after identity wipe/fix)
+  const storedAuthVersion = localStorage.getItem('auth_version');
+  if (storedAuthVersion !== AUTH_VERSION) {
+    console.warn('[AUTH] Version mismatch — clearing stale session. Old:', storedAuthVersion, 'New:', AUTH_VERSION);
+    localStorage.removeItem('auth');
+    localStorage.removeItem('role');
+    localStorage.removeItem('auth_version');
+    state.authenticated = false;
+    state.user = {};
+  }
+
   // Auth: try restore from localStorage or redirect to standalone login
   try {
     const saved = localStorage.getItem('auth');
