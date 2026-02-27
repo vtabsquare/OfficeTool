@@ -214,9 +214,10 @@ const getProjectAccess = () => {
     const isTeamLead = role === "L4";
     const canManage = isAdmin || isManager;
     const canManageTasks = canManage || isTeamLead;
-    return { role, canManage, canManageTasks, isTeamLead };
+    const canCreateBoards = canManage || isTeamLead;
+    return { role, canManage, canManageTasks, canCreateBoards, isTeamLead };
   } catch {
-    return { role: "L1", canManage: false, canManageTasks: false, isTeamLead: false };
+    return { role: "L1", canManage: false, canManageTasks: false, canCreateBoards: false, isTeamLead: false };
   }
 };
 
@@ -1100,7 +1101,7 @@ const renderProjectDetails = (id, tab) => {
     window.location.hash = "#/time-projects";
     return;
   }
-  const { canManage, canManageTasks } = getProjectAccess();
+  const { canManage, canManageTasks, canCreateBoards } = getProjectAccess();
 
   const tabs = ["details", "contributors", "boards", "crm"];
 
@@ -1157,7 +1158,7 @@ const renderProjectDetails = (id, tab) => {
       ? '<button id="pd-edit" class="btn btn-light" style="background:white; color:var(--primary-color); font-weight:600; border-radius:8px;">EDIT</button>'
       : ""
     }
-      ${tab === "boards" && canManage
+      ${tab === "boards" && canCreateBoards
       ? '<button id="board-add" class="btn btn-light" style="background:white; color:var(--primary-color); font-weight:600; border-radius:8px;">ADD NEW</button>'
       : ""
     }
@@ -1605,7 +1606,7 @@ const renderProjectDetails = (id, tab) => {
   //   }
   // };
   if (tab === "boards") {
-    renderBoardsTab(id, canManage);
+    renderBoardsTab(id, canManage, canCreateBoards);
   }
 
   if (tab === "crm") {
@@ -2410,11 +2411,15 @@ function escapeHtml(s) {
 // =====================
 // 🔷 RENDER BOARDS TAB
 // =====================
-function renderBoardsTab(projectId, canManageOverride = null) {
+function renderBoardsTab(projectId, canManageOverride = null, canCreateBoardsOverride = null) {
   const canManage =
     typeof canManageOverride === "boolean"
       ? canManageOverride
       : getProjectAccess().canManage;
+  const canCreateBoards =
+    typeof canCreateBoardsOverride === "boolean"
+      ? canCreateBoardsOverride
+      : getProjectAccess().canCreateBoards;
   const html = `
    
 
@@ -2441,7 +2446,7 @@ function renderBoardsTab(projectId, canManageOverride = null) {
   // Load data + handle events
   fetchBoards(projectId, canManage);
 
-  if (canManage) {
+  if (canCreateBoards) {
     document
       .getElementById("board-add")
       ?.addEventListener("click", () => showBoardModal(projectId));
@@ -3890,16 +3895,23 @@ async function openTaskDetailsPage(projectId, taskId) {
   // ----------------------------
   // DELETE TASK
   // ----------------------------
-  const { canManage } = getProjectAccess();
-  if (!canManage) {
+  const { canManage, canManageTasks } = getProjectAccess();
+  if (!canManageTasks) {
     document.getElementById("td-edit")?.remove();
     document.getElementById("td-del")?.remove();
     return;
   }
+  if (!canManage) {
+    document.getElementById("td-del")?.remove();
+    return;
+  }
 
-  document.getElementById("td-del").onclick = async () => {
-    await deleteTask(taskId, projectId);
-  };
+  const deleteBtn = document.getElementById("td-del");
+  if (deleteBtn) {
+    deleteBtn.onclick = async () => {
+      await deleteTask(taskId, projectId);
+    };
+  }
 }
 
 // ==========================

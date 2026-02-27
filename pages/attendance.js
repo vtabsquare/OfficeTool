@@ -23,6 +23,15 @@ const canViewTeamAttendance = () => {
     }
 };
 
+const canEditTeamAttendance = () => {
+    try {
+        if (isTeamLeadUser()) return false;
+        return isAdminUser() || isManagerUserAttendance();
+    } catch {
+        return false;
+    }
+};
+
 // Store holidays globally for the current page
 let currentMonthHolidays = [];
 
@@ -302,7 +311,7 @@ const renderAttendanceTrackerPage = async (mode) => {
             }
         }
 
-        const todayLogData = todayDay && myAttendance[todayDay] ? [myAttendance[todayDay]] : [];
+        const todayLogDays = todayDay && myAttendance[todayDay] ? [myAttendance[todayDay]] : [];
 
         const formatLoginTime = (isoValue, fallback = '--:--:--') => {
             if (!isoValue) return fallback;
@@ -589,7 +598,7 @@ const renderAttendanceTrackerPage = async (mode) => {
         exportBtn.addEventListener('click', () => exportTeamAttendanceToCSV(monthName, year));
     }
 
-    if (mode === 'team' && (isAdminUser() || isManagerUserAttendance())) {
+    if (mode === 'team' && canEditTeamAttendance()) {
         const monthIndex = date.getMonth();
         document.querySelectorAll('.team-day-cell').forEach((cell) => {
             cell.addEventListener('click', () => {
