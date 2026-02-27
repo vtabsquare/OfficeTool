@@ -4071,11 +4071,16 @@ const loadInboxLeaves = async () => {
             _raw: r,
         });
 
+        const isCompOffLeaveType = (leaveType) => {
+            const lt = String(leaveType || '').trim().toLowerCase();
+            return lt === 'co' || lt === 'comp off' || lt === 'compoff' || lt === 'compensatory off' || lt.includes('comp');
+        };
+
         if (currentInboxTab === 'awaiting' && canViewTeamQueues) {
             // Fetch all pending leaves for admin
             const pendingLeaves = await fetchPendingLeaves();
             const compPending = compAll.filter(r => (r.status || 'pending').toLowerCase() === 'pending').map(normalizeComp);
-            leaves = (pendingLeaves || []).concat(compPending);
+            leaves = (pendingLeaves || []).filter(l => !isCompOffLeaveType(l.leave_type)).concat(compPending);
             console.log(`📋 Loaded ${leaves.length} pending leave requests`);
         } else if (currentInboxTab === 'completed' && isAdmin) {
             // For admin in completed tab, fetch all employees' completed leaves
@@ -4098,7 +4103,7 @@ const loadInboxLeaves = async () => {
 
                 // Filter for approved/rejected only
                 leaves = allLeaves.filter(l =>
-                    l.status?.toLowerCase() === 'approved' || l.status?.toLowerCase() === 'rejected'
+                    (l.status?.toLowerCase() === 'approved' || l.status?.toLowerCase() === 'rejected') && !isCompOffLeaveType(l.leave_type)
                 ).concat(compCompleted);
 
                 console.log(`📋 Loaded ${leaves.length} completed leaves from all employees`);
@@ -4113,13 +4118,14 @@ const loadInboxLeaves = async () => {
 
             if (currentInboxTab === 'requests') {
                 const compMine = compAll.filter(r => String(r.employeeId).toUpperCase() === String(empId).toUpperCase() && (r.status || 'pending').toLowerCase() === 'pending').map(normalizeComp);
-                leaves = (allLeaves || []).filter(l => l.status?.toLowerCase() === 'pending').concat(compMine);
+                leaves = (allLeaves || []).filter(l => l.status?.toLowerCase() === 'pending' && !isCompOffLeaveType(l.leave_type)).concat(compMine);
             } else if (currentInboxTab === 'completed') {
                 const compMineDone = compAll.filter(r => String(r.employeeId).toUpperCase() === String(empId).toUpperCase() && ['approved', 'rejected'].includes((r.status || '').toLowerCase())).map(normalizeComp);
                 leaves = (allLeaves || []).filter(l =>
-                    l.status?.toLowerCase() === 'approved' || l.status?.toLowerCase() === 'rejected'
+                    (l.status?.toLowerCase() === 'approved' || l.status?.toLowerCase() === 'rejected') && !isCompOffLeaveType(l.leave_type)
                 ).concat(compMineDone);
             }
+
             console.log(`📋 Loaded ${leaves.length} ${currentInboxTab} leaves for user`);
         }
 
