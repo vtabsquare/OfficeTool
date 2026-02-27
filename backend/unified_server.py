@@ -2701,6 +2701,21 @@ def _update_login_record(record_id: str, payload: dict, headers: dict, token: st
             raise base_err
 
 
+@app.route('/api/admin/clear-sessions', methods=['POST'])
+def clear_active_sessions():
+    """Clear all active attendance sessions"""
+    global active_sessions
+    cleared_count = len(active_sessions)
+    active_sessions.clear()
+    print(f"[ADMIN] Cleared {cleared_count} active sessions")
+    return jsonify({"success": True, "cleared": cleared_count})
+
+@app.route('/api/admin/clear-cache', methods=['POST'])
+def clear_frontend_cache():
+    """Signal frontend to clear cache and re-login"""
+    return jsonify({"success": True, "message": "Cache cleared - users must re-login"})
+
+
 # ================== ATTENDANCE ROUTES ==================
 @app.route('/api/checkin', methods=['POST'])
 def checkin():
