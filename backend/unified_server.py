@@ -13343,17 +13343,58 @@ def approve_comp_off_request(request_id):
         token = get_access_token()
         compoff_entity = get_compoff_request_entity_set(token)
 
-        update_record(compoff_entity, request_id, {
-            "crc6f_status": "Approved",
-        })
-        if approved_by:
+        request_row = {}
+        try:
+            request_row = get_record(compoff_entity, request_id) or {}
+        except Exception as read_err:
+            print(f"[WARN] Could not load comp off request before approve ({request_id}): {read_err}")
+
+        prior_status = _compoff_normalize_status(_compoff_pick(request_row, ["crc6f_status", "status"], "Pending"))
+        employee_id = _compoff_normalize_employee_id(_compoff_pick(request_row, ["crc6f_employeeid", "crc6f_empid", "employee_id"], ""))
+        requested_days = _compoff_to_float(_compoff_pick(request_row, ["crc6f_totaldays", "total_days"], 1), 1)
+        if requested_days <= 0:
+            requested_days = 1
+
+        if prior_status != "Approved":
+            update_record(compoff_entity, request_id, {
+                "crc6f_status": "Approved",
+            })
+            if approved_by:
+                try:
+                    update_record(compoff_entity, request_id, {
+                        "crc6f_approvedby": approved_by,
+                    })
+                except Exception as meta_err:
+                    print(f"[WARN] Could not update approved_by for comp off request {request_id}: {meta_err}")
+
+        credit_applied = False
+        credit_error = ""
+        if prior_status != "Approved" and employee_id and requested_days > 0:
             try:
-                update_record(compoff_entity, request_id, {
-                    "crc6f_approvedby": approved_by,
-                })
-            except Exception as meta_err:
-                print(f"[WARN] Could not update approved_by for comp off request {request_id}: {meta_err}")
-        return jsonify({"success": True, "message": "Comp Off request approved", "request_id": request_id}), 200
+                balance_row = _fetch_leave_balance(token, employee_id)
+                if not balance_row:
+                    balance_row = _ensure_leave_balance_row(token, employee_id)
+                # Reuse the existing balance updater; negative decrement means credit.
+                _decrement_leave_balance(token, balance_row, "Compensatory Off", -float(requested_days))
+                credit_applied = True
+            except Exception as credit_err:
+                credit_error = str(credit_err)
+                print(f"[WARN] Failed to credit comp off balance for {employee_id} on approval {request_id}: {credit_err}")
+
+        response_payload = {
+            "success": True,
+            "message": "Comp Off request approved",
+            "request_id": request_id,
+            "employee_id": employee_id,
+            "credited_days": float(requested_days) if credit_applied else 0,
+        }
+        if prior_status == "Approved":
+            response_payload["already_approved"] = True
+            response_payload["message"] = "Comp Off request already approved"
+        elif credit_error:
+            response_payload["warning"] = f"Request approved but comp off balance credit failed: {credit_error}"
+
+        return jsonify(response_payload), 200
     except Exception as e:
         print(f"[ERROR] Failed to approve comp off request {request_id}: {e}")
         traceback.print_exc()

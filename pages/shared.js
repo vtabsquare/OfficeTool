@@ -4502,7 +4502,6 @@ const loadInboxCompOff = async () => {
         `;
     }
 };
-
 const handleCompOffApprove = async (requestId) => {
     if (!confirm('Grant this Comp Off request?')) return;
     try {
@@ -4512,40 +4511,10 @@ const handleCompOffApprove = async (requestId) => {
 
         await approveCompOffRequest(requestId, adminId || state.user?.id || 'EMP001');
 
-        // Credit the comp off balance in the backend
-        const employeeId = req?.employeeId;
-        const reqDays = Number(req?.totalDays || 1) || 1;
-        if (employeeId) {
-            try {
-                // Fetch current comp off balance
-                const balResp = await fetch(`${apiBase}/api/comp-off`);
-                if (balResp.ok) {
-                    const balData = await balResp.json();
-                    const empData = (balData.data || []).find(
-                        e => (e.employee_id || '').toUpperCase() === employeeId.toUpperCase()
-                    );
-                    const currentBalance = empData ? Number(empData.raw_compoff || 0) : 0;
-                    const newBalance = currentBalance + reqDays;
-                    // Update the comp off balance
-                    const updateResp = await fetch(`${apiBase}/api/comp-off/${encodeURIComponent(employeeId)}`, {
-                        method: 'PUT',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ available_compoff: newBalance })
-                    });
-                    if (updateResp.ok) {
-                        console.log(`✅ Comp Off balance updated for ${employeeId}: ${currentBalance} -> ${newBalance}`);
-                    } else {
-                        console.error(`❌ Failed to update comp off balance for ${employeeId}`);
-                    }
-                }
-            } catch (balErr) {
-                console.error('❌ Error updating comp off balance:', balErr);
-            }
-        }
-
         if (req?.employeeId) {
             try { await notifyEmployeeCompOffGranted(req.id || requestId, req.employeeId); } catch { }
         }
+
         alert('✅ Comp Off granted');
         await loadInboxCompOff();
         await updateNotificationBadge();
