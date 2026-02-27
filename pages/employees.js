@@ -852,83 +852,128 @@ export const showEditEmployeeModal = (employeeId) => {
     const previewStyle = hasPhoto ? `style="background-image:url('${existingPhoto}');"` : '';
 
     const formHTML = `
-        <div class="form-grid-2-col">
-            <div class="form-group">
-                <i class="fa-solid fa-user"></i>
-                <input type="text" id="firstName" name="firstName" value="${firstPrefill || ''}" placeholder=" " required>
-                <label for="firstName">First Name</label>
-            </div>
-            <div class="form-group">
-                <i class="fa-solid fa-user"></i>
-                <input type="text" id="lastName" name="lastName" value="${lastPrefill || ''}" placeholder=" ">
-                <label for="lastName">Last Name</label>
-            </div>
-            <div class="form-group">
-                <i class="fa-solid fa-envelope"></i>
-                <input type="email" id="email" name="email" value="${emp.email || ''}" placeholder=" " required>
-                <label for="email">Email</label>
-            </div>
-            <div class="form-group">
-                <i class="fa-solid fa-phone"></i>
-                <input type="tel" id="contactNo" name="contactNo" value="${emp.contactNumber || ''}" placeholder=" " required>
-                <label for="contactNo">Contact No</label>
-            </div>
-            <div class="form-group">
-                <i class="fa-solid fa-map-marker-alt"></i>
-                <input type="text" id="address" name="address" value="${emp.location || ''}" placeholder=" ">
-                <label for="address">Address</label>
-            </div>
-            <div class="form-group">
-                <i class="fa-solid fa-briefcase"></i>
-                <input type="text" id="designation" name="designation" value="${emp.jobTitle || ''}" placeholder=" " required>
-                <label for="designation">Designation</label>
-            </div>
-            <div class="form-group">
-                <i class="fa-solid fa-building"></i>
-                <input type="text" id="department" name="department" value="${emp.department || ''}" placeholder=" ">
-                <label for="department">Department</label>
-            </div>
-            <div class="form-group">
-                <i class="fa-solid fa-circle-check"></i>
-                <select id="status" name="status" required>
-                    <option value="Active" ${emp.status === 'Active' ? 'selected' : ''}>Active</option>
-                    <option value="Inactive" ${emp.status !== 'Active' ? 'selected' : ''}>Inactive</option>
-                </select>
-                <label for="status">Status</label>
-            </div>
-            <div class="form-group">
-                <i class="fa-solid fa-tag"></i>
-                <select id="employeeFlag" name="employeeFlag" required>
-                    <option value="Employee" ${flagPrefill === 'Employee' ? 'selected' : ''}>Employee</option>
-                    <option value="Intern" ${flagPrefill === 'Intern' ? 'selected' : ''}>Intern</option>
-                </select>
-                <label for="employeeFlag">Employee Flag</label>
-            </div>
-        </div>
-        <div class="form-section">
-            <div class="form-section-header">
-                <div>
-                    <p class="form-eyebrow">Profile photo</p>
-                    <h3>Avatar</h3>
+        <div class="modal-form modern-form leave-form">
+            <div class="form-section">
+                <div class="form-section-header">
+                    <div>
+                        <p class="form-eyebrow">Personal info</p>
+                        <h3>Employee details</h3>
+                    </div>
+                    <p class="form-section-copy">Update the core employee information.</p>
                 </div>
-                <p class="form-section-copy">Upload a square image (recommended). Max ~1MB.</p>
-            </div>
-            <div class="form-grid">
-                <div class="form-field" style="grid-column: 1 / -1;">
-                    <div class="profile-photo-upload">
-                        <div id="photo-preview" class="avatar-preview"></div>
-                        <div class="avatar-actions">
-                            <button type="button" class="btn btn-secondary" id="upload-photo-btn"><i class="fa-solid fa-camera"></i> Upload photo</button>
-                            <button type="button" class="btn btn-link" id="remove-photo-btn">Remove</button>
-                            <input type="file" id="photo-input" accept="image/*" hidden>
+                <div class="form-grid two-col">
+                    <div class="form-field with-icon">
+                        <label class="form-label" for="firstName">First Name</label>
+                        <div class="input-wrapper">
+                            <i class="fa-solid fa-user"></i>
+                            <input class="input-control" type="text" id="firstName" name="firstName" value="${firstPrefill || ''}" placeholder="John" required>
                         </div>
-                        <small class="subtle">Accepted: jpg, png. Large images may be slow to save.</small>
+                    </div>
+                    <div class="form-field with-icon">
+                        <label class="form-label" for="lastName">Last Name</label>
+                        <div class="input-wrapper">
+                            <i class="fa-solid fa-user"></i>
+                            <input class="input-control" type="text" id="lastName" name="lastName" value="${lastPrefill || ''}" placeholder="Doe">
+                        </div>
+                    </div>
+                    <div class="form-field with-icon">
+                        <label class="form-label" for="email">Email</label>
+                        <div class="input-wrapper">
+                            <i class="fa-solid fa-envelope"></i>
+                            <input class="input-control" type="email" id="email" name="email" value="${emp.email || ''}" placeholder="name@company.com" required>
+                        </div>
+                    </div>
+                    <div class="form-field with-icon">
+                        <label class="form-label" for="contactNo">Contact No</label>
+                        <div class="input-wrapper">
+                            <i class="fa-solid fa-phone"></i>
+                            <input class="input-control" type="tel" id="contactNo" name="contactNo" value="${emp.contactNumber || ''}" placeholder="(+91) 98765 43210" required>
+                        </div>
+                        <p class="helper-text">Used for emergency contact and communication.</p>
                     </div>
                 </div>
             </div>
+
+            <div class="form-section">
+                <div class="form-section-header">
+                    <div>
+                        <p class="form-eyebrow">Work & contact</p>
+                        <h3>Professional details</h3>
+                    </div>
+                </div>
+                <div class="form-grid two-col">
+                    <div class="form-field with-icon">
+                        <label class="form-label" for="address">Address</label>
+                        <div class="input-wrapper">
+                            <i class="fa-solid fa-location-dot"></i>
+                            <input class="input-control" type="text" id="address" name="address" value="${emp.location || ''}" placeholder="Street, City">
+                        </div>
+                    </div>
+                    <div class="form-field with-icon">
+                        <label class="form-label" for="designation">Designation</label>
+                        <div class="input-wrapper">
+                            <i class="fa-solid fa-briefcase"></i>
+                            <input class="input-control" type="text" id="designation" name="designation" value="${emp.jobTitle || ''}" placeholder="UI Designer" required>
+                        </div>
+                    </div>
+                    <div class="form-field with-icon">
+                        <label class="form-label" for="department">Department</label>
+                        <div class="input-wrapper">
+                            <i class="fa-solid fa-building-user"></i>
+                            <input class="input-control" type="text" id="department" name="department" value="${emp.department || ''}" placeholder="Engineering">
+                        </div>
+                    </div>
+                    <div class="form-field with-icon">
+                        <label class="form-label" for="status">Status</label>
+                        <div class="input-wrapper">
+                            <i class="fa-solid fa-signal"></i>
+                            <select class="input-control" id="status" name="status" required>
+                                <option value="Active" ${emp.status === 'Active' ? 'selected' : ''}>Active</option>
+                                <option value="Inactive" ${emp.status !== 'Active' ? 'selected' : ''}>Inactive</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-field with-icon">
+                        <label class="form-label" for="employeeFlag">Employee Flag</label>
+                        <div class="input-wrapper">
+                            <i class="fa-solid fa-user-tag"></i>
+                            <select class="input-control" id="employeeFlag" name="employeeFlag" required>
+                                <option value="Employee" ${flagPrefill === 'Employee' ? 'selected' : ''}>Employee</option>
+                                <option value="Intern" ${flagPrefill === 'Intern' ? 'selected' : ''}>Intern</option>
+                            </select>
+                        </div>
+                        <p class="helper-text">Flag interns to auto-appear in the Interns module.</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="form-section">
+                <div class="form-section-header">
+                    <div>
+                        <p class="form-eyebrow">Profile photo</p>
+                        <h3>Avatar</h3>
+                    </div>
+                    <p class="form-section-copy">Upload a square image (recommended). Max ~1MB.</p>
+                </div>
+                <div class="form-grid">
+                    <div class="form-field" style="grid-column: 1 / -1;">
+                        <div class="profile-photo-upload">
+                            <div id="photo-preview" class="${previewClass}" ${previewStyle}></div>
+                            <div class="avatar-actions">
+                                <button type="button" class="btn btn-secondary" id="upload-photo-btn"><i class="fa-solid fa-camera"></i> Upload photo</button>
+                                <button type="button" class="btn btn-link" id="remove-photo-btn">Remove</button>
+                                <input type="file" id="photo-input" accept="image/*" hidden>
+                            </div>
+                            <small class="subtle">Accepted: jpg, png. Large images may be slow to save.</small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <input type="hidden" id="editEmployeeId" name="editEmployeeId" value="${emp.id}">
         </div>
-        <input type="hidden" id="editEmployeeId" name="editEmployeeId" value="${emp.id}">
     `;
+
     renderModal('Edit Employee', formHTML, 'update-employee-btn');
     setTimeout(() => initPhotoUploader(existingPhoto || null), 50);
 };
