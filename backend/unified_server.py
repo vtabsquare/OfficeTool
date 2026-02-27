@@ -7767,6 +7767,9 @@ def create_employee():
                 traceback.print_exc()
                 # Don't fail employee creation if leave balance creation fails
         
+        # Invalidate employee cache so /api/employees/all returns fresh data
+        _employee_cache["data"] = None
+        _employee_cache["timestamp"] = 0.0
         return jsonify({"success": True, "employee": created, "entitySet": entity_set}), 201
     except Exception as e:
         print(f"   [ERROR] Error creating employee: {str(e)}")
@@ -8109,6 +8112,10 @@ def update_intern(intern_id):
         except Exception as conv_err:
             print(f"[WARN] Auto-convert intern->employee failed for {intern_id}: {conv_err}")
 
+        # Invalidate employee cache so /api/employees/all returns fresh data
+        _employee_cache["data"] = None
+        _employee_cache["timestamp"] = 0.0
+        
         return jsonify({"success": True, "intern": formatted}), 200
     except Exception as e:
         print(f"[ERROR] update_intern failed: {e}")
@@ -8158,6 +8165,10 @@ def create_intern():
         except Exception as fetch_err:
             print(f"[WARN] Created intern but failed to refetch details: {fetch_err}")
 
+        # Invalidate employee cache so /api/employees/all returns fresh data
+        _employee_cache["data"] = None
+        _employee_cache["timestamp"] = 0.0
+        
         return jsonify({
             "success": True,
             "intern": _format_intern_record(record) if record else None
@@ -8414,6 +8425,11 @@ def update_employee_api(employee_id):
             return jsonify({"success": False, "error": "Unable to resolve record ID for update"}), 500
 
         update_record(entity_set, record_id, payload)
+        
+        # Invalidate employee cache so /api/employees/all returns fresh data
+        _employee_cache["data"] = None
+        _employee_cache["timestamp"] = 0.0
+        
         return jsonify({
             "success": True,
             "employee": {
@@ -8466,6 +8482,9 @@ def delete_employee_api(employee_id):
             return jsonify({"success": False, "error": "Unable to resolve record ID for deletion"}), 500
 
         delete_record(entity_set, record_id)
+        # Invalidate employee cache so /api/employees/all returns fresh data
+        _employee_cache["data"] = None
+        _employee_cache["timestamp"] = 0.0
         return jsonify({"success": True})
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
