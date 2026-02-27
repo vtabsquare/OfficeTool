@@ -206,7 +206,16 @@ const nameFilter = (arr, q) => {
     if (!s) return arr;
     return arr.filter(x => x.id.toLowerCase().includes(s) || (x.name || '').toLowerCase().includes(s));
 };
+const canEditTeamTimesheet = () => {
+    try {
+        return isAdminUser();
+    } catch {
+        return false;
+    }
+};
+
 const attachTeamTsEvents = () => {
+
     const prev = document.getElementById('tt-prev');
     const next = document.getElementById('tt-next');
     if (prev) prev.onclick = () => { const d = new Date(window.__teamTsMonth || new Date()); d.setMonth(d.getMonth() - 1); window.__teamTsMonth = d; renderTeamTimesheetPage(); };
@@ -231,26 +240,10 @@ const attachTeamTsEvents = () => {
             }, 250); 
         });
     }
-    // Allow only L2/L3 (managers/admins) to edit team timesheet cells
-    const canEditTeamTimesheet = () => {
-        try {
-            const user = state?.user || window.state?.user || {};
-            const role = String(user.role || '').trim().toLowerCase();
-            if (role === 'l4') {
-                return false;
-            }
-            const isAdmin = (() => {
-                const empId = String(user.id || '').trim().toUpperCase();
-                const email = String(user.email || '').trim().toLowerCase();
-                return empId === 'EMP001' || email === 'bala.t@vtab.com' || !!user.is_admin;
-            })();
-            const isManager = !!user.is_manager || role === 'l2' || String(user.designation || '').toLowerCase().includes('manager');
-            return isAdmin || isManager;
-        } catch { return false; }
-    };
     if (canEditTeamTimesheet()) {
         document.querySelectorAll('.tt-cell.worked').forEach(cell => {
             cell.addEventListener('click', () => {
+
                 const empId = cell.getAttribute('data-emp');
                 const dateStr = cell.getAttribute('data-date');
                 if (!empId || !dateStr) return;
@@ -261,9 +254,15 @@ const attachTeamTsEvents = () => {
 };
 
 const openTeamTsEditModal = async (employeeId, workDate) => {
+    if (!canEditTeamTimesheet()) {
+        showToast('You have view-only access to My Team Timesheet.', 'warning');
+        return;
+    }
+
     const API = `${apiBase}/api`;
     const empId = String(employeeId || '').toUpperCase();
     if (!empId || !workDate) return;
+
     let logs = [];
     try {
         const url = `${API}/time-tracker/logs?employee_id=${encodeURIComponent(empId)}&start_date=${workDate}&end_date=${workDate}`;
@@ -332,9 +331,14 @@ const openTeamTsEditModal = async (employeeId, workDate) => {
         if (!saveBtn) return;
         saveBtn.addEventListener('click', async (e) => {
             e.preventDefault();
+            if (!canEditTeamTimesheet()) {
+                showToast('You have view-only access to My Team Timesheet.', 'warning');
+                return;
+            }
             try {
                 const role = ((() => { const u = state?.user || window.state?.user || {}; const isAdm = !!u.is_admin || String(u.id || '').toUpperCase() === 'EMP001'; return isAdm ? 'l3' : 'l2'; })());
                 const user = state?.user || window.state?.user || {};
+
                 const editorId = String(user.id || '').toUpperCase();
                 const timeInputs = Array.from(document.querySelectorAll('.tt-edit-time'));
                 for (const inp of timeInputs) {

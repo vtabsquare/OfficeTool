@@ -25,8 +25,7 @@ const canViewTeamAttendance = () => {
 
 const canEditTeamAttendance = () => {
     try {
-        if (isTeamLeadUser()) return false;
-        return isAdminUser() || isManagerUserAttendance();
+        return isAdminUser();
     } catch {
         return false;
     }
