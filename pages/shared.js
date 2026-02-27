@@ -4432,9 +4432,11 @@ const loadInboxCompOff = async () => {
             }
         }
 
-        items.sort((a, b) => new Date(b.appliedDate || b.timestamp || 0) - new Date(a.appliedDate || a.timestamp || 0));
+        // Deduplicate by id to prevent duplicate cards
+        const uniqueItems = items.filter((req, idx, arr) => arr.findIndex(r => r.id === req.id) === idx);
+        uniqueItems.sort((a, b) => new Date(b.appliedDate || b.timestamp || 0) - new Date(a.appliedDate || a.timestamp || 0));
 
-        if (items.length === 0) {
+        if (uniqueItems.length === 0) {
             listContainer.innerHTML = `
                 <div class="placeholder-text">
                     <i class="fa-solid fa-envelope-open fa-3x" style="color:#ddd; margin-bottom: 1rem;"></i>
@@ -4444,7 +4446,7 @@ const loadInboxCompOff = async () => {
             return;
         }
 
-        const cards = items.map(req => {
+        const cards = uniqueItems.map(req => {
             const status = req.status || 'Pending';
             const statusClass = status.toLowerCase();
             const showActions = isAdmin && currentInboxTab === 'awaiting';
