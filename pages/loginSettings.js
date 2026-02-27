@@ -33,6 +33,15 @@ const formatLastLogin = (value) => {
     }
 };
 
+const formatAccessLevelLabel = (level) => {
+    const normalized = String(level || '').trim().toUpperCase();
+    if (normalized === 'L1') return 'User';
+    if (normalized === 'L2') return 'Manager';
+    if (normalized === 'L3') return 'Admin';
+    if (normalized === 'L4') return 'Team Lead';
+    return level || '';
+};
+
 const formatTime = (isoString) => {
     if (!isoString) return '-';
     try {
@@ -371,7 +380,7 @@ const buildTableHTML = (accounts = []) => {
         <tr>
             <td>${acc.username || ''}</td>
             <td>${acc.employeeName || ''}</td>
-            <td>${acc.accessLevel || ''}</td>
+            <td>${formatAccessLevelLabel(acc.accessLevel)}</td>
             <td>${formatLastLogin(acc.lastLogin)}</td>
             <td>${typeof acc.loginAttempts === 'number' ? acc.loginAttempts : ''}</td>
             <td>
