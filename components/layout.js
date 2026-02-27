@@ -8,7 +8,8 @@ export const getSidebarHTML = () => {
     const canViewTeamTimesheet = isL2OrL3 || role === 'L4';
     const canViewTeamAttendance = isL2OrL3 || role === 'L4';
     const canManage = isManagerOrAdmin();
-    const canViewEmployeeModule = isL2OrL3;
+    const canViewEmployeeModule = isL2OrL3 || role === 'L4';
+    const canViewInternsModule = isL2OrL3;
     const canViewSettings = role === 'L3' || isAdmin;
     
     return `
@@ -34,7 +35,7 @@ export const getSidebarHTML = () => {
             </a>
             <ul class="nav-submenu">
                 <li><a href="#/employees" class="nav-link" data-page="employees">Employees</a></li>
-                <li><a href="#/interns" class="nav-link" data-page="interns">Interns</a></li>
+                ${canViewInternsModule ? '<li><a href="#/interns" class="nav-link" data-page="interns">Interns</a></li>' : ''}
                 <li><a href="#/team-management" class="nav-link" data-page="team-management">Team Management</a></li>
             </ul>
         </li>

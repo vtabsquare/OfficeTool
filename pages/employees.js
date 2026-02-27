@@ -2,6 +2,7 @@ import { state } from '../state.js';
 import { getPageContentHTML } from '../utils.js';
 import { renderModal, closeModal } from '../components/modal.js';
 import { listEmployees, listAllEmployees, createEmployee, updateEmployee, deleteEmployee } from '../features/employeeApi.js';
+import { getUserAccessContext } from '../utils/accessControl.js';
 
 import { cachedFetch, TTL, clearCacheByPrefix } from '../features/cache.js';
 import { API_BASE_URL } from '../config.js';
@@ -46,6 +47,23 @@ const compareEmployeeIdAsc = (a, b) => {
     if (!idA) return 1;
     if (!idB) return -1;
     return idA.localeCompare(idB, undefined, { numeric: true, sensitivity: 'base' });
+};
+
+const getEmployeeAccess = () => {
+    try {
+        const { role, isAdmin, isManager } = getUserAccessContext();
+        const isTeamLead = role === 'L4';
+        const canManageEmployees = isAdmin || isManager;
+        return { isTeamLead, canManageEmployees };
+    } catch {
+        return { isTeamLead: false, canManageEmployees: false };
+    }
+};
+
+const isInternRecord = (employee = {}) => {
+    const flag = String(employee.employeeFlag || '').trim().toLowerCase();
+    const designation = String(employee.jobTitle || '').trim().toLowerCase();
+    return flag === 'intern' || designation.includes('intern');
 };
 
 const applyHeaderAvatar = () => {
@@ -119,6 +137,7 @@ const initPhotoUploader = (initialPhoto = null) => {
 
 export const renderEmployeesPage = async (filter = '', page = empCurrentPage) => {
     const isTableMode = employeeViewMode === 'table';
+    const { isTeamLead, canManageEmployees } = getEmployeeAccess();
     const controls = `
         <div class="employee-controls">
             <div class="employee-view-toggle" aria-label="Toggle employees view">
@@ -130,6 +149,7 @@ export const renderEmployeesPage = async (filter = '', page = empCurrentPage) =>
                 </button>
             </div>
             <div class="employee-control-actions">
+                ${canManageEmployees ? `
                 <button id="add-employee-btn" class="btn btn-primary"><i class="fa-solid fa-plus"></i> ADD NEW</button>
                 <div class="dropdown">
                     <button id="bulk-actions-btn" class="btn btn-secondary"><i class="fa-solid fa-ellipsis-vertical"></i> BULK ACTIONS</button>
@@ -138,6 +158,7 @@ export const renderEmployeesPage = async (filter = '', page = empCurrentPage) =>
                         <button id="bulk-delete-btn" class="dropdown-item"><i class="fa-solid fa-trash"></i> Bulk Delete</button>
                     </div>
                 </div>
+                ` : '<span class="subtle" style="font-size: 0.85rem;">View-only access</span>'}
             </div>
         </div>
     `;
@@ -250,7 +271,8 @@ export const renderEmployeesPage = async (filter = '', page = empCurrentPage) =>
     }
 
     const isSearching = !!(filter && filter.trim());
-    const sortedEmployees = state.employees
+    const visibleEmployees = (state.employees || []).filter((e) => !isTeamLead || !isInternRecord(e));
+    const sortedEmployees = visibleEmployees
         .filter(e =>
             e.name.toLowerCase().includes(filter.toLowerCase()) ||
             e.id.toLowerCase().includes(filter.toLowerCase())
@@ -330,10 +352,10 @@ export const renderEmployeesPage = async (filter = '', page = empCurrentPage) =>
                     ${phoneRow}
                     ${locationRow}
                 </div>
-                <div class="employee-card-footer">
+                ${canManageEmployees ? `<div class="employee-card-footer">
                     <button class="icon-btn emp-edit-btn" title="Edit" data-id="${e.id}"><i class="fa-solid fa-pen-to-square"></i></button>
                     <button class="icon-btn emp-delete-btn" title="Delete" data-id="${e.id}"><i class="fa-solid fa-trash"></i></button>
-                </div>
+                </div>` : ''}
             </div>
         `;
     }).join('');
@@ -350,10 +372,10 @@ export const renderEmployeesPage = async (filter = '', page = empCurrentPage) =>
             <td>${e.department || ''}</td>
             <td><span class="status-badge ${e.status ? e.status.toLowerCase() : 'inactive'}">${e.status || 'Inactive'}</span></td>
             <td>
-                <div class="table-actions">
+                ${canManageEmployees ? `<div class="table-actions">
                     <button class="icon-btn emp-edit-btn" title="Edit" data-id="${e.id}"><i class="fa-solid fa-pen-to-square"></i></button>
                     <button class="icon-btn emp-delete-btn" title="Delete" data-id="${e.id}"><i class="fa-solid fa-trash"></i></button>
-                </div>
+                </div>` : '<span class="subtle">View only</span>'}
             </td>
         </tr>
     `).join('');
@@ -403,7 +425,7 @@ export const renderEmployeesPage = async (filter = '', page = empCurrentPage) =>
 
     // After render, wire up view toggles and search
     const addBtn = document.getElementById('add-employee-btn');
-    if (addBtn) {
+    if (canManageEmployees && addBtn) {
         addBtn.onclick = (e) => {
             e.preventDefault();
             try { showAddEmployeeModal(); } catch (err) { console.error('Add Employee modal failed:', err); }
@@ -508,6 +530,10 @@ const parseCSVText = (text) => {
 
 // Full-page view for Bulk Delete
 export const renderBulkDeletePage = async () => {
+    if (!getEmployeeAccess().canManageEmployees) {
+        window.location.hash = '#/employees';
+        return;
+    }
 
     bulkDeleteFilter = '';
     bulkDeleteSelected = new Set();
@@ -606,6 +632,10 @@ export const renderBulkDeletePage = async () => {
 };
 // Full-page view for Bulk Upload
 export const renderBulkUploadPage = async () => {
+    if (!getEmployeeAccess().canManageEmployees) {
+        window.location.hash = '#/employees';
+        return;
+    }
     parsedEmployees = [];
     const controls = `
         <div class="employee-controls">
@@ -647,6 +677,10 @@ export const renderBulkUploadPage = async () => {
 };
 
 export const showAddEmployeeModal = () => {
+    if (!getEmployeeAccess().canManageEmployees) {
+        alert('You have view-only access to employees.');
+        return;
+    }
     photoDraft = { dataUrl: null, cleared: false };
     initialPhotoRef = null;
     const previewClass = 'avatar-preview';
@@ -777,6 +811,8 @@ export const showAddEmployeeModal = () => {
                     </div>
                 </div>
             </div>
+
+            <input type="hidden" id="editEmployeeId" name="editEmployeeId" value="">
         </div>
     `;
     renderModal('Add New Employee', formHTML, 'save-employee-btn');
@@ -785,6 +821,10 @@ export const showAddEmployeeModal = () => {
 
 export const handleAddEmployee = async (e) => {
     e.preventDefault();
+    if (!getEmployeeAccess().canManageEmployees) {
+        alert('You have view-only access to employees.');
+        return;
+    }
 
     try {
         // Fetch the next employee ID from backend
@@ -836,6 +876,10 @@ export const handleAddEmployee = async (e) => {
 };
 
 export const showEditEmployeeModal = (employeeId) => {
+    if (!getEmployeeAccess().canManageEmployees) {
+        alert('You have view-only access to employees.');
+        return;
+    }
     const emp = (state.employees || []).find(x => x.id === employeeId);
     if (!emp) {
         alert('Employee not found');
@@ -980,6 +1024,10 @@ export const showEditEmployeeModal = (employeeId) => {
 
 export const handleUpdateEmployee = (e) => {
     e.preventDefault();
+    if (!getEmployeeAccess().canManageEmployees) {
+        alert('You have view-only access to employees.');
+        return;
+    }
     const employee_id = document.getElementById('editEmployeeId').value;
     const payload = {
         employee_id,
@@ -1041,6 +1089,10 @@ export const handleUpdateEmployee = (e) => {
 };
 
 export const handleDeleteEmployee = (employeeId) => {
+    if (!getEmployeeAccess().canManageEmployees) {
+        alert('You have view-only access to employees.');
+        return;
+    }
     if (!employeeId) return;
     const confirmed = confirm('Are you sure you want to delete this employee?');
     if (!confirmed) return;
@@ -1057,6 +1109,10 @@ export const handleDeleteEmployee = (employeeId) => {
 };
 
 export const showBulkUploadModal = () => {
+    if (!getEmployeeAccess().canManageEmployees) {
+        alert('You have view-only access to employees.');
+        return;
+    }
     const formHTML = `
         <div class="form-group bulk-upload-field">
             <input type="file" id="csvFile" accept=".csv" required>
@@ -1218,6 +1274,10 @@ export const handleCSVPreview = (e) => {
 
 export const handleBulkUpload = async (e) => {
     e.preventDefault();
+    if (!getEmployeeAccess().canManageEmployees) {
+        alert('You have view-only access to employees.');
+        return;
+    }
 
     if (!parsedEmployees || parsedEmployees.length === 0) {
         const fileInput = document.getElementById('csvFile');
@@ -1371,6 +1431,10 @@ Please remove or update these employees before uploading.`);
 };
 
 export const showBulkDeleteModal = () => {
+    if (!getEmployeeAccess().canManageEmployees) {
+        alert('You have view-only access to employees.');
+        return;
+    }
     bulkDeleteFilter = '';
     bulkDeleteSelected = new Set();
     bulkDeleteSortType = 'id';
@@ -1729,6 +1793,10 @@ export const handleBulkDeleteRowToggle = (e) => {
 
 export const handleBulkDeleteConfirm = async (e) => {
     e.preventDefault();
+    if (!getEmployeeAccess().canManageEmployees) {
+        alert('You have view-only access to employees.');
+        return;
+    }
     const ids = Array.from(bulkDeleteSelected);
     if (ids.length === 0) {
         alert('Select at least one employee');

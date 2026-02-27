@@ -3,6 +3,7 @@ import { getPageContentHTML } from '../utils.js';
 import { renderModal, closeModal } from '../components/modal.js';
 import { showToast } from '../components/toast.js';
 import { listEmployees } from '../features/employeeApi.js';
+import { getUserAccessContext } from '../utils/accessControl.js';
 import {
   listHierarchy,
   createHierarchyMapping,
@@ -64,6 +65,15 @@ const isManagerEmployee = (emp = {}) => {
   return d.includes('manager');
 };
 
+const canManageTeamHierarchy = () => {
+  try {
+    const { isAdmin, isManager } = getUserAccessContext();
+    return isAdmin || isManager;
+  } catch {
+    return false;
+  }
+};
+
 const getManagerOptionsHTML = (selected = '') => {
   const managers = cachedEmployees.filter(isManagerEmployee);
   const options = managers
@@ -92,7 +102,7 @@ const getDepartmentOptionsHTML = (selected = '') => {
   return `<option value="">All Departments</option>${options}`;
 };
 
-const buildTableRows = (items = []) => {
+const buildTableRows = (items = [], canManageHierarchy = true) => {
   if (!items.length) {
     return `<tr><td colspan="5" class="placeholder-text">No hierarchy mappings found.</td></tr>`;
   }
@@ -103,20 +113,22 @@ const buildTableRows = (items = []) => {
       <td>${item.managerId || '-'}</td>
       <td>${item.managerName || '-'}</td>
       <td class="actions-cell" style="text-align: center; vertical-align: middle;">
-        <div style="display: inline-flex; gap: 4px; align-items: center; justify-content: center;">
+        ${canManageHierarchy
+          ? `<div style="display: inline-flex; gap: 4px; align-items: center; justify-content: center;">
           <button class="icon-btn tm-edit-btn" title="Edit" data-id="${item.id}" data-employee="${item.employeeId || ''}">
             <i class="fa-solid fa-pen-to-square"></i>
           </button>
           <button class="icon-btn tm-delete-btn" title="Delete" data-id="${item.id}">
             <i class="fa-solid fa-trash"></i>
           </button>
-        </div>
+        </div>`
+          : '<span class="subtle">View only</span>'}
       </td>
     </tr>
   `).join('');
 };
 
-const buildGroupedView = (groups = []) => {
+const buildGroupedView = (groups = [], canManageHierarchy = true) => {
   if (!groups.length) {
     return `<div class="placeholder-text">No manager groups found.</div>`;
   }
@@ -126,14 +138,16 @@ const buildGroupedView = (groups = []) => {
         <td>${member.employeeId || '-'}</td>
         <td>${member.employeeName || '-'}</td>
         <td class="actions-cell" style="text-align: center; vertical-align: middle;">
-          <div style="display: inline-flex; gap: 4px; align-items: center; justify-content: center;">
+          ${canManageHierarchy
+            ? `<div style="display: inline-flex; gap: 4px; align-items: center; justify-content: center;">
             <button class="icon-btn tm-edit-btn" title="Edit" data-id="${member.id}" data-employee="${member.employeeId || ''}">
               <i class="fa-solid fa-pen-to-square"></i>
             </button>
             <button class="icon-btn tm-delete-btn" title="Delete" data-id="${member.id}">
               <i class="fa-solid fa-trash"></i>
             </button>
-          </div>
+          </div>`
+            : '<span class="subtle">View only</span>'}
         </td>
       </tr>
     `).join('');
@@ -412,6 +426,10 @@ const buildPagination = (page, total, pageSize) => {
 };
 
 const renderAssignEmployeeModal = () => {
+  if (!canManageTeamHierarchy()) {
+    showToast('You have view-only access to team management.', 'warning');
+    return;
+  }
   const employeeOptions = getAssignOptionsHTML();
   const managerOptions = getAssignManagerOptionsHTML();
 
@@ -460,6 +478,10 @@ const renderAssignEmployeeModal = () => {
 };
 
 const renderEditManagerModal = (recordId, employeeId, currentManagerId = '') => {
+  if (!canManageTeamHierarchy()) {
+    showToast('You have view-only access to team management.', 'warning');
+    return;
+  }
   const managerOptions = getAssignManagerOptionsHTML(currentManagerId, employeeId);
   const modalBody = `
     <div class="modal-form modern-form team-modal">
@@ -502,6 +524,10 @@ const renderEditManagerModal = (recordId, employeeId, currentManagerId = '') => 
 
 const handleAssignSubmit = async (event) => {
   event.preventDefault();
+  if (!canManageTeamHierarchy()) {
+    showToast('You have view-only access to team management.', 'warning');
+    return;
+  }
   const employeeId = document.getElementById('assign-employee')?.value?.trim();
   const managerId = document.getElementById('assign-manager')?.value?.trim();
 
@@ -529,6 +555,10 @@ const handleAssignSubmit = async (event) => {
 
 const handleEditSubmit = async (event, recordId, employeeId) => {
   event.preventDefault();
+  if (!canManageTeamHierarchy()) {
+    showToast('You have view-only access to team management.', 'warning');
+    return;
+  }
   const managerId = document.getElementById('edit-manager')?.value?.trim();
   if (!managerId) {
     showToast('Please select a manager', 'warning');
@@ -552,6 +582,10 @@ const handleEditSubmit = async (event, recordId, employeeId) => {
 };
 
 const handleDelete = async (recordId) => {
+  if (!canManageTeamHierarchy()) {
+    showToast('You have view-only access to team management.', 'warning');
+    return;
+  }
   const confirmed = confirm('Are you sure you want to remove this relationship?');
   if (!confirmed) return;
   try {
@@ -565,7 +599,7 @@ const handleDelete = async (recordId) => {
   }
 };
 
-const attachEventHandlers = () => {
+const attachEventHandlers = (canManageHierarchy = true) => {
   const searchInput = document.getElementById('tm-search');
   const managerFilter = document.getElementById('tm-filter-manager');
   const departmentFilter = document.getElementById('tm-filter-department');
@@ -627,7 +661,7 @@ const attachEventHandlers = () => {
     });
   }
 
-  if (assignBtn) {
+  if (canManageHierarchy && assignBtn) {
     assignBtn.addEventListener('click', () => {
       renderAssignEmployeeModal();
     });
@@ -639,27 +673,29 @@ const attachEventHandlers = () => {
     });
   }
 
-  if (state.teamHierarchyFilters.viewMode === 'tree') {
+  if (canManageHierarchy && state.teamHierarchyFilters.viewMode === 'tree') {
     setupTreeDragAndDrop();
   }
 
-  document.querySelectorAll('.tm-edit-btn').forEach(btn => {
-    btn.addEventListener('click', (event) => {
-      const recordId = event.currentTarget.dataset.id;
-      const employeeId = event.currentTarget.dataset.employee;
-      const currentRow = event.currentTarget.closest('tr');
-      const managerCell = currentRow?.querySelector('td:nth-child(3)');
-      const currentManagerId = managerCell?.textContent?.trim();
-      renderEditManagerModal(recordId, employeeId, currentManagerId);
+  if (canManageHierarchy) {
+    document.querySelectorAll('.tm-edit-btn').forEach(btn => {
+      btn.addEventListener('click', (event) => {
+        const recordId = event.currentTarget.dataset.id;
+        const employeeId = event.currentTarget.dataset.employee;
+        const currentRow = event.currentTarget.closest('tr');
+        const managerCell = currentRow?.querySelector('td:nth-child(3)');
+        const currentManagerId = managerCell?.textContent?.trim();
+        renderEditManagerModal(recordId, employeeId, currentManagerId);
+      });
     });
-  });
 
-  document.querySelectorAll('.tm-delete-btn').forEach(btn => {
-    btn.addEventListener('click', (event) => {
-      const recordId = event.currentTarget.dataset.id;
-      handleDelete(recordId);
+    document.querySelectorAll('.tm-delete-btn').forEach(btn => {
+      btn.addEventListener('click', (event) => {
+        const recordId = event.currentTarget.dataset.id;
+        handleDelete(recordId);
+      });
     });
-  });
+  }
 
   const prevBtn = document.getElementById('tm-prev');
   const nextBtn = document.getElementById('tm-next');
@@ -682,6 +718,7 @@ export const renderTeamManagementPage = async (page = 1) => {
     await ensureEmployeesCache();
     const filters = state.teamHierarchyFilters || {};
     const viewMode = filters.viewMode || 'table';
+    const canManageHierarchy = canManageTeamHierarchy();
 
     const query = {
       page,
@@ -762,7 +799,7 @@ export const renderTeamManagementPage = async (page = 1) => {
 
     const controls = `
       <div class="team-management-controls">
-        <button id="tm-assign-btn" class="btn btn-primary"><i class="fa-solid fa-user-plus"></i> Assign Employee</button>
+        ${canManageHierarchy ? '<button id="tm-assign-btn" class="btn btn-primary"><i class="fa-solid fa-user-plus"></i> Assign Employee</button>' : '<span class="subtle" style="font-size:0.85rem;">View-only access</span>'}
         <button id="tm-refresh-btn" class="btn btn-secondary"><i class="fa-solid fa-rotate"></i> Refresh</button>
       </div>
     `;
@@ -819,7 +856,7 @@ export const renderTeamManagementPage = async (page = 1) => {
       bodyContent = `
         ${filtersHtml}
         <div class="team-groups-wrapper">
-          ${buildGroupedView(state.teamHierarchy.groups)}
+          ${buildGroupedView(state.teamHierarchy.groups, canManageHierarchy)}
         </div>
       `;
     } else {
@@ -836,7 +873,7 @@ export const renderTeamManagementPage = async (page = 1) => {
               </tr>
             </thead>
             <tbody>
-              ${buildTableRows(state.teamHierarchy.items)}
+              ${buildTableRows(state.teamHierarchy.items, canManageHierarchy)}
             </tbody>
           </table>
         </div>
@@ -1289,7 +1326,7 @@ export const renderTeamManagementPage = async (page = 1) => {
     `;
 
     document.getElementById('app-content').innerHTML = getPageContentHTML('Team Management', content, controls);
-    attachEventHandlers();
+    attachEventHandlers(canManageHierarchy);
   } catch (err) {
     console.error('Failed to render team management page:', err);
     const errorHTML = `

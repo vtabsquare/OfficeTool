@@ -66,6 +66,10 @@ export const router = async () => {
 
   // Special-case intern detail
   if (path.startsWith('/interns/')) {
+    if (!isManagerOrAdmin()) {
+      renderAccessDenied("#/employees");
+      return;
+    }
     const internId = decodeURIComponent(path.substring('/interns/'.length));
     const renderInternDetailPage = await loaders['/interns/detail']();
     await renderInternDetailPage(internId);
@@ -90,7 +94,19 @@ export const router = async () => {
   }
 
   // Access checks
-  if (path.startsWith('/employees') || path === '/interns' || path === '/team-management') {
+  if (path.startsWith('/employees') || path === '/team-management') {
+    if (!(isManagerOrAdmin() || isTeamLeadUser())) {
+      renderAccessDenied("#/");
+      return;
+    }
+  }
+  if (path === '/employees/bulk-upload' || path === '/employees/bulk-delete') {
+    if (!isManagerOrAdmin()) {
+      renderAccessDenied("#/employees");
+      return;
+    }
+  }
+  if (path === '/interns') {
     if (!isManagerOrAdmin()) {
       renderAccessDenied("#/");
       return;
