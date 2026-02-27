@@ -684,12 +684,12 @@ export const showAddEmployeeModal = () => {
                         </div>
                     </div>
                     <div class="form-field with-icon">
-                        <label class="form-label" for="contactNo">Address</label>
+                        <label class="form-label" for="contactNo">Contact No</label>
                         <div class="input-wrapper">
-                            <i class="fa-solid fa-location-dot"></i>
-                            <input class="input-control" type="tel" id="contactNo" name="contactNo" placeholder="Street, City" required>
+                            <i class="fa-solid fa-phone"></i>
+                            <input class="input-control" type="tel" id="contactNo" name="contactNo" placeholder="(+91) 98765 43210" required>
                         </div>
-                        <p class="helper-text">Used for mailing details and ID proof.</p>
+                        <p class="helper-text">Used for emergency contact and communication.</p>
                     </div>
                 </div>
             </div>
@@ -703,10 +703,10 @@ export const showAddEmployeeModal = () => {
                 </div>
                 <div class="form-grid two-col">
                     <div class="form-field with-icon">
-                        <label class="form-label" for="address">Contact No</label>
+                        <label class="form-label" for="address">Address</label>
                         <div class="input-wrapper">
-                            <i class="fa-solid fa-phone"></i>
-                            <input class="input-control" type="text" id="address" name="address" placeholder="(+91) 98765 43210">
+                            <i class="fa-solid fa-location-dot"></i>
+                            <input class="input-control" type="text" id="address" name="address" placeholder="Street, City">
                         </div>
                     </div>
                     <div class="form-field with-icon">
@@ -869,14 +869,14 @@ export const showEditEmployeeModal = (employeeId) => {
                 <label for="email">Email</label>
             </div>
             <div class="form-group">
-                <i class="fa-solid fa-map-marker-alt"></i>
+                <i class="fa-solid fa-phone"></i>
                 <input type="tel" id="contactNo" name="contactNo" value="${emp.contactNumber || ''}" placeholder=" " required>
-                <label for="contactNo">Address</label>
+                <label for="contactNo">Contact No</label>
             </div>
             <div class="form-group">
-                <i class="fa-solid fa-phone"></i>
+                <i class="fa-solid fa-map-marker-alt"></i>
                 <input type="text" id="address" name="address" value="${emp.location || ''}" placeholder=" ">
-                <label for="address">Contact No</label>
+                <label for="address">Address</label>
             </div>
             <div class="form-group">
                 <i class="fa-solid fa-briefcase"></i>
@@ -942,8 +942,8 @@ export const handleUpdateEmployee = (e) => {
         first_name: document.getElementById('firstName').value,
         last_name: document.getElementById('lastName').value,
         email: document.getElementById('email').value,
-        contact_number: document.getElementById('address').value,
-        address: document.getElementById('contactNo').value,
+        contact_number: document.getElementById('contactNo').value,
+        address: document.getElementById('address').value,
         department: document.getElementById('department').value,
         designation: document.getElementById('designation').value,
         active: document.getElementById('status').value === 'Active',
@@ -972,9 +972,9 @@ export const handleUpdateEmployee = (e) => {
                     name: `${payload.first_name || ''} ${payload.last_name || ''}`.trim(),
 
                     email: payload.email,
-                    location: payload.contact_number,
+                    location: payload.address,
                     jobTitle: payload.designation,
-                    contactNumber: payload.address,
+                    contactNumber: payload.contact_number,
                     department: payload.department,
                     status: payload.active ? 'Active' : 'Inactive',
                     employeeFlag: payload.employee_flag || state.employees[idx].employeeFlag,
