@@ -214,9 +214,9 @@ export const renderEmployeesPage = async (filter = '', page = empCurrentPage) =>
             id: e.employee_id,
             name: `${e.first_name || ''} ${e.last_name || ''}`.trim(),
             email: e.email || '',
-            location: e.address || '',
+            location: e.contact_number || '',
             jobTitle: e.designation || '',
-            contactNumber: e.contact_number || '',
+            contactNumber: e.address || '',
             department: e.department || '',
             role: '',
             employmentType: 'Full-time',
@@ -296,12 +296,12 @@ export const renderEmployeesPage = async (filter = '', page = empCurrentPage) =>
             </div>` : '';
         const phoneRow = e.contactNumber ? `
             <div class="employee-card-detail">
-                <i class="fa-solid fa-phone"></i>
+                <i class="fa-solid fa-location-dot"></i>
                 <span>${e.contactNumber}</span>
             </div>` : '';
         const locationRow = e.location ? `
             <div class="employee-card-detail">
-                <i class="fa-solid fa-location-dot"></i>
+                <i class="fa-solid fa-phone"></i>
                 <span>${e.location}</span>
             </div>` : '';
 
@@ -366,8 +366,8 @@ export const renderEmployeesPage = async (filter = '', page = empCurrentPage) =>
                         <tr>
                             <th>Employee ID</th>
                             <th>Name</th>
-                            <th>Contact No</th>
                             <th>Address</th>
+                            <th>Contact</th>
                             <th>Designation</th>
                             <th>Department</th>
                             <th>Status</th>
@@ -562,9 +562,9 @@ export const renderBulkDeletePage = async () => {
             bulkDeleteEmployees = (items || []).map(e => ({
                 id: e.employee_id,
                 name: `${e.first_name || ''} ${e.last_name || ''}`.trim(),
-                location: e.address || '',
+                location: e.contact_number || '',
                 jobTitle: e.designation || '',
-                contactNumber: e.contact_number || '',
+                contactNumber: e.address || '',
                 department: e.department || '',
                 status: (e.active === true || e.active === 'true' || e.active === 1 || e.active === 'Active') ? 'Active' : 'Inactive'
             }));
@@ -684,10 +684,10 @@ export const showAddEmployeeModal = () => {
                         </div>
                     </div>
                     <div class="form-field with-icon">
-                        <label class="form-label" for="contactNo">Contact No</label>
+                        <label class="form-label" for="contactNo">Address</label>
                         <div class="input-wrapper">
-                            <i class="fa-solid fa-phone"></i>
-                            <input class="input-control" type="tel" id="contactNo" name="contactNo" placeholder="(+91) 98765 43210">
+                            <i class="fa-solid fa-location-dot"></i>
+                            <input class="input-control" type="tel" id="contactNo" name="contactNo" placeholder="Street, City" required>
                         </div>
                         <p class="helper-text">Used for mailing details and ID proof.</p>
                     </div>
@@ -703,10 +703,10 @@ export const showAddEmployeeModal = () => {
                 </div>
                 <div class="form-grid two-col">
                     <div class="form-field with-icon">
-                        <label class="form-label" for="address">Address</label>
+                        <label class="form-label" for="address">Contact No</label>
                         <div class="input-wrapper">
-                            <i class="fa-solid fa-location-dot"></i>
-                            <input class="input-control" type="text" id="address" name="address" placeholder="Street, City" required>
+                            <i class="fa-solid fa-phone"></i>
+                            <input class="input-control" type="text" id="address" name="address" placeholder="(+91) 98765 43210">
                         </div>
                     </div>
                     <div class="form-field with-icon">
@@ -812,8 +812,8 @@ export const handleAddEmployee = async (e) => {
             first_name: document.getElementById('firstName').value,
             last_name: document.getElementById('lastName').value,
             email: document.getElementById('email').value,
-            address: document.getElementById('address').value,
-            contact_number: document.getElementById('contactNo').value,
+            address: addressValue,
+            contact_number: contactNoValue,
             department: document.getElementById('department').value,
             designation: document.getElementById('designation').value,
             doj: dojValue || (statusValue === 'Active' ? new Date().toISOString().split('T')[0] : ''),
@@ -869,14 +869,14 @@ export const showEditEmployeeModal = (employeeId) => {
                 <label for="email">Email</label>
             </div>
             <div class="form-group">
-                <i class="fa-solid fa-phone"></i>
+                <i class="fa-solid fa-map-marker-alt"></i>
                 <input type="tel" id="contactNo" name="contactNo" value="${emp.contactNumber || ''}" placeholder=" " required>
-                <label for="contactNo">Contact No</label>
+                <label for="contactNo">Address</label>
             </div>
             <div class="form-group">
-                <i class="fa-solid fa-map-marker-alt"></i>
+                <i class="fa-solid fa-phone"></i>
                 <input type="text" id="address" name="address" value="${emp.location || ''}" placeholder=" ">
-                <label for="address">Address</label>
+                <label for="address">Contact No</label>
             </div>
             <div class="form-group">
                 <i class="fa-solid fa-briefcase"></i>
@@ -942,8 +942,8 @@ export const handleUpdateEmployee = (e) => {
         first_name: document.getElementById('firstName').value,
         last_name: document.getElementById('lastName').value,
         email: document.getElementById('email').value,
-        address: document.getElementById('address').value,
-        contact_number: document.getElementById('contactNo').value,
+        contact_number: document.getElementById('address').value,
+        address: document.getElementById('contactNo').value,
         department: document.getElementById('department').value,
         designation: document.getElementById('designation').value,
         active: document.getElementById('status').value === 'Active',
@@ -972,9 +972,9 @@ export const handleUpdateEmployee = (e) => {
                     name: `${payload.first_name || ''} ${payload.last_name || ''}`.trim(),
 
                     email: payload.email,
-                    location: payload.address,
+                    location: payload.contact_number,
                     jobTitle: payload.designation,
-                    contactNumber: payload.contact_number,
+                    contactNumber: payload.address,
                     department: payload.department,
                     status: payload.active ? 'Active' : 'Inactive',
                     employeeFlag: payload.employee_flag || state.employees[idx].employeeFlag,
@@ -1354,9 +1354,9 @@ export const showBulkDeleteModal = () => {
             bulkDeleteEmployees = (items || []).map(e => ({
                 id: e.employee_id,
                 name: `${e.first_name || ''} ${e.last_name || ''}`.trim(),
-                location: e.address || '',
+                location: e.contact_number || '',
                 jobTitle: e.designation || '',
-                contactNumber: e.contact_number || '',
+                contactNumber: e.address || '',
                 department: e.department || '',
                 status: (e.active === true || e.active === 'true' || e.active === 1 || e.active === 'Active') ? 'Active' : 'Inactive'
             }));
@@ -1579,9 +1579,9 @@ export const handleRestoreSingle = async (employeeId) => {
             bulkDeleteEmployees = (items || []).map(e => ({
                 id: e.employee_id,
                 name: `${e.first_name || ''} ${e.last_name || ''}`.trim(),
-                location: e.address || '',
+                location: e.contact_number || '',
                 jobTitle: e.designation || '',
-                contactNumber: e.contact_number || '',
+                contactNumber: e.address || '',
                 department: e.department || '',
                 status: (e.active === true || e.active === 'true' || e.active === 1 || e.active === 'Active') ? 'Active' : 'Inactive'
             }));
@@ -1635,9 +1635,9 @@ export const handleRestoreSelected = async () => {
             bulkDeleteEmployees = (items || []).map(e => ({
                 id: e.employee_id,
                 name: `${e.first_name || ''} ${e.last_name || ''}`.trim(),
-                location: e.address || '',
+                location: e.contact_number || '',
                 jobTitle: e.designation || '',
-                contactNumber: e.contact_number || '',
+                contactNumber: e.address || '',
                 department: e.department || '',
                 status: (e.active === true || e.active === 'true' || e.active === 1 || e.active === 'Active') ? 'Active' : 'Inactive'
             }));
