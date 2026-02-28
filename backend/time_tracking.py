@@ -578,6 +578,24 @@ def set_exact_log():
         if dv_id:
             dv_id = dv_id.strip("{}")
 
+        task_guid_norm = str(task_guid or "").strip()
+        task_id_norm = str(task_id or "").strip()
+        project_id_norm = str(project_id or "").strip()
+        task_keys = {k.lower() for k in [task_guid_norm, task_id_norm] if k}
+
+        def _row_matches_exact_target(row):
+            row_project = str(row.get("crc6f_projectid") or "").strip()
+            if project_id_norm and row_project and row_project.lower() != project_id_norm.lower():
+                return False
+            if not task_keys:
+                return True
+            row_task_keys = {
+                str(row.get("crc6f_taskguid") or "").strip().lower(),
+                str(row.get("crc6f_taskid") or "").strip().lower(),
+            }
+            row_task_keys.discard("")
+            return bool(row_task_keys.intersection(task_keys))
+
         try:
             seconds = int(float(b.get("seconds", 0)))
         except (ValueError, TypeError):
@@ -637,11 +655,9 @@ def set_exact_log():
 
                 task_key = (task_guid or task_id or "").strip()
                 if task_key and rows:
-                    for r in rows:
-                        row_task_key = (r.get("crc6f_taskguid") or r.get("crc6f_taskid") or "").strip()
-                        if row_task_key == task_key:
-                            dv_id = (r.get("crc6f_hr_timesheetlogid") or "").strip() or None
-                            break
+                    matched_rows = [r for r in rows if _row_matches_exact_target(r)]
+                    if matched_rows:
+                        dv_id = (matched_rows[0].get("crc6f_hr_timesheetlogid") or "").strip() or None
                 if not dv_id and rows:
                     dv_id = (rows[0].get("crc6f_hr_timesheetlogid") or "").strip() or None
                 if dv_id:
@@ -691,6 +707,36 @@ def set_exact_log():
                 created = create_record(ENTITY, create_data)
             dv_id = created.get("crc6f_hr_timesheetlogid")
             print(f"[TEAM_TS_EDIT] Created OK: {dv_id}")
+
+        # Keep exact semantics: remove extra same-day rows for this task/project.
+        # This avoids additive leftovers (e.g., existing 00:01 + edited 01:09 showing as 01:10).
+        if dv_id and task_keys:
+            try:
+                token = get_access_token()
+                headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+                safe_emp = employee_id.replace("'", "''")
+                safe_date = work_date.replace("'", "''")
+                fq = f"crc6f_employeeid eq '{safe_emp}' and crc6f_workdate ge '{safe_date}' and crc6f_workdate le '{safe_date}'"
+                url = f"{RESOURCE}/api/data/v9.2/{ENTITY}?$filter={fq}&$top=100"
+                resp = requests.get(url, headers=headers, timeout=30)
+                rows = resp.json().get("value", []) if resp.status_code == 200 else []
+
+                keep_id = str(dv_id).strip("{}")
+                deleted = 0
+                for row in rows:
+                    row_id = str(row.get("crc6f_hr_timesheetlogid") or "").strip().strip("{}")
+                    if not row_id or row_id == keep_id:
+                        continue
+                    if not _row_matches_exact_target(row):
+                        continue
+                    del_url = f"{RESOURCE}/api/data/v9.2/{ENTITY}({row_id})"
+                    del_resp = requests.delete(del_url, headers=headers, timeout=30)
+                    if del_resp.status_code in (200, 204):
+                        deleted += 1
+                if deleted:
+                    print(f"[TEAM_TS_EDIT] Removed {deleted} duplicate row(s) for exact update")
+            except Exception as cleanup_err:
+                print(f"[TEAM_TS_EDIT] Duplicate cleanup warning: {cleanup_err}")
 
         return jsonify({
             "success": True,
