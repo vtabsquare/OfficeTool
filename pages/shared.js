@@ -1926,12 +1926,17 @@ export const renderMyTimesheetPage = async () => {
                     showToast(data.error || 'Failed to save time');
                     return;
                 }
+                // Clear the override for this specific cell to force refresh from backend
                 const ovMap = loadOverrides();
                 const key = rowKeyFor(row);
-                const arr = ovMap[key] || [];
-                arr[dayIdx] = Number(seconds || 0);
-                ovMap[key] = arr;
-                saveOverrides(ovMap);
+                if (ovMap[key] && ovMap[key][dayIdx] !== undefined) {
+                    delete ovMap[key][dayIdx];
+                    // Remove the entire key array if it's now empty
+                    if (ovMap[key].every(val => val === undefined || val === null)) {
+                        delete ovMap[key];
+                    }
+                    saveOverrides(ovMap);
+                }
                 await render();
             } catch (err) {
                 console.error('Cell save failed', err);
