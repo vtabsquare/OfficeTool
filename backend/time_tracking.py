@@ -683,6 +683,10 @@ def set_exact_log():
             except Exception as create_err:
                 # Some environments may reject approval field format; retry without it
                 print(f"[TEAM_TS_EDIT] Create with approvalstatus failed, retrying without approvalstatus: {create_err}")
+                # Some environments do not have crc6f_taskguid on this table.
+                # Retry without that field when Dataverse reports invalid property.
+                if "Invalid property 'crc6f_taskguid'" in str(create_err) or "crc6f_taskguid" in str(create_err):
+                    create_data.pop("crc6f_taskguid", None)
                 create_data.pop("crc6f_approvalstatus", None)
                 created = create_record(ENTITY, create_data)
             dv_id = created.get("crc6f_hr_timesheetlogid")
