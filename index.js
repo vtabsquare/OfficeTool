@@ -414,7 +414,7 @@ const hydrateUserProfileFromDirectory = ({ forceRefresh = false } = {}) => {
       });
       if (!match) return fallbackProfile;
 
-      const fullName = match.name || [match.first_name, match.last_name].filter(Boolean).join(' ').trim();
+      const fullName = [match.first_name, match.last_name].filter(Boolean).join(' ').trim() || match.name;
       const resolvedPhoto = match.photo || match.avatarUrl || fallbackProfile.avatarUrl;
       const hydratedProfile = {
         ...fallbackProfile,
