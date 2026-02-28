@@ -125,7 +125,7 @@ export const router = async () => {
     }
   }
   if (path === '/leave-team') {
-    if (!isL2OrL3User()) {
+    if (!(isL2OrL3User() || isTeamLeadUser())) {
       renderAccessDenied("#/leave-my");
       return;
     }

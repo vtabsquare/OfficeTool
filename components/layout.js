@@ -7,6 +7,7 @@ export const getSidebarHTML = () => {
     const isL2OrL3 = isL2OrL3User();
     const canViewTeamTimesheet = isL2OrL3 || role === 'L4';
     const canViewTeamAttendance = isL2OrL3 || role === 'L4';
+    const canViewTeamLeaves = isL2OrL3 || role === 'L4';
     const canManage = isManagerOrAdmin();
     const canViewEmployeeModule = isL2OrL3 || role === 'L4';
     const canViewInternsModule = isL2OrL3;
@@ -103,7 +104,7 @@ export const getSidebarHTML = () => {
             <ul class="nav-submenu">
                 <li><a href="#/leave-my" class="nav-link" data-page="leave-my">My Leaves</a></li>
                 ${
-                  isL2OrL3
+                  canViewTeamLeaves
                     ? '<li><a href="#/leave-team" class="nav-link" data-page="leave-team">My Team Leaves</a></li>'
                     : ""
                 }
