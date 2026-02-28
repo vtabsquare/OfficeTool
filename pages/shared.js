@@ -1285,10 +1285,12 @@ export const renderMyTimesheetPage = async () => {
                     billing: 'Non-billable',
                     hours: Array(7).fill(0),
                     manualFlags: Array(7).fill(false),
+                    dayLogIds: Array(7).fill(''),
                     _logRefs: []
                 };
             }
             if (l.id) grouped[key]._logRefs.push(String(l.id));
+
             // Match log date to day column using string comparison (YYYY-MM-DD)
             const logDate = (l.work_date || '').slice(0, 10);
             // Only process if log date is not in the future (using local date)
@@ -1301,6 +1303,7 @@ export const renderMyTimesheetPage = async () => {
                         const seconds = Number(l.seconds || 0);
                         const existingSecs = grouped[key].hours[i] || 0;
                         grouped[key].hours[i] = existingSecs + seconds;
+                        if (l.id && !grouped[key].dayLogIds[i]) grouped[key].dayLogIds[i] = String(l.id);
                         if (l.manual) grouped[key].manualFlags[i] = true;
                         break;
                     }
@@ -1327,7 +1330,8 @@ export const renderMyTimesheetPage = async () => {
                         task_id: t.task_id || '',
                         task_name: t.task_name || '',
                         billing: 'Non-billable',
-                        hours: Array(7).fill(0)
+                        hours: Array(7).fill(0),
+                        dayLogIds: Array(7).fill('')
                     });
                     existingKeys.add(key);
                 }
@@ -1893,6 +1897,7 @@ export const renderMyTimesheetPage = async () => {
             if (!row) return;
             const dayDate = new Date(startOfWeek(anchor));
             dayDate.setDate(startOfWeek(anchor).getDate() + dayIdx);
+
             const yyyy = dayDate.getFullYear();
             const mm = String(dayDate.getMonth() + 1).padStart(2, '0');
             const dd = String(dayDate.getDate()).padStart(2, '0');
@@ -1901,8 +1906,22 @@ export const renderMyTimesheetPage = async () => {
             const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
             if (workDate > todayStr) return;
 
+            let resolvedEmpId = String(empId || '').toUpperCase();
+            if (!resolvedEmpId) {
+                try {
+                    resolvedEmpId = String(await resolveCurrentEmployeeId() || '').toUpperCase();
+                    if (resolvedEmpId) empId = resolvedEmpId;
+                } catch { }
+            }
+            if (!resolvedEmpId) {
+                showToast('Unable to resolve employee ID. Please refresh and try again.');
+                return;
+            }
+
+            const dayLogId = String(row?.dayLogIds?.[dayIdx] || '').trim();
+
             const payload = {
-                employee_id: String(empId || '').toUpperCase(),
+                employee_id: resolvedEmpId,
                 project_id: row.project_id || '',
                 task_guid: row.task_guid || '',
                 task_id: row.task_id || '',
@@ -1911,7 +1930,8 @@ export const renderMyTimesheetPage = async () => {
                 work_date: workDate,
                 description: '',
                 role: resolveRole(),
-                editor_id: String(empId || '').toUpperCase(),
+                editor_id: resolvedEmpId,
+                dv_id: dayLogId,
                 manual: true,
             };
 
@@ -1926,9 +1946,15 @@ export const renderMyTimesheetPage = async () => {
                     showToast(data.error || 'Failed to save time');
                     return;
                 }
+                const savedDvId = String(data?.log?.dv_id || '').trim();
+                if (savedDvId) {
+                    if (!Array.isArray(row.dayLogIds)) row.dayLogIds = Array(7).fill('');
+                    row.dayLogIds[dayIdx] = savedDvId;
+                }
                 // Clear the override for this specific cell to force refresh from backend
                 const ovMap = loadOverrides();
                 const key = rowKeyFor(row);
+
                 if (ovMap[key] && ovMap[key][dayIdx] !== undefined) {
                     delete ovMap[key][dayIdx];
                     // Remove the entire key array if it's now empty
