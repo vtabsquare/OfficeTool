@@ -710,7 +710,7 @@ def set_exact_log():
 
         # Keep exact semantics: remove extra same-day rows for this task/project.
         # This avoids additive leftovers (e.g., existing 00:01 + edited 01:09 showing as 01:10).
-        if dv_id and task_keys:
+        if dv_id:
             try:
                 token = get_access_token()
                 headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
