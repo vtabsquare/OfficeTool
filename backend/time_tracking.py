@@ -738,6 +738,33 @@ def set_exact_log():
             except Exception as cleanup_err:
                 print(f"[TEAM_TS_EDIT] Duplicate cleanup warning: {cleanup_err}")
 
+        # Remove stale local-cache rows for this exact day/task so list_logs merge
+        # does not add old seconds back on top of the exact Dataverse value.
+        if task_keys:
+            try:
+                logs = _read_logs()
+                before = len(logs)
+                up_emp = str(employee_id or "").strip().upper()
+                target_date = _safe_date_part(work_date)
+                target_project = str(project_id or "").strip()
+                filtered = []
+                for r in logs:
+                    r_emp = str(r.get("employee_id") or "").strip().upper()
+                    r_date = _safe_date_part(r.get("work_date"))
+                    r_project = str(r.get("project_id") or "").strip()
+                    same_emp = (r_emp == up_emp)
+                    same_date = (r_date == target_date)
+                    same_project = (not target_project) or (r_project == target_project)
+                    same_task = _same_task_identity(task_guid, task_id, r.get("task_guid"), r.get("task_id"))
+                    if same_emp and same_date and same_project and same_task:
+                        continue
+                    filtered.append(r)
+                if len(filtered) != before:
+                    _write_logs(filtered)
+                    print(f"[TEAM_TS_EDIT] Cleared {before - len(filtered)} stale local cache row(s) for exact update")
+            except Exception as local_cleanup_err:
+                print(f"[TEAM_TS_EDIT] Local cache cleanup warning: {local_cleanup_err}")
+
         return jsonify({
             "success": True,
             "log": {
@@ -1255,15 +1282,28 @@ def list_logs():
             # upsert is delayed or fails but local fallback write succeeded.
             try:
                 local_logs = _read_logs()
+
+                def _merge_identity_candidates(rec):
+                    cands = []
+                    tg = str(rec.get("task_guid") or "").strip().upper()
+                    tid = str(rec.get("task_id") or "").strip().upper()
+                    if tg:
+                        cands.append(f"GUID:{tg}")
+                    if tid:
+                        cands.append(f"ID:{tid}")
+                    if not cands:
+                        cands.append("NONE")
+                    return cands
+
                 existing_keys = set()
                 for rec in out:
-                    rec_key = (
+                    base = (
                         str(rec.get("employee_id") or "").upper(),
                         str(rec.get("work_date") or "")[:10],
                         str(rec.get("project_id") or ""),
-                        str(rec.get("task_guid") or rec.get("task_id") or ""),
                     )
-                    existing_keys.add(rec_key)
+                    for ident in _merge_identity_candidates(rec):
+                        existing_keys.add(base + (ident,))
 
                 merged_count = 0
                 for r in local_logs:
@@ -1277,17 +1317,18 @@ def list_logs():
                     if end_date and local_date > end_date:
                         continue
 
-                    local_key = (
+                    local_base = (
                         str(r.get("employee_id") or "").upper(),
                         local_date,
                         str(r.get("project_id") or ""),
-                        str(r.get("task_guid") or r.get("task_id") or ""),
                     )
-                    if local_key in existing_keys:
+                    local_idents = _merge_identity_candidates(r)
+                    if any((local_base + (ident,)) in existing_keys for ident in local_idents):
                         continue
 
                     out.append(r)
-                    existing_keys.add(local_key)
+                    for ident in local_idents:
+                        existing_keys.add(local_base + (ident,))
                     merged_count += 1
 
                 if merged_count:
