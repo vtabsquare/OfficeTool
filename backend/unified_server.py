@@ -6764,6 +6764,7 @@ def reject_leave(leave_id):
         leave_type = record.get("crc6f_leavetype")
         total_days = float(record.get("crc6f_totaldays", 0))
         paid_unpaid = record.get("crc6f_paidunpaid", "Unpaid")
+        prior_status = (record.get("crc6f_status") or "").strip().lower()
         
         if not record_id:
             print(f"   [ERROR] No primary key found in record")
@@ -6785,60 +6786,20 @@ def reject_leave(leave_id):
         
         updated_record = update_record(LEAVE_ENTITY, record_id, update_data)
         
-        # Restore leave balance when leave is rejected (balance was deducted at application time)
-        if total_days > 0 and employee_id:
+        # Restore leave balance when a paid leave is rejected (balance was deducted at application time)
+        if (
+            total_days > 0
+            and employee_id
+            and str(paid_unpaid or "").strip().lower() == "paid"
+            and prior_status != "rejected"
+        ):
             try:
                 print(f"   [PROC] Restoring {total_days} days of {leave_type} to {employee_id} (paid_unpaid={paid_unpaid})")
                 balance_row = _fetch_leave_balance(token, employee_id)
-                if balance_row:
-                    # Find the balance record ID
-                    balance_record_id = balance_row.get("crc6f_hr_leavemangementid")
-                    if not balance_record_id:
-                        # Try to find the record ID dynamically
-                        for k, v in balance_row.items():
-                            if isinstance(k, str) and k.lower().endswith('id') and isinstance(v, str) and len(v) >= 30:
-                                balance_record_id = v
-                                break
-                    if balance_record_id:
-                        # Determine which field to update
-                        leave_type_lower = (leave_type or "").lower()
-                        balance_update = {}
-                        
-                        if "casual" in leave_type_lower:
-                            current_balance = float(balance_row.get("crc6f_cl", 0) or 0)
-                            new_balance = current_balance + total_days
-                            balance_update["crc6f_cl"] = str(new_balance)
-                        elif "sick" in leave_type_lower:
-                            current_balance = float(balance_row.get("crc6f_sl", 0) or 0)
-                            new_balance = current_balance + total_days
-                            balance_update["crc6f_sl"] = str(new_balance)
-                        elif "comp" in leave_type_lower:
-                            current_balance = float(balance_row.get("crc6f_compoff", 0) or 0)
-                            new_balance = current_balance + total_days
-                            balance_update["crc6f_compoff"] = str(new_balance)
-                        
-                        if balance_update:
-                            # Also recalculate and update total
-                            cur_cl = float(balance_row.get('crc6f_cl', 0) or 0)
-                            cur_sl = float(balance_row.get('crc6f_sl', 0) or 0)
-                            cur_co = float(balance_row.get('crc6f_compoff', 0) or 0)
-                            # Apply the increment to the correct bucket for total calc
-                            if "casual" in leave_type_lower:
-                                cur_cl = cur_cl + total_days
-                            elif "sick" in leave_type_lower:
-                                cur_sl = cur_sl + total_days
-                            elif "comp" in leave_type_lower:
-                                cur_co = cur_co + total_days
-                            balance_update["crc6f_total"] = str(cur_cl + cur_sl + cur_co)
-                            
-                            entity_set = LEAVE_BALANCE_ENTITY_RESOLVED or LEAVE_BALANCE_ENTITY
-                            print(f"   [SEND] Updating balance: entity={entity_set}, id={balance_record_id}, payload={balance_update}")
-                            update_record(entity_set, balance_record_id, balance_update)
-                            print(f"   [OK] Balance restored: {balance_update}")
-                    else:
-                        print(f"   [WARN] Could not find balance record ID for {employee_id}")
-                else:
-                    print(f"   [WARN] No balance row found for {employee_id}")
+                if not balance_row:
+                    balance_row = _ensure_leave_balance_row(token, employee_id)
+                _decrement_leave_balance(token, balance_row, leave_type, -float(total_days))
+                print(f"   [OK] Balance restored for {employee_id}: +{total_days} {leave_type}")
             except Exception as restore_err:
                 print(f"   [WARN] Failed to restore balance: {restore_err}")
                 import traceback
