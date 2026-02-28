@@ -13308,6 +13308,12 @@ def approve_comp_off_request(request_id):
         prior_status = _compoff_normalize_status(_compoff_pick(request_row, ["crc6f_status", "status"], "Pending"))
         employee_id = _compoff_normalize_employee_id(_compoff_pick(request_row, ["crc6f_employeeid", "crc6f_empid", "employee_id"], ""))
         requested_days = _compoff_to_float(_compoff_pick(request_row, ["crc6f_totaldays", "total_days"], 1), 1)
+        request_leave_type = str(_compoff_pick(request_row, ["crc6f_leavetype", "leave_type", "leaveType"], "")).strip().lower()
+        is_leave_backed = _is_compoff_leave_entity(compoff_entity)
+        # Leave-backed "Comp Off" rows are leave-consumption requests.
+        # They should not credit balance on approval.
+        is_comp_off_consumption = request_leave_type in {"comp off", "compoff", "co"}
+        should_credit_balance = not (is_leave_backed and is_comp_off_consumption)
         if requested_days <= 0:
             requested_days = 1
 
@@ -13325,7 +13331,7 @@ def approve_comp_off_request(request_id):
 
         credit_applied = False
         credit_error = ""
-        if prior_status != "Approved" and employee_id and requested_days > 0:
+        if prior_status != "Approved" and employee_id and requested_days > 0 and should_credit_balance:
             try:
                 balance_row = _fetch_leave_balance(token, employee_id)
                 if not balance_row:
@@ -13366,6 +13372,20 @@ def reject_comp_off_request(request_id):
         token = get_access_token()
         compoff_entity = get_compoff_request_entity_set(token)
 
+        request_row = {}
+        try:
+            request_row = get_record(compoff_entity, request_id) or {}
+        except Exception as read_err:
+            print(f"[WARN] Could not load comp off request before reject ({request_id}): {read_err}")
+
+        prior_status = _compoff_normalize_status(_compoff_pick(request_row, ["crc6f_status", "status"], "Pending")).lower()
+        employee_id = _compoff_normalize_employee_id(_compoff_pick(request_row, ["crc6f_employeeid", "crc6f_empid", "employee_id"], ""))
+        requested_days = _compoff_to_float(_compoff_pick(request_row, ["crc6f_totaldays", "total_days"], 0), 0)
+        paid_unpaid = str(_compoff_pick(request_row, ["crc6f_paidunpaid", "paid_unpaid", "paidUnpaid"], "Unpaid")).strip().lower()
+        request_leave_type = str(_compoff_pick(request_row, ["crc6f_leavetype", "leave_type", "leaveType"], "")).strip().lower()
+        is_leave_backed = _is_compoff_leave_entity(compoff_entity)
+        is_comp_off_consumption = request_leave_type in {"comp off", "compoff", "co"}
+
         update_record(compoff_entity, request_id, {
             "crc6f_status": "Rejected",
         })
@@ -13380,6 +13400,24 @@ def reject_comp_off_request(request_id):
                 update_record(compoff_entity, request_id, optional_update)
             except Exception as meta_err:
                 print(f"[WARN] Could not update reject metadata for comp off request {request_id}: {meta_err}")
+
+        # If this was a leave-consumption comp-off row and it gets rejected,
+        # restore the paid balance (it was deducted on apply).
+        if (
+            is_leave_backed
+            and is_comp_off_consumption
+            and prior_status != "rejected"
+            and employee_id
+            and paid_unpaid == "paid"
+            and requested_days > 0
+        ):
+            try:
+                balance_row = _fetch_leave_balance(token, employee_id)
+                if not balance_row:
+                    balance_row = _ensure_leave_balance_row(token, employee_id)
+                _decrement_leave_balance(token, balance_row, "Comp Off", -float(requested_days))
+            except Exception as restore_err:
+                print(f"[WARN] Failed to restore comp off balance for {employee_id} on reject {request_id}: {restore_err}")
         return jsonify({"success": True, "message": "Comp Off request rejected", "request_id": request_id}), 200
     except Exception as e:
         print(f"[ERROR] Failed to reject comp off request {request_id}: {e}")
@@ -13468,6 +13506,8 @@ def get_comp_off():
     except Exception as e:
         print("[ERROR] Error in fetching comp off data:", e)
         return jsonify({"status": "error", "message": str(e)}), 500
+
+
 @app.route("/api/comp-off/<employee_id>", methods=["PUT"])
 def update_comp_off(employee_id):
     try:
