@@ -3,6 +3,7 @@ import { state } from "../state.js";
 import { renderModal, closeModal } from "../components/modal.js";
 import { API_BASE_URL } from '../config.js';
 import { listAllEmployees } from '../features/employeeApi.js';
+import { getUserAccessContext } from '../utils/accessControl.js';
 
 const API_BASE = `${API_BASE_URL}/api/assets`;
 const EMPLOYEE_DIRECTORY_CACHE_TTL_MS = 5 * 60 * 1000;
@@ -19,6 +20,7 @@ let assetEmployeeDirectoryCache = {
   data: [],
   fetchedAt: 0,
 };
+let canManageAssets = false;
 
 const shapeEmployeeRecord = (entry = {}) => {
   const id = String(entry.employee_id || entry.id || "").trim();
@@ -110,10 +112,15 @@ export const fetchAssets = async () => {
 // -------------------- RENDER PAGE --------------------
 export const renderAssetsPage = async () => {
   try {
+    const { isAdmin } = getUserAccessContext();
+    canManageAssets = Boolean(isAdmin);
+
     // Fetch latest assets from Dataverse
     await fetchAssets();
 
-    const controls = `<button id="add-asset-btn" class="btn btn-primary"><i class="fa-solid fa-plus"></i> ADD NEW ASSET</button>`;
+    const controls = canManageAssets
+      ? `<button id="add-asset-btn" class="btn btn-primary"><i class="fa-solid fa-plus"></i> ADD NEW ASSET</button>`
+      : "";
     const statusClass = (status) => status.toLowerCase().replace(" ", "");
 
     const tableRows = state.assets
@@ -132,10 +139,12 @@ export const renderAssetsPage = async () => {
             <td><span class="status-badge ${statusClass(asset.status)}">${asset.status
           }</span></td>
             <td class="actions-cell">
+                ${canManageAssets ? `
                 <button class="icon-btn action-btn edit edit-asset-btn" data-id="${asset.id
           }"><i class="fa-solid fa-pen-to-square"></i></button>
                 <button class="icon-btn action-btn delete delete-asset-btn" data-id="${asset.id
           }"><i class="fa-solid fa-trash"></i></button>
+                ` : "-"}
             </td>
         </tr>
     `
@@ -180,17 +189,19 @@ export const renderAssetsPage = async () => {
     // -------------------- EVENT LISTENERS --------------------
     document
       .getElementById("add-asset-btn")
-      .addEventListener("click", () => showAssetModal());
+      ?.addEventListener("click", () => showAssetModal());
 
-    document.querySelectorAll(".edit-asset-btn").forEach((btn) => {
-      btn.addEventListener("click", () => showAssetModal(btn.dataset.id));
-    });
+    if (canManageAssets) {
+      document.querySelectorAll(".edit-asset-btn").forEach((btn) => {
+        btn.addEventListener("click", () => showAssetModal(btn.dataset.id));
+      });
 
-    document.querySelectorAll(".delete-asset-btn").forEach((btn) => {
-      btn.addEventListener("click", () =>
-        showDeleteConfirmModal(btn.dataset.id)
-      );
-    });
+      document.querySelectorAll(".delete-asset-btn").forEach((btn) => {
+        btn.addEventListener("click", () =>
+          showDeleteConfirmModal(btn.dataset.id)
+        );
+      });
+    }
   } catch (err) {
     console.error("Error rendering assets page:", err);
     document.getElementById(
@@ -201,6 +212,11 @@ export const renderAssetsPage = async () => {
 
 // -------------------- SHOW MODAL --------------------
 export const showAssetModal = async (assetId) => {
+  if (!canManageAssets) {
+    alert("Only admin can modify assets");
+    return;
+  }
+
   const isEditMode = Boolean(assetId);
   const asset = isEditMode ? state.assets.find((a) => a.id === assetId) : null;
 
@@ -420,6 +436,11 @@ export const showAssetModal = async (assetId) => {
 };
 
 export const handleSaveAsset = async (assetId) => {
+  if (!canManageAssets) {
+    alert("Only admin can modify assets");
+    return;
+  }
+
   const isEditMode = Boolean(assetId);
 
   const assignedSelect = document.getElementById("assignedTo");
@@ -509,6 +530,11 @@ export const handleSaveAsset = async (assetId) => {
 };
 
 export const showDeleteConfirmModal = (assetId) => {
+  if (!canManageAssets) {
+    alert("Only admin can modify assets");
+    return;
+  }
+
   const asset = state.assets.find((a) => a.id === assetId);
   if (!asset) return;
 
@@ -543,6 +569,11 @@ export const showDeleteConfirmModal = (assetId) => {
 };
 
 export const handleDeleteAsset = async (assetId) => {
+  if (!canManageAssets) {
+    alert("Only admin can modify assets");
+    return;
+  }
+
   try {
     const res = await fetch(`${API_BASE}/delete/${assetId}`, {
       method: "DELETE",

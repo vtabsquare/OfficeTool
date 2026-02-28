@@ -10,8 +10,13 @@ import { showToast } from '../components/toast.js';
 import { getUserAccessContext } from '../utils/accessControl.js';
 
 let editId = null;
+let canManageHolidays = false;
 
 const renderHolidayModal = (data = null) => {
+  if (!canManageHolidays) {
+    showToast('Only admin can modify holidays', 'warning');
+    return;
+  }
   const isEdit = !!data;
 
   const modalBody = `
@@ -56,6 +61,11 @@ const renderHolidayModal = (data = null) => {
 const handleSaveHoliday = async (event) => {
   event.preventDefault();
 
+  if (!canManageHolidays) {
+    showToast('Only admin can modify holidays', 'warning');
+    return;
+  }
+
   const date = document.getElementById('holiday-date')?.value?.trim();
   const name = document.getElementById('holiday-name')?.value?.trim();
 
@@ -91,6 +101,11 @@ const handleSaveHoliday = async (event) => {
 };
 
 const handleDeleteHoliday = async (id) => {
+  if (!canManageHolidays) {
+    showToast('Only admin can modify holidays', 'warning');
+    return;
+  }
+
   const confirmed = confirm('Are you sure you want to delete this holiday?');
   if (!confirmed) return;
 
@@ -152,33 +167,37 @@ const loadHolidays = async () => {
           ${h.crc6f_holidayname}
         </td>
         <td class="holiday-actions-cell">
+          ${canManageHolidays ? `
           <button class="icon-btn holiday-edit-btn" title="Edit" data-id="${h.crc6f_hr_holidaysid}">
             <i class="fa-solid fa-pen-to-square"></i>
           </button>
           <button class="icon-btn holiday-delete-btn" title="Delete" data-id="${h.crc6f_hr_holidaysid}">
             <i class="fa-solid fa-trash"></i>
           </button>
+          ` : '<span>-</span>'}
         </td>
       `;
       tbody.appendChild(row);
     });
 
-    // Attach event listeners
-    document.querySelectorAll('.holiday-edit-btn').forEach((btn) => {
-      btn.addEventListener('click', (e) => {
-        const id = e.currentTarget.dataset.id;
-        const record = holidays.find((h) => h.crc6f_hr_holidaysid === id);
-        editId = id;
-        renderHolidayModal(record);
+    // Attach admin-only event listeners
+    if (canManageHolidays) {
+      document.querySelectorAll('.holiday-edit-btn').forEach((btn) => {
+        btn.addEventListener('click', (e) => {
+          const id = e.currentTarget.dataset.id;
+          const record = holidays.find((h) => h.crc6f_hr_holidaysid === id);
+          editId = id;
+          renderHolidayModal(record);
+        });
       });
-    });
 
-    document.querySelectorAll('.holiday-delete-btn').forEach((btn) => {
-      btn.addEventListener('click', (e) => {
-        const id = e.currentTarget.dataset.id;
-        handleDeleteHoliday(id);
+      document.querySelectorAll('.holiday-delete-btn').forEach((btn) => {
+        btn.addEventListener('click', (e) => {
+          const id = e.currentTarget.dataset.id;
+          handleDeleteHoliday(id);
+        });
       });
-    });
+    }
   } catch (err) {
     console.error('Failed to load holidays:', err);
     tbody.innerHTML = '<tr><td colspan="4" class="placeholder-text error-message">Failed to load holidays. Please try again.</td></tr>';
@@ -186,13 +205,13 @@ const loadHolidays = async () => {
 };
 
 export async function renderHolidaysPage() {
-  const { isAdmin, isManager, role } = getUserAccessContext();
-  const canAddHoliday = isAdmin || isManager || role === 'L3';
+  const { isAdmin } = getUserAccessContext();
+  canManageHolidays = Boolean(isAdmin);
 
   const controls = `
     <div class="employee-controls">
       <div class="employee-control-actions">
-        ${canAddHoliday ? '<button id="add-holiday-btn" class="btn btn-primary"><i class="fa-solid fa-plus"></i> ADD HOLIDAY</button>' : ''}
+        ${canManageHolidays ? '<button id="add-holiday-btn" class="btn btn-primary"><i class="fa-solid fa-plus"></i> ADD HOLIDAY</button>' : ''}
       </div>
     </div>
   `;
