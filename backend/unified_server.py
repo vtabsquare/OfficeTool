@@ -3135,13 +3135,19 @@ def login():
                 email_field = field_map.get("email")
                 id_field = field_map.get("id")
                 desig_field = field_map.get("designation")
-                name_field = field_map.get("name")
+                fullname_field = field_map.get("fullname")
+                firstname_field = field_map.get("firstname")
+                lastname_field = field_map.get("lastname")
 
                 if email_field and id_field:
                     safe_email = username.replace("'", "''")
                     select_cols = [id_field, email_field]
-                    if name_field:
-                        select_cols.append(name_field)
+                    if fullname_field:
+                        select_cols.append(fullname_field)
+                    if firstname_field:
+                        select_cols.append(firstname_field)
+                    if lastname_field:
+                        select_cols.append(lastname_field)
                     if desig_field:
                         select_cols.append(desig_field)
 
@@ -3158,11 +3164,12 @@ def login():
                             emp = vals[0]
                             employee_id_value = emp.get(id_field)
                             employee_designation = emp.get(desig_field)
-                            employee_name = emp.get(name_field)
+                            employee_name = _get_employee_display_name(emp, field_map)
 
                             designation_lower = (employee_designation or "").lower()
                             if "admin" in designation_lower:
                                 is_admin_flag = True
+
                             if "manager" in designation_lower:
                                 is_manager_flag = True
 
