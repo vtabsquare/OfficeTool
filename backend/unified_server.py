@@ -3124,6 +3124,7 @@ def login():
             # -------------------------
             employee_id_value = None
             employee_designation = None
+            employee_name = None
             is_admin_flag = access_level == "L3"
             is_manager_flag = access_level in ("L2", "L3")
 
@@ -3134,10 +3135,13 @@ def login():
                 email_field = field_map.get("email")
                 id_field = field_map.get("id")
                 desig_field = field_map.get("designation")
+                name_field = field_map.get("name")
 
                 if email_field and id_field:
                     safe_email = username.replace("'", "''")
                     select_cols = [id_field, email_field]
+                    if name_field:
+                        select_cols.append(name_field)
                     if desig_field:
                         select_cols.append(desig_field)
 
@@ -3154,6 +3158,7 @@ def login():
                             emp = vals[0]
                             employee_id_value = emp.get(id_field)
                             employee_designation = emp.get(desig_field)
+                            employee_name = emp.get(name_field)
 
                             designation_lower = (employee_designation or "").lower()
                             if "admin" in designation_lower:
@@ -3165,12 +3170,14 @@ def login():
                 print("ACCESS LOGIC ERROR:", e)
 
             # SUCCESS LOGIN RESPONSE
+            # Use employee name from master table if available, otherwise fallback to login table
+            display_name = employee_name or record.get('crc6f_employeename') or username
             return jsonify({
                 "status": "success",
-                "message": f"Welcome, {record.get('crc6f_employeename')}",
+                "message": f"Welcome, {display_name}",
                 "user": {
                     "email": record.get("crc6f_username"),
-                    "name": record.get("crc6f_employeename"),
+                    "name": display_name,
                     "employee_id": employee_id_value,
                     "designation": employee_designation,
                     "access_level": access_level,
