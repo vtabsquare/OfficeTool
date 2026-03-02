@@ -39,6 +39,7 @@ const loaders = {
   "/compoff": async () => (await import('./pages/comp_off.js')).renderCompOffPage,
   "/attendance-my": async () => (await import('./pages/attendance.js')).renderMyAttendancePage,
   "/attendance-team": async () => (await import('./pages/attendance.js')).renderTeamAttendancePage,
+  "/admin-dashboard": async () => (await import('./pages/adminDashboard.js')).renderAdminDashboardPage,
   "/assets": async () => (await import('./pages/assets.js')).renderAssetsPage,
   "/attendance-holidays": async () => (await import('./pages/holidays.js')).renderHolidaysPage,
   "/onboarding": async () => (await import('./pages/onboarding.js')).renderOnboardingPage,
@@ -142,6 +143,12 @@ export const router = async () => {
   if (path === '/attendance-team') {
     if (!(isL2OrL3User() || isTeamLeadUser())) {
       renderAccessDenied("#/attendance-my");
+      return;
+    }
+  }
+  if (path === '/admin-dashboard') {
+    if (!isAdminUser()) {
+      renderAccessDenied("#/");
       return;
     }
   }

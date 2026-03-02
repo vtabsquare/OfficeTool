@@ -6935,7 +6935,7 @@ def get_on_leave_today():
         print(f"\n{'='*70}")
         print(f"[FETCH] FETCHING EMPLOYEES ON LEAVE FOR TODAY")
         print(f"{'='*70}")
-        
+
         token = get_access_token()
         headers = {
             "Authorization": f"Bearer {token}",
@@ -6943,18 +6943,18 @@ def get_on_leave_today():
             "OData-MaxVersion": "4.0",
             "OData-Version": "4.0"
         }
-        
+
         # Get today's date in ISO format
         today = datetime.now().date().isoformat()
         print(f"   [DATE] Today's date: {today}")
-        
+
         # Get employee IDs from query parameter
         employee_ids = request.args.get('employee_ids', '')
         ids_list = [v.strip().upper() for v in employee_ids.split(',') if v.strip()]
-        
+
         # Build filter for approved leaves that include today
         date_filter = f"crc6f_startdate le '{today}' and crc6f_enddate ge '{today}' and crc6f_status eq 'Approved'"
-        
+
         # If specific employee IDs provided, add them to filter
         if ids_list:
             emp_filter_parts = [f"crc6f_employeeid eq '{emp_id}'" for emp_id in ids_list]
@@ -6962,14 +6962,14 @@ def get_on_leave_today():
             full_filter = f"?$filter={date_filter}{emp_filter}"
         else:
             full_filter = f"?$filter={date_filter}"
-        
+
         # Build the URL
         url = f"{RESOURCE}/api/data/v9.2/{LEAVE_ENTITY}{full_filter}"
         print(f"   [URL] Request URL: {url}")
-        
+
         # Make the request
         response = requests.get(url, headers=headers)
-        
+
         if response.status_code != 200:
             print(f"   [ERROR] Failed to fetch leaves: {response.status_code}")
             return jsonify({
@@ -6977,10 +6977,10 @@ def get_on_leave_today():
                 "error": f"Failed to fetch leaves: {response.status_code}",
                 "leaves": []
             }), 500
-        
+
         records = response.json().get("value", [])
         print(f"   [DATA] Found {len(records)} employees on leave today")
-        
+
         # Format the response
         leaves = []
         for r in records:
@@ -6992,17 +6992,17 @@ def get_on_leave_today():
                 "status": r.get("crc6f_status"),
                 "reason": r.get("crc6f_reason", "")
             })
-        
+
         print(f"   [SEND] Returning {len(leaves)} leave records")
         print(f"{'='*70}\n")
-        
+
         return jsonify({
             "success": True,
             "leaves": leaves,
             "count": len(leaves),
             "date": today
         }), 200
-        
+
     except Exception as e:
         print(f"   [ERROR] ERROR in /api/leaves/on-leave-today: {str(e)}")
         import traceback
@@ -7015,15 +7015,196 @@ def get_on_leave_today():
         }), 500
 
 
-# ================== UTILITY ROUTES ==================
-@app.route('/ping', methods=['GET'])
-def ping():
-    """Health check endpoint"""
-    return jsonify({
-        "message": "Unified Backend Server is running [OK]",
-        "services": ["attendance", "leave_tracker", "asset_management", "employee_master"],
-        "timestamp": datetime.now().isoformat()
-    }), 200
+@app.route('/api/admin/attendance-monitoring/today', methods=['GET'])
+def get_admin_attendance_monitoring_today():
+    """Return org-wide checked-in vs not-checked-in snapshot for today's date."""
+    try:
+        token = get_access_token()
+
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json",
+            "OData-MaxVersion": "4.0",
+            "OData-Version": "4.0",
+        }
+
+        requester_employee_id = _resolve_employee_identifier(request.args.get('requester_employee_id', ''), token)
+        requester_email = (request.args.get('requester_email') or '').strip().lower()
+
+        def _is_admin_requestor(emp_id: str, email: str) -> bool:
+            admin_emp_ids = {'EMP001'}
+            admin_emails = {'bala.t@vtab.com'}
+
+            if emp_id in admin_emp_ids or email in admin_emails:
+                return True
+
+            try:
+                login_table = get_login_table(token)
+                if not login_table:
+                    return False
+
+                access_level = ''
+                if email:
+                    safe_email = _safe_odata_string(email)
+                    url = (
+                        f"{BASE_URL}/{login_table}"
+                        f"?$top=1&$select=crc6f_accesslevel"
+                        f"&$filter=crc6f_username eq '{safe_email}'"
+                    )
+                    resp = requests.get(url, headers=headers, timeout=20)
+                    if resp.status_code == 200:
+                        vals = resp.json().get('value', [])
+                        if vals:
+                            access_level = _normalize_access_level(vals[0].get('crc6f_accesslevel'))
+
+                if not access_level and emp_id:
+                    safe_emp = _safe_odata_string(emp_id)
+                    url = (
+                        f"{BASE_URL}/{login_table}"
+                        f"?$top=1&$select=crc6f_accesslevel"
+                        f"&$filter=crc6f_userid eq '{safe_emp}'"
+                    )
+                    resp = requests.get(url, headers=headers, timeout=20)
+                    if resp.status_code == 200:
+                        vals = resp.json().get('value', [])
+                        if vals:
+                            access_level = _normalize_access_level(vals[0].get('crc6f_accesslevel'))
+
+                return access_level in ('L3', 'L4')
+            except Exception:
+                return False
+
+        if not _is_admin_requestor(requester_employee_id, requester_email):
+            return jsonify({"success": False, "error": "Admin access required"}), 403
+
+        today = datetime.now().date().isoformat()
+
+        def _norm_emp(value):
+            return str(value or '').strip().upper()
+
+        def _to_sort_key(row):
+            try:
+                out_ts = row.get(LA_FIELD_CHECKOUT_TS)
+                in_ts = row.get(LA_FIELD_CHECKIN_TS)
+                if out_ts is not None:
+                    return int(out_ts)
+                if in_ts is not None:
+                    return int(in_ts)
+            except Exception:
+                pass
+            return str(row.get(LA_FIELD_CHECKIN_TIME) or '')
+
+        # 1) Load active employee directory
+        employee_entity = get_employee_entity_set(token)
+        field_map = get_field_map(employee_entity)
+        id_field = field_map.get('id')
+        if not id_field:
+            return jsonify({"success": False, "error": "Employee ID field mapping unavailable"}), 500
+
+        employee_select = [id_field]
+        for key in ('fullname', 'firstname', 'lastname', 'active'):
+            logical = field_map.get(key)
+            if logical and logical not in employee_select:
+                employee_select.append(logical)
+
+        emp_url = f"{BASE_URL}/{employee_entity}?$select={','.join(employee_select)}&$top=5000"
+        emp_resp = requests.get(emp_url, headers=headers, timeout=30)
+        if emp_resp.status_code != 200:
+            return jsonify({
+                "success": False,
+                "error": f"Failed to fetch employees ({emp_resp.status_code})",
+            }), 500
+
+        employee_rows = emp_resp.json().get('value', [])
+        active_employees = {}
+        active_field = field_map.get('active')
+        for rec in employee_rows:
+            emp_id = _norm_emp(rec.get(id_field))
+            if not emp_id:
+                continue
+
+            include_employee = True
+            if active_field:
+                flag = rec.get(active_field)
+                if isinstance(flag, bool):
+                    include_employee = flag
+                else:
+                    sval = str(flag or '').strip().lower()
+                    if sval in ('inactive', 'false', '0', 'no', 'disabled'):
+                        include_employee = False
+
+            if not include_employee:
+                continue
+
+            active_employees[emp_id] = _get_employee_display_name(rec, field_map) or emp_id
+
+        # 2) Load today's login activity records
+        select_login = ','.join([
+            LA_FIELD_EMPLOYEE_ID,
+            LA_FIELD_CHECKIN_TIME,
+            LA_FIELD_CHECKOUT_TIME,
+            LA_FIELD_CHECKIN_TS,
+            LA_FIELD_CHECKOUT_TS,
+        ])
+        login_filter = f"?$select={select_login}&$filter={LA_FIELD_DATE} eq '{today}'&$top=5000"
+        login_url = f"{BASE_URL}/{LOGIN_ACTIVITY_ENTITY}{login_filter}"
+        login_resp = requests.get(login_url, headers=headers, timeout=30)
+        if login_resp.status_code != 200:
+            return jsonify({
+                "success": False,
+                "error": f"Failed to fetch login activity ({login_resp.status_code})",
+            }), 500
+
+        login_rows = login_resp.json().get('value', [])
+        latest_by_employee = {}
+        for row in login_rows:
+            emp_id = _norm_emp(row.get(LA_FIELD_EMPLOYEE_ID))
+            if not emp_id:
+                continue
+            prev = latest_by_employee.get(emp_id)
+            if (not prev) or (_to_sort_key(row) >= _to_sort_key(prev)):
+                latest_by_employee[emp_id] = row
+
+        checked_in = []
+        checked_in_ids = set()
+        checked_out_ids = set()
+
+        for emp_id, row in latest_by_employee.items():
+            check_in = row.get(LA_FIELD_CHECKIN_TIME)
+            check_out = row.get(LA_FIELD_CHECKOUT_TIME)
+            if check_in and not check_out:
+                checked_in_ids.add(emp_id)
+                checked_in.append({
+                    "employee_id": emp_id,
+                    "employee_name": active_employees.get(emp_id) or emp_id,
+                    "check_in": check_in,
+                    "check_out": None,
+                    "status": "Checked In",
+                })
+            elif check_in and check_out:
+                checked_out_ids.add(emp_id)
+
+        not_checked = []
+        for emp_id in sorted(active_employees.keys()):
+            if emp_id in checked_in_ids:
+                continue
+            not_checked.append({
+                "employee_id": emp_id,
+                "employee_name": active_employees.get(emp_id) or emp_id,
+                "status": "Checked Out" if emp_id in checked_out_ids else "Not Checked In",
+            })
+
+        return jsonify({
+            "success": True,
+            "date": today,
+            "total_employees": len(active_employees),
+            "checked_in_count": len(checked_in),
+            "not_checked_in_count": len(not_checked),
+            "checked_in_employees": sorted(checked_in, key=lambda x: x.get('employee_id') or ''),
+            "not_checked_in_employees": not_checked,
+        }), 200
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
 
 
 @app.route('/api/info', methods=['GET'])

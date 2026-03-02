@@ -24,6 +24,11 @@ export const getSidebarHTML = () => {
         <li><p class="nav-section-title">APPLICATIONS</p></li>
         <li><a href="#/" class="nav-link" data-page="home"><i class="fa-solid fa-house"></i> Home</a></li>
         ${
+          isAdmin
+            ? '<li><a href="#/admin-dashboard" class="nav-link" data-page="admin-dashboard"><i class="fa-solid fa-chart-line"></i> Admin Dashboard</a></li>'
+            : ""
+        }
+        ${
           canViewEmployeeModule
             ? `
         <li class="nav-group" data-group="employee-module">

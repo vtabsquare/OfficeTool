@@ -1,7 +1,7 @@
 from flask import Blueprint, request, jsonify
 from datetime import datetime, timezone, timedelta
 import os, json, traceback, re
-from dataverse_helper import get_access_token, update_record, create_record
+from dataverse_helper import get_access_token, update_record, create_record, get_employee_name
 import requests
 import urllib.parse
 
@@ -926,6 +926,203 @@ def timer_status():
                 "elapsed_seconds": elapsed,
             })
     return jsonify({"success": True, "active": False})
+
+
+@bp_time.route("/admin/active-tasks", methods=["GET"])
+def admin_active_tasks_snapshot():
+    """Return organization-wide currently running tasks (one active task per employee)."""
+    try:
+        requester_employee_id = str(request.args.get("requester_employee_id") or "").strip().upper()
+        requester_email = str(request.args.get("requester_email") or "").strip().lower()
+
+        def _normalize_access_level(value):
+            level = str(value or "").strip().upper()
+            if level in ("L1", "L2", "L3", "L4"):
+                return level
+            return ""
+
+        def _resolve_admin_access(headers):
+            admin_emp_ids = {"EMP001"}
+            admin_emails = {"bala.t@vtab.com"}
+            if requester_employee_id in admin_emp_ids or requester_email in admin_emails:
+                return True
+
+            if not requester_employee_id and not requester_email:
+                return False
+
+            login_table_candidates = [
+                "crc6f_hr_login_detailses",
+                "crc6f_hr_login_details",
+                "crc6f_hr_logindetails",
+                "crc6f_hr_login_details_tb",
+            ]
+
+            def _fetch_level(filter_expr):
+                if not filter_expr:
+                    return ""
+                safe_filter = urllib.parse.quote(filter_expr, safe="()'= $")
+                for table in login_table_candidates:
+                    url = (
+                        f"{RESOURCE}{DV_API}/{table}"
+                        f"?$top=1&$select=crc6f_accesslevel"
+                        f"&$filter={safe_filter}"
+                    )
+                    resp = requests.get(url, headers=headers, timeout=20)
+                    if resp.status_code == 404:
+                        continue
+                    if resp.status_code != 200:
+                        return ""
+                    values = resp.json().get("value", [])
+                    if values:
+                        return _normalize_access_level(values[0].get("crc6f_accesslevel"))
+                return ""
+
+            if requester_email:
+                safe_email = requester_email.replace("'", "''")
+                level = _fetch_level(f"crc6f_username eq '{safe_email}'")
+                if level in ("L3", "L4"):
+                    return True
+
+            if requester_employee_id:
+                safe_emp = requester_employee_id.replace("'", "''")
+                level = _fetch_level(f"crc6f_userid eq '{safe_emp}'")
+                if level in ("L3", "L4"):
+                    return True
+
+            return False
+
+        now_utc = datetime.now(timezone.utc)
+        entries = _read_entries()
+
+        token = get_access_token()
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json",
+            "OData-Version": "4.0",
+            "Content-Type": "application/json",
+            "Prefer": 'odata.include-annotations="*"',
+        }
+
+        if not _resolve_admin_access(headers):
+            return jsonify({"success": False, "error": "Admin access required", "items": []}), 403
+
+        latest_by_user = {}
+        for rec in entries:
+            if rec.get("end"):
+                continue
+
+            user_id = str(rec.get("user_id") or "").strip().upper()
+            task_guid = str(rec.get("task_guid") or "").strip()
+            if not user_id or not task_guid:
+                continue
+
+            start_raw = rec.get("start")
+            try:
+                start_dt = datetime.fromisoformat(str(start_raw)) if start_raw else now_utc
+            except Exception:
+                start_dt = now_utc
+
+            existing = latest_by_user.get(user_id)
+            if (not existing) or (start_dt > existing["_start_dt"]):
+                latest_by_user[user_id] = {
+                    "user_id": user_id,
+                    "task_guid": task_guid,
+                    "start": start_raw,
+                    "_start_dt": start_dt,
+                }
+
+        active_rows = list(latest_by_user.values())
+        if not active_rows:
+            return jsonify({"success": True, "count": 0, "timestamp_utc": now_utc.isoformat(), "items": []}), 200
+
+        # Fetch active task details
+        task_map = {}
+        project_ids = set()
+        for row in active_rows:
+            safe_guid = row["task_guid"].replace("'", "''")
+            url = (
+                f"{RESOURCE}{DV_API}/{ENTITY_SET_TASKS}"
+                f"?$select=crc6f_hr_taskdetailsid,crc6f_taskid,crc6f_taskname,crc6f_projectid"
+                f"&$filter=crc6f_hr_taskdetailsid eq '{safe_guid}'&$top=1"
+            )
+            resp = requests.get(url, headers=headers, timeout=20)
+            if not resp.ok:
+                continue
+            values = resp.json().get("value", [])
+            if not values:
+                continue
+            rec = values[0]
+            guid = str(rec.get("crc6f_hr_taskdetailsid") or "").strip()
+            if not guid:
+                continue
+            pid = str(rec.get("crc6f_projectid") or "").strip()
+            if pid:
+                project_ids.add(pid)
+            task_map[guid] = {
+                "task_id": rec.get("crc6f_taskid"),
+                "task_name": rec.get("crc6f_taskname"),
+                "project_id": pid,
+            }
+
+        # Fetch project names for active project IDs
+        project_name_map = {}
+        for pid in sorted(project_ids):
+            safe_pid = pid.replace("'", "''")
+            p_url = (
+                f"{RESOURCE}{DV_API}/{ENTITY_SET_PROJECTS}"
+                f"?$select=crc6f_projectid,crc6f_projectname"
+                f"&$filter=crc6f_projectid eq '{safe_pid}'&$top=1"
+            )
+            p_resp = requests.get(p_url, headers=headers, timeout=20)
+            if not p_resp.ok:
+                continue
+            p_vals = p_resp.json().get("value", [])
+            if not p_vals:
+                continue
+            p_rec = p_vals[0]
+            p_id = str(p_rec.get("crc6f_projectid") or "").strip()
+            if p_id:
+                project_name_map[p_id] = p_rec.get("crc6f_projectname") or p_id
+
+        employee_name_cache = {}
+        items = []
+        for row in sorted(active_rows, key=lambda r: (r.get("user_id") or "", r.get("task_guid") or "")):
+            task_guid = row.get("task_guid")
+            task_meta = task_map.get(task_guid, {})
+            project_id = task_meta.get("project_id") or ""
+
+            user_id = row.get("user_id")
+            if user_id not in employee_name_cache:
+                try:
+                    employee_name_cache[user_id] = get_employee_name(user_id) or user_id
+                except Exception:
+                    employee_name_cache[user_id] = user_id
+
+            start_dt = row.get("_start_dt") or now_utc
+            if getattr(start_dt, "tzinfo", None) is None:
+                start_dt = start_dt.replace(tzinfo=timezone.utc)
+            elapsed_seconds = max(0, int((now_utc - start_dt).total_seconds()))
+
+            items.append({
+                "employee_id": user_id,
+                "employee_name": employee_name_cache.get(user_id) or user_id,
+                "task_guid": task_guid,
+                "task_id": task_meta.get("task_id") or task_guid,
+                "task_name": task_meta.get("task_name") or task_meta.get("task_id") or task_guid,
+                "project_id": project_id,
+                "project_name": project_name_map.get(project_id) or project_id,
+                "started_at_utc": start_dt.astimezone(timezone.utc).isoformat(),
+                "elapsed_seconds": elapsed_seconds,
+            })
+
+        return jsonify({
+            "success": True,
+            "count": len(items),
+            "timestamp_utc": now_utc.isoformat(),
+            "items": items,
+        }), 200
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e), "items": []}), 500
 
 
 @bp_time.route("/time-entries/start", methods=["POST"])
