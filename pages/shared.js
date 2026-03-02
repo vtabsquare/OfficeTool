@@ -1660,11 +1660,41 @@ export const renderMyTimesheetPage = async () => {
             setTimeout(() => {
                 const form = document.getElementById('modal-form');
                 if (!form) return;
+
+                const projectSel = document.getElementById('mr-project');
+                const taskSel = document.getElementById('mr-task');
+                const normalizeProjectId = (val) => String(val || '').trim().toUpperCase();
+
+                const rebuildTaskOptions = () => {
+                    if (!taskSel) return;
+                    const selectedProjectId = normalizeProjectId(projectSel?.value || '');
+                    const currentTaskValue = String(taskSel.value || '').trim();
+                    const filteredTasks = (tasks || []).filter((t) => {
+                        if (!selectedProjectId) return true;
+                        const taskProjectId = normalizeProjectId(t?.project_id || t?.crc6f_projectid || t?.projectId || '');
+                        return taskProjectId === selectedProjectId;
+                    });
+
+                    taskSel.innerHTML = ['<option value="">Select task</option>']
+                        .concat(filteredTasks.map(t => `<option value="${t.guid}">${t.task_name || t.task_id}</option>`))
+                        .join('');
+
+                    if (currentTaskValue && filteredTasks.some(t => String(t?.guid || '').trim() === currentTaskValue)) {
+                        taskSel.value = currentTaskValue;
+                    }
+                };
+
+                if (projectSel && taskSel) {
+                    projectSel.addEventListener('change', rebuildTaskOptions);
+                    rebuildTaskOptions();
+                }
+
                 form.addEventListener('submit', (ev) => {
                     ev.preventDefault();
                     const pid = document.getElementById('mr-project')?.value || '';
                     const tg = document.getElementById('mr-task')?.value || '';
                     const bill = document.getElementById('mr-billing')?.value || 'Non-billable';
+
                     const selProject = projects.find(p => (p.crc6f_projectid || p.id) === pid) || {};
                     const projectName = selProject.crc6f_projectname || selProject.name || pid || 'Manual project';
                     const selTask = tasks.find(t => String(t.guid) === String(tg)) || {};
