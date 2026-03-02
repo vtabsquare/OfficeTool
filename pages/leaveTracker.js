@@ -367,6 +367,13 @@ export const renderLeaveTrackerPage = async (
             appliedBy = resolvedId;
           }
         }
+        const leaveTypeValue = String(l.leave_type || "").trim();
+        const leaveTypeNorm = leaveTypeValue.toLowerCase();
+        const isCompOffLeaveType =
+          leaveTypeNorm === "co" ||
+          leaveTypeNorm === "comp off" ||
+          leaveTypeNorm === "compoff" ||
+          leaveTypeNorm === "compensatory off";
         return {
           id: l.leave_id,
           startDate: l.start_date,
@@ -376,7 +383,9 @@ export const renderLeaveTrackerPage = async (
           approvalStatus: l.status || "Pending",
           leaveCount: l.total_days,
           appliedDate: l.start_date, // Use start_date as applied date if not stored
-          compensationType: l.paid_unpaid,
+          compensationType: isCompOffLeaveType && String(l.paid_unpaid || "").trim().toLowerCase() === "paid"
+            ? "Compensatory Off"
+            : l.paid_unpaid,
         };
       });
 
@@ -888,7 +897,6 @@ export const showApplyLeaveModal = () => {
                                 <option value="" disabled selected>Select leave type</option>
                                 <option value="Casual Leave">Casual Leave</option>
                                 <option value="Sick Leave">Sick Leave</option>
-                                <option value="Comp Off">Comp Off</option>
                             </select>
                         </div>
                     </div>
@@ -899,6 +907,7 @@ export const showApplyLeaveModal = () => {
                             <select class="input-control" id="compensationType" name="compensationType" required>
                                 <option value="" disabled selected>Select compensation</option>
                                 <option value="Paid">Paid</option>
+                                <option value="Compensatory Off">Compensatory Off</option>
                                 <option value="Unpaid">Unpaid</option>
                             </select>
                         </div>
@@ -989,12 +998,38 @@ export const showApplyLeaveModal = () => {
         }
       };
 
+      const isCompOffCompensation = (value) => {
+        const v = String(value || "").trim().toLowerCase();
+        return (
+          v === "compensatory off" ||
+          v === "comp off" ||
+          v === "compoff" ||
+          v === "co"
+        );
+      };
+
       const refreshCompensationOptions = async () => {
         if (!leaveSel || !compSel) return;
         const leaveType = leaveSel.value;
         const paidOption = Array.from(compSel.options).find(
           (o) => o.value === "Paid"
         );
+        const compOffOption = Array.from(compSel.options).find(
+          (o) => isCompOffCompensation(o.value)
+        );
+        const requested = computeRequestedDays();
+
+        let compOffAvailable = 0;
+        try {
+          compOffAvailable = await fetchLeaveBalance(empId, "Comp Off");
+        } catch {}
+        const canUseCompOff = Number(compOffAvailable) >= Number(requested);
+        if (compOffOption) {
+          compOffOption.disabled = !canUseCompOff;
+        }
+        if (!canUseCompOff && isCompOffCompensation(compSel.value)) {
+          compSel.value = "Paid";
+        }
 
         if (leaveType === "Casual Leave" || leaveType === "Sick Leave") {
           if (paidOption) paidOption.disabled = false;
@@ -1006,7 +1041,6 @@ export const showApplyLeaveModal = () => {
         try {
           available = await fetchLeaveBalance(empId, leaveType);
         } catch { }
-        const requested = computeRequestedDays();
         const canPay = Number(available) >= Number(requested);
         if (paidOption) {
           paidOption.disabled = !canPay;
@@ -1109,12 +1143,21 @@ export const showApplyLeaveModal = () => {
             const msgEl = document.getElementById("leave-preview-msg");
             if (msgEl) {
               const type = leaveSel.value;
+              const compType = compSel?.value || "";
               let msg = "";
               if (type === "Casual Leave" || type === "Sick Leave") {
-                const avail = type === "Casual Leave" ? clAvail : slAvail;
-                const paidDays = Math.min(avail, req);
-                const unpaidDays = Math.max(0, req - paidDays);
-                msg = `You are applying for ${req} ${type} day(s).Available: ${avail}. This will be auto - split as ${paidDays} day(s) Paid and ${unpaidDays} day(s) Unpaid.`;
+                if (isCompOffCompensation(compType)) {
+                  const avail = coAvail;
+                  const canPay = avail >= req;
+                  msg = canPay
+                    ? `You are applying for ${req} ${type} day(s) using Compensatory Off balance.Available Comp Off: ${avail}. This will be treated as Paid and deducted from Comp Off.`
+                    : `Insufficient Comp Off balance(Available: ${avail}, Requested: ${req}). Please choose Paid or Unpaid.`;
+                } else {
+                  const avail = type === "Casual Leave" ? clAvail : slAvail;
+                  const paidDays = Math.min(avail, req);
+                  const unpaidDays = Math.max(0, req - paidDays);
+                  msg = `You are applying for ${req} ${type} day(s).Available: ${avail}. This will be auto - split as ${paidDays} day(s) Paid and ${unpaidDays} day(s) Unpaid.`;
+                }
               } else if (type === "Comp Off") {
                 const avail = coAvail;
                 const canPay = avail >= req;
@@ -1168,6 +1211,16 @@ export const handleApplyLeave = async (e) => {
   const endDate = document.getElementById("endDate").value;
   const leaveType = document.getElementById("leaveType").value;
   const compensationType = document.getElementById("compensationType").value;
+  const compTypeNorm = String(compensationType || "").trim().toLowerCase();
+  const isCompOffCompensation =
+    compTypeNorm === "compensatory off" ||
+    compTypeNorm === "comp off" ||
+    compTypeNorm === "compoff" ||
+    compTypeNorm === "co";
+  const payloadLeaveType = isCompOffCompensation ? "Comp Off" : leaveType;
+  const payloadCompensationType = isCompOffCompensation
+    ? "Paid"
+    : compensationType;
   const reason = document.getElementById("reason")?.value || "";
 
   if (!startDate || !endDate)
@@ -1273,12 +1326,12 @@ export const handleApplyLeave = async (e) => {
   }
 
   const leavePayload = {
-    leave_type: leaveType,
+    leave_type: payloadLeaveType,
     start_date: startDate,
     end_date: endDate,
     employee_id: appliedBy,
     applied_by: appliedBy,
-    paid_unpaid: compensationType,
+    paid_unpaid: payloadCompensationType,
     status: "Pending",
     reason,
   };
@@ -1286,12 +1339,19 @@ export const handleApplyLeave = async (e) => {
   console.log("📤 Payload prepared:", leavePayload);
 
   try {
-    // Client-side guard: if Paid, ensure sufficient balance for non CL/SL types
-    if (String(compensationType).toLowerCase() === "paid") {
+    // Client-side guard for paid-like compensation modes
+    if (compTypeNorm === "paid" || isCompOffCompensation) {
       try {
         const requestedDays = calculateLeaveDays(startDate, endDate);
 
-        if (leaveType === "Casual Leave" || leaveType === "Sick Leave") {
+        if (isCompOffCompensation) {
+          const availableBalance = await fetchLeaveBalance(appliedBy, "Comp Off");
+          if (availableBalance < requestedDays) {
+            return alert(
+              `Insufficient Comp Off balance.Available: ${availableBalance}, Requested: ${requestedDays}. Please choose Paid or Unpaid.`
+            );
+          }
+        } else if (leaveType === "Casual Leave" || leaveType === "Sick Leave") {
           // For CL/SL, backend will auto-split into Paid + Unpaid based on available balance.
         } else {
           const availableBalance = await fetchLeaveBalance(
@@ -1360,7 +1420,7 @@ export const handleApplyLeave = async (e) => {
         await notifyAdminLeaveApplication(
           result?.leave_id || "N/A",
           appliedBy, // Use the resolved employee ID
-          leaveType,
+          payloadLeaveType,
           startDate,
           endDate
         );
@@ -1370,7 +1430,7 @@ export const handleApplyLeave = async (e) => {
 
       // Show success toast notification
       const requestedDays = calculateLeaveDays(startDate, endDate);
-      showLeaveApplicationToast(leaveType, requestedDays);
+      showLeaveApplicationToast(payloadLeaveType, requestedDays);
 
       // Now close modal
       closeModal();
