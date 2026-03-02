@@ -196,24 +196,16 @@ export const renderCompOffPage = async () => {
 
 export const showRequestCompOffModal = () => {
   const formHTML = `
-        <div class="modal-form modern-form compoff-form">
+        <div class="modal-form modern-form leave-form compoff-request-form">
             <div class="form-section">
-                <div class="form-section-header">
-                    <div>
-                        <p class="form-eyebrow">COMP OFF</p>
-                        <h3>Request compensatory off</h3>
+                <div class="form-grid">
+                    <div class="form-field">
+                        <label class="form-label" for="dateWorked">Date</label>
+                        <input type="date" id="dateWorked" class="input-control" required>
                     </div>
-                </div>
-                <div class="form-grid two-col">
-                    <div class="form-group">
-                        <i class="fa-solid fa-calendar-check"></i>
-                        <input type="date" id="dateWorked" placeholder=" " required>
-                        <label for="dateWorked">Date Worked</label>
-                    </div>
-                    <div class="form-group" style="grid-column: 1 / -1;">
-                        <i class="fa-solid fa-comment"></i>
-                        <textarea id="reason" rows="3" placeholder=" " required></textarea>
-                        <label for="reason">Reason</label>
+                    <div class="form-field">
+                        <label class="form-label" for="reason">Reason</label>
+                        <textarea id="reason" class="input-control" rows="4" placeholder="Enter reason" required></textarea>
                     </div>
                 </div>
             </div>
