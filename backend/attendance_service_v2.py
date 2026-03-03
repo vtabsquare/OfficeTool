@@ -204,7 +204,14 @@ def fetch_attendance_record(employee_id, date_str):
         resp = requests.get(url, headers=headers, timeout=20)
         if resp.status_code == 200:
             records = resp.json().get("value", [])
-            return records[0] if records else None
+            if records:
+                rec = records[0]
+                # Guard: verify date matches (Dataverse DateTime columns can return wrong day)
+                rec_date = str(rec.get(FIELD_DATE) or "")[:10]
+                if rec_date and rec_date != date_str:
+                    print(f"[ATTENDANCE-V2] fetch_attendance_record date mismatch: wanted {date_str}, got {rec_date}, skipping")
+                    return None
+                return rec
         return None
     except Exception as e:
         print(f"[ATTENDANCE-V2] fetch_attendance_record error: {e}")
@@ -224,7 +231,14 @@ def fetch_login_activity(employee_id, date_str):
         resp = requests.get(url, headers=headers, timeout=20)
         if resp.status_code == 200:
             records = resp.json().get("value", [])
-            return records[0] if records else None
+            if records:
+                rec = records[0]
+                # Guard: verify date matches (Dataverse DateTime columns can return wrong day)
+                rec_date = str(rec.get(LA_FIELD_DATE) or "")[:10]
+                if rec_date and rec_date != date_str:
+                    print(f"[ATTENDANCE-V2] fetch_login_activity date mismatch: wanted {date_str}, got {rec_date}, skipping")
+                    return None
+                return rec
         return None
     except Exception as e:
         print(f"[ATTENDANCE-V2] fetch_login_activity error: {e}")
@@ -241,19 +255,28 @@ def upsert_login_activity(employee_id, date_str, payload):
         existing = fetch_login_activity(emp, date_str)
         
         if existing and existing.get(LA_PRIMARY_FIELD):
-            # Update existing
+            # Double-check the record date before updating
+            rec_date = str(existing.get(LA_FIELD_DATE) or "")[:10]
+            if rec_date and rec_date != date_str:
+                print(f"[ATTENDANCE-V2] upsert_login_activity: existing record date {rec_date} != target {date_str}, creating new instead")
+                existing = None
+        
+        if existing and existing.get(LA_PRIMARY_FIELD):
+            # Update existing record for today
             record_id = existing.get(LA_PRIMARY_FIELD)
             url = f"{_get_base_url()}/{LOGIN_ACTIVITY_ENTITY}({record_id})"
+            print(f"[ATTENDANCE-V2] upsert PATCH {record_id} for {date_str}")
             resp = requests.patch(url, headers=headers, json=payload, timeout=20)
             return resp.status_code < 400
         else:
-            # Create new
+            # Create new record for today
             create_payload = {
                 LA_FIELD_EMPLOYEE_ID: emp,
                 LA_FIELD_DATE: date_str,
                 **payload
             }
             url = f"{_get_base_url()}/{LOGIN_ACTIVITY_ENTITY}"
+            print(f"[ATTENDANCE-V2] upsert POST new for {date_str}")
             resp = requests.post(url, headers=headers, json=create_payload, timeout=20)
             return resp.status_code < 400
     except Exception as e:

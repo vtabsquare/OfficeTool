@@ -66,6 +66,18 @@ export async function fetchAttendanceStatus(employeeId) {
         });
         
         if (data.success) {
+            // Guard: if backend returns a record for a different day than local today,
+            // treat it as "no record" to prevent cross-day contamination.
+            const localToday = _getLocalDateStr();
+            const backendDate = (data.attendance_date || '').slice(0, 10);
+            if (backendDate && backendDate !== localToday) {
+                console.warn(`[ATTENDANCE-RENDERER] Backend date ${backendDate} != local today ${localToday}, forcing clean slate`);
+                data.has_record = false;
+                data.is_active_session = false;
+                data.timing = { total_seconds_today: 0 };
+                data.status = { code: null, label: 'Not Checked In' };
+            }
+            
             lastStatusResponse = {
                 ...data,
                 fetchedAt: Date.now(),
@@ -119,6 +131,9 @@ export async function performCheckIn(employeeId, location = null) {
     }
     
     // Update local cache with new status
+    // For a FRESH check-in (not already_checked_in), always start from 0
+    // to prevent stale cross-day data from contaminating today's session.
+    const freshTotal = data.already_checked_in ? (data.total_seconds_today || 0) : 0;
     lastStatusResponse = {
         success: true,
         server_now_utc: data.server_now_utc,
@@ -128,7 +143,7 @@ export async function performCheckIn(employeeId, location = null) {
             checkin_utc: data.checkin_utc,
             last_session_start_utc: data.checkin_utc,
             elapsed_seconds: 0,
-            total_seconds_today: data.total_seconds_today || 0
+            total_seconds_today: freshTotal
         },
         status: {
             code: data.status_code,
