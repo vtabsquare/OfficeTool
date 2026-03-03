@@ -79,6 +79,7 @@ LA_FIELD_TOTAL_SECONDS = "crc6f_total_seconds"
 # Environment
 RESOURCE = os.getenv("RESOURCE", "")
 SOCKET_SERVER_URL = os.getenv("SOCKET_SERVER_URL", "http://localhost:4001")
+ATTENDANCE_AUTOCLOSE_TZ = os.getenv("ATTENDANCE_AUTOCLOSE_TZ", "Asia/Calcutta")
 
 
 # ================== UTILITY FUNCTIONS ==================
@@ -280,7 +281,7 @@ def _auto_close_stale_sessions(employee_id, tz_name="Asia/Calcutta"):
             try:
                 tz = ZoneInfo("Asia/Calcutta")
             except Exception:
-                tz = timezone.utc
+                tz = timezone(timedelta(hours=5, minutes=30))
 
         local_today = now_utc.astimezone(tz).date().isoformat()
         token = get_access_token()
@@ -289,8 +290,8 @@ def _auto_close_stale_sessions(employee_id, tz_name="Asia/Calcutta"):
         safe_emp = emp.replace("'", "''")
         filter_q = (
             f"$filter={LA_FIELD_EMPLOYEE_ID} eq '{safe_emp}' "
-            f"and {LA_FIELD_CHECKIN_TS} ne null "
-            f"and {LA_FIELD_CHECKOUT_TS} eq null "
+            f"and ({LA_FIELD_CHECKIN_TS} ne null or {LA_FIELD_CHECKIN_TIME} ne null) "
+            f"and ({LA_FIELD_CHECKOUT_TS} eq null and {LA_FIELD_CHECKOUT_TIME} eq null) "
             f"and {LA_FIELD_DATE} lt '{local_today}'"
         )
         url = f"{_get_base_url()}/{LOGIN_ACTIVITY_ENTITY}?{filter_q}&$orderby={LA_FIELD_DATE} asc"
@@ -307,7 +308,22 @@ def _auto_close_stale_sessions(employee_id, tz_name="Asia/Calcutta"):
                 raw_date = str(row.get(LA_FIELD_DATE) or "")[:10]
                 checkin_ts = int(row.get(LA_FIELD_CHECKIN_TS) or 0)
                 base_seconds = int(row.get(LA_FIELD_BASE_SECONDS) or 0)
-                if not la_id or not raw_date or not checkin_ts:
+                if not la_id or not raw_date:
+                    continue
+
+                if not checkin_ts:
+                    try:
+                        checkin_time_raw = str(row.get(LA_FIELD_CHECKIN_TIME) or "")
+                        checkin_time_only = checkin_time_raw[:8] if len(checkin_time_raw) >= 8 else checkin_time_raw
+                        local_checkin = datetime.strptime(
+                            f"{raw_date} {checkin_time_only}",
+                            "%Y-%m-%d %H:%M:%S",
+                        ).replace(tzinfo=tz)
+                        checkin_ts = int(local_checkin.astimezone(timezone.utc).timestamp())
+                    except Exception:
+                        checkin_ts = 0
+
+                if not checkin_ts:
                     continue
 
                 day_obj = datetime.strptime(raw_date, "%Y-%m-%d").date()
@@ -387,8 +403,8 @@ def checkin_v2():
         if not employee_id:
             return jsonify({"success": False, "error": "MISSING_EMPLOYEE_ID"}), 400
 
-        # Self-heal stale open sessions from previous local days.
-        _auto_close_stale_sessions(employee_id, tz_name)
+        # Self-heal stale open sessions from previous days using business auto-close timezone.
+        _auto_close_stale_sessions(employee_id, ATTENDANCE_AUTOCLOSE_TZ)
         
         # SERVER TIME IS TRUTH
         now_utc = get_server_now_utc()
@@ -650,8 +666,8 @@ def get_status_v2(employee_id):
             # Fallback to UTC if timezone parsing fails
             today_date = now_utc.strftime("%Y-%m-%d")
 
-        # Ensure forgotten checkouts from prior days are auto-closed at midnight.
-        _auto_close_stale_sessions(employee_id, tz_name)
+        # Ensure forgotten checkouts from prior days are auto-closed at business midnight.
+        _auto_close_stale_sessions(employee_id, ATTENDANCE_AUTOCLOSE_TZ)
         
         # Get both records
         existing_att = fetch_attendance_record(employee_id, today_date)
