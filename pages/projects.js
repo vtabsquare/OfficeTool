@@ -979,6 +979,11 @@ export function showProjectModal(p) {
         opt.selected = true;
       }
 
+      // ✅ Default to EMP002 Vignesh Raja S for new projects
+      if (!p?.manager && m.name.trim().toLowerCase() === "vignesh raja s") {
+        opt.selected = true;
+      }
+
       mgrSelect.appendChild(opt);
     });
 
