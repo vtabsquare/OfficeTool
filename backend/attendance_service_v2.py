@@ -287,40 +287,18 @@ def _auto_close_stale_sessions(employee_id, tz_name="Asia/Calcutta"):
         headers = _get_headers(token)
 
         safe_emp = emp.replace("'", "''")
-
-        # Try two filter strategies because Dataverse may store crc6f_date
-        # as plain Date (matches 'lt YYYY-MM-DD') OR as DateTime
-        # (needs 'lt YYYY-MM-DDT00:00:00Z').  Also widen to include legacy
-        # rows that only have time-string fields (no timestamp fields).
-        today_dt_iso = f"{local_today}T00:00:00Z"
-        open_session_cond = (
-            f"({LA_FIELD_CHECKIN_TS} ne null or {LA_FIELD_CHECKIN_TIME} ne null) "
-            f"and ({LA_FIELD_CHECKOUT_TS} eq null and {LA_FIELD_CHECKOUT_TIME} eq null)"
+        filter_q = (
+            f"$filter={LA_FIELD_EMPLOYEE_ID} eq '{safe_emp}' "
+            f"and {LA_FIELD_CHECKIN_TS} ne null "
+            f"and {LA_FIELD_CHECKOUT_TS} eq null "
+            f"and {LA_FIELD_DATE} lt '{local_today}'"
         )
-
-        stale_rows = []
-        seen_ids = set()
-
-        for date_bound in [local_today, today_dt_iso]:
-            filter_q = (
-                f"$filter={LA_FIELD_EMPLOYEE_ID} eq '{safe_emp}' "
-                f"and {open_session_cond} "
-                f"and {LA_FIELD_DATE} lt '{date_bound}'"
-            )
-            url = f"{_get_base_url()}/{LOGIN_ACTIVITY_ENTITY}?{filter_q}&$orderby={LA_FIELD_DATE} asc"
-            try:
-                resp = requests.get(url, headers=headers, timeout=20)
-                if resp.status_code == 200:
-                    for r in resp.json().get("value", []):
-                        rid = r.get(LA_PRIMARY_FIELD)
-                        if rid and rid not in seen_ids:
-                            seen_ids.add(rid)
-                            stale_rows.append(r)
-            except Exception:
-                pass
-
-        if not stale_rows:
+        url = f"{_get_base_url()}/{LOGIN_ACTIVITY_ENTITY}?{filter_q}&$orderby={LA_FIELD_DATE} asc"
+        resp = requests.get(url, headers=headers, timeout=20)
+        if resp.status_code != 200:
             return {"closed": 0}
+
+        stale_rows = resp.json().get("value", [])
         closed = 0
 
         for row in stale_rows:
@@ -328,17 +306,6 @@ def _auto_close_stale_sessions(employee_id, tz_name="Asia/Calcutta"):
                 la_id = row.get(LA_PRIMARY_FIELD)
                 raw_date = str(row.get(LA_FIELD_DATE) or "")[:10]
                 checkin_ts = int(row.get(LA_FIELD_CHECKIN_TS) or 0)
-                if not checkin_ts:
-                    try:
-                        checkin_time_raw = str(row.get(LA_FIELD_CHECKIN_TIME) or "")
-                        checkin_time_only = checkin_time_raw[:8] if len(checkin_time_raw) >= 8 else checkin_time_raw
-                        local_checkin = datetime.strptime(
-                            f"{raw_date} {checkin_time_only}",
-                            "%Y-%m-%d %H:%M:%S",
-                        ).replace(tzinfo=tz)
-                        checkin_ts = int(local_checkin.astimezone(timezone.utc).timestamp())
-                    except Exception:
-                        checkin_ts = 0
                 base_seconds = int(row.get(LA_FIELD_BASE_SECONDS) or 0)
                 if not la_id or not raw_date or not checkin_ts:
                     continue
@@ -439,12 +406,6 @@ def checkin_v2():
         # Check for existing attendance record today
         existing_att = fetch_attendance_record(employee_id, today_date)
         existing_la = fetch_login_activity(employee_id, today_date)
-
-        # Safety guard: discard stale login-activity from a prior day
-        if existing_la:
-            la_rec_date = str(existing_la.get(LA_FIELD_DATE) or "")[:10]
-            if la_rec_date and la_rec_date != today_date:
-                existing_la = None
         
         # Check if already checked in (has checkin but no checkout in login activity)
         if existing_la:
@@ -695,69 +656,6 @@ def get_status_v2(employee_id):
         # Get both records
         existing_att = fetch_attendance_record(employee_id, today_date)
         existing_la = fetch_login_activity(employee_id, today_date)
-
-        # Safety guard: if the fetched login-activity record belongs to a
-        # prior day (Dataverse DateTime/Date ambiguity can cause this), close
-        # it inline and discard it so the status response reflects today only.
-        if existing_la:
-            la_record_date = str(existing_la.get(LA_FIELD_DATE) or "")[:10]
-            if la_record_date and la_record_date != today_date:
-                # This is a stale record from a prior day — force-close it now.
-                la_checkin_ts = int(existing_la.get(LA_FIELD_CHECKIN_TS) or 0)
-                la_checkout_ts = existing_la.get(LA_FIELD_CHECKOUT_TS)
-                if la_checkin_ts and not la_checkout_ts:
-                    try:
-                        day_obj = datetime.strptime(la_record_date, "%Y-%m-%d").date()
-                        try:
-                            close_tz = ZoneInfo(tz_name)
-                        except Exception:
-                            close_tz = ZoneInfo("Asia/Calcutta")
-                        next_midnight = datetime(day_obj.year, day_obj.month, day_obj.day, 0, 0, 0, tzinfo=close_tz) + timedelta(days=1)
-                        cutoff_utc = next_midnight.astimezone(timezone.utc)
-                        cutoff_ts = int(cutoff_utc.timestamp())
-                        la_base = int(existing_la.get(LA_FIELD_BASE_SECONDS) or 0)
-                        sess_secs = max(0, cutoff_ts - la_checkin_ts)
-                        total_secs = la_base + sess_secs
-                        la_patch = {
-                            LA_FIELD_CHECKOUT_TIME: next_midnight.strftime("%H:%M:%S"),
-                            LA_FIELD_CHECKOUT_TS: cutoff_ts,
-                            LA_FIELD_TOTAL_SECONDS: total_secs,
-                        }
-                        la_rid = existing_la.get(LA_PRIMARY_FIELD)
-                        if la_rid:
-                            token = get_access_token()
-                            headers = _get_headers(token)
-                            requests.patch(
-                                f"{_get_base_url()}/{LOGIN_ACTIVITY_ENTITY}({la_rid})",
-                                headers=headers, json=la_patch, timeout=20,
-                            )
-                            # Also update attendance record for that old date
-                            old_att = fetch_attendance_record(employee_id, la_record_date)
-                            if old_att:
-                                att_rid = old_att.get(FIELD_RECORD_ID) or old_att.get("crc6f_table13id")
-                                if att_rid:
-                                    hours_val = round(total_secs / 3600.0, 2)
-                                    att_patch = {
-                                        FIELD_CHECKOUT: next_midnight.strftime("%H:%M:%S"),
-                                        FIELD_DURATION: str(hours_val),
-                                        FIELD_DURATION_INTEXT: format_duration_text(total_secs),
-                                    }
-                                    if FIELD_STATUS:
-                                        att_patch[FIELD_STATUS] = derive_status(total_secs)
-                                    try:
-                                        update_record(ATTENDANCE_ENTITY, att_rid, att_patch)
-                                    except Exception:
-                                        pass
-                            # Stop task timers
-                            try:
-                                stop_active_task_entries_for_user(employee_id, cutoff_utc.isoformat())
-                            except Exception:
-                                pass
-                        print(f"[ATTENDANCE-V2] Inline force-closed stale LA record {la_rid} from {la_record_date} for {employee_id}")
-                    except Exception as fc_err:
-                        print(f"[ATTENDANCE-V2] Inline force-close failed: {fc_err}")
-                # Discard stale record regardless of close success
-                existing_la = None
         
         if not existing_la and not existing_att:
             # No record for today
