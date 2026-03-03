@@ -78,6 +78,30 @@ export async function fetchAttendanceStatus(employeeId) {
                 data.status = { code: null, label: 'Not Checked In' };
             }
             
+            // Second guard: if active session but checkin_utc is from a different day,
+            // this is a stale cross-day session the old backend didn't close.
+            if (data.is_active_session && data.timing?.checkin_utc) {
+                const checkinDay = (data.timing.checkin_utc || '').slice(0, 10);
+                if (checkinDay && checkinDay !== localToday) {
+                    console.warn(`[ATTENDANCE-RENDERER] Stale active session: checkin ${checkinDay} != today ${localToday}, forcing clean slate`);
+                    data.has_record = false;
+                    data.is_active_session = false;
+                    data.timing = { total_seconds_today: 0 };
+                    data.status = { code: null, label: 'Not Checked In' };
+                    // Best-effort: trigger force-close on backend
+                    try {
+                        const empId = state.user?.id;
+                        if (empId) {
+                            fetch(`${BASE_URL}/api/v2/attendance/force-close-stale/${empId}`, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC' })
+                            }).catch(() => {});
+                        }
+                    } catch { }
+                }
+            }
+            
             lastStatusResponse = {
                 ...data,
                 fetchedAt: Date.now(),
