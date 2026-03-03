@@ -1245,6 +1245,8 @@ def create_task_log():
 
             logs = _read_logs()
             dv_id = None
+            dataverse_saved = False
+            dataverse_error = ""
 
             # Dataverse UPSERT by employee + date + task identity (+project if available)
             try:
@@ -1277,7 +1279,9 @@ def create_task_log():
                     f"?$filter={lookup_q}&$select=crc6f_hr_timesheetlogid,crc6f_hoursworked&$top=1"
                 )
                 lookup_resp = requests.get(lookup_url, headers=headers, timeout=30)
-                existing_rows = lookup_resp.json().get("value", []) if lookup_resp.status_code == 200 else []
+                if lookup_resp.status_code != 200:
+                    raise Exception(f"Dataverse lookup failed ({lookup_resp.status_code}): {lookup_resp.text[:250]}")
+                existing_rows = lookup_resp.json().get("value", [])
 
                 if existing_rows:
                     row = existing_rows[0]
@@ -1289,29 +1293,42 @@ def create_task_log():
                         prev_hours = 0.0
                     merged_hours = round(prev_hours + hours_worked, 4)
                     update_payload = {
-                        **payload,
                         "crc6f_hoursworked": str(merged_hours),
+                        "crc6f_workdescription": work_desc,
                     }
                     patch_url = f"{RESOURCE}{DV_API}/crc6f_hr_timesheetlogs({dv_id})"
                     patch_resp = requests.patch(patch_url, headers=headers, json=update_payload, timeout=30)
                     print(f"[TIME_TRACKER] Dataverse PATCH status: {patch_resp.status_code}")
                     if patch_resp.status_code not in (200, 204):
-                        print(f"[TIME_TRACKER] Dataverse PATCH error ({patch_resp.status_code}): {patch_resp.text}")
+                        raise Exception(f"Dataverse PATCH failed ({patch_resp.status_code}): {patch_resp.text[:250]}")
+                    dataverse_saved = True
                 else:
                     post_url = f"{RESOURCE}{DV_API}/crc6f_hr_timesheetlogs"
-                    resp = requests.post(post_url, headers=headers, json=payload, timeout=30)
-                    print(f"[TIME_TRACKER] Dataverse POST status: {resp.status_code}")
-                    if resp.status_code in (200, 201, 204):
-                        try:
-                            ent = resp.headers.get('OData-EntityId') or resp.headers.get('odata-entityid')
-                            if ent and ent.endswith(')') and '(' in ent:
-                                dv_id = ent.split('(')[-1].strip(')')
-                        except Exception:
-                            dv_id = None
-                    else:
-                        print(f"[TIME_TRACKER] Dataverse POST error ({resp.status_code}): {resp.text}")
+                    create_candidates = [
+                        payload,
+                        {k: v for k, v in payload.items() if k != "crc6f_taskguid"},
+                        {k: v for k, v in payload.items() if k != "crc6f_approvalstatus"},
+                        {k: v for k, v in payload.items() if k not in ("crc6f_taskguid", "crc6f_approvalstatus")},
+                    ]
+                    create_error = "Dataverse POST failed"
+                    for idx, candidate in enumerate(create_candidates):
+                        resp = requests.post(post_url, headers=headers, json=candidate, timeout=30)
+                        print(f"[TIME_TRACKER] Dataverse POST attempt {idx + 1} status: {resp.status_code}")
+                        if resp.status_code in (200, 201, 204):
+                            dataverse_saved = True
+                            try:
+                                ent = resp.headers.get('OData-EntityId') or resp.headers.get('odata-entityid')
+                                if ent and ent.endswith(')') and '(' in ent:
+                                    dv_id = ent.split('(')[-1].strip(')')
+                            except Exception:
+                                dv_id = None
+                            break
+                        create_error = f"attempt {idx + 1} failed ({resp.status_code}): {resp.text[:250]}"
+                    if not dataverse_saved:
+                        raise Exception(create_error)
             except Exception as dv_err:
-                print(f"[TIME_TRACKER] Dataverse UPSERT warning: {dv_err}")
+                dataverse_error = str(dv_err)
+                print(f"[TIME_TRACKER] Dataverse UPSERT failed; keeping local pending copy: {dataverse_error}")
 
             # UPSERT local log by employee + task + work_date
             idx = None
@@ -1335,7 +1352,9 @@ def create_task_log():
                     **prev,
                     "seconds": new_secs,
                     "description": work_desc or prev.get("description") or "",
-                    "dv_id": prev.get("dv_id") or dv_id
+                    "dv_id": dv_id or prev.get("dv_id"),
+                    "sync_pending": not dataverse_saved,
+                    "last_sync_error": dataverse_error if not dataverse_saved else "",
                 }
                 rec_local = logs[idx]
                 print(f"[TIME_TRACKER] Upserted local log (aggregate): {employee_id} {task_id} {seg_work_date} -> {new_secs}s")
@@ -1351,19 +1370,39 @@ def create_task_log():
                     "work_date": seg_work_date,
                     "description": work_desc,
                     "dv_id": dv_id,
+                    "sync_pending": not dataverse_saved,
+                    "last_sync_error": dataverse_error if not dataverse_saved else "",
                     "created_at": _now_iso(),
                 }
                 logs.append(rec_local)
                 print(f"[TIME_TRACKER] Inserted new local log: {employee_id} {task_id} {seg_work_date} -> {seg_seconds}s")
             _write_logs(logs)
             
-            return rec_local
+            return rec_local, dataverse_saved, dataverse_error
 
         recs = []
+        dataverse_failures = []
         for seg_date, seg_seconds in segments:
-            recs.append(upsert_segment(seg_date, seg_seconds))
+            rec_local, seg_saved, seg_error = upsert_segment(seg_date, seg_seconds)
+            recs.append(rec_local)
+            if not seg_saved:
+                dataverse_failures.append({
+                    "work_date": seg_date,
+                    "seconds": seg_seconds,
+                    "error": seg_error,
+                })
 
-        return jsonify({"success": True, "logs": recs, "dataverse_saved": True}), 201
+        if dataverse_failures:
+            return jsonify({
+                "success": False,
+                "error": "Dataverse save failed for one or more segments; preserved in local pending cache",
+                "logs": recs,
+                "dataverse_saved": False,
+                "pending_sync": len(dataverse_failures),
+                "failures": dataverse_failures,
+            }), 502
+
+        return jsonify({"success": True, "logs": recs, "dataverse_saved": True, "pending_sync": 0}), 201
             
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
@@ -1477,6 +1516,7 @@ def list_logs():
             # Merge local logs that may not yet exist in Dataverse (best effort).
             # This prevents missing same-day entries in team/my timesheet when Dataverse
             # upsert is delayed or fails but local fallback write succeeded.
+            merged_count = 0
             try:
                 local_logs = _read_logs()
 
@@ -1502,7 +1542,6 @@ def list_logs():
                     for ident in _merge_identity_candidates(rec):
                         existing_keys.add(base + (ident,))
 
-                merged_count = 0
                 for r in local_logs:
                     # Match current request scope
                     if employee_id != "ALL" and str(r.get("employee_id") or "") != employee_id:
@@ -1535,8 +1574,9 @@ def list_logs():
 
             out = _coalesce_logs(out)
 
-            print(f"[TIME_TRACKER] Successfully fetched {len(out)} logs from Dataverse")
-            return jsonify({"success": True, "logs": out, "source": "dataverse"}), 200
+            source_label = "dataverse+local" if merged_count else "dataverse"
+            print(f"[TIME_TRACKER] Successfully fetched {len(out)} logs from {source_label}")
+            return jsonify({"success": True, "logs": out, "source": source_label, "pending_sync": merged_count}), 200
         else:
             print(f"[TIME_TRACKER] Dataverse returned {resp.status_code}: {resp.text}")
             raise Exception(f"Dataverse returned {resp.status_code}")
