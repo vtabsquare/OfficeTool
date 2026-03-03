@@ -432,6 +432,20 @@ def checkin_v2():
         existing_att = fetch_attendance_record(employee_id, today_date)
         existing_la = fetch_login_activity(employee_id, today_date)
         
+        print(f"[ATTENDANCE-V2] CHECK-IN today_date={today_date} existing_att_date={existing_att.get(FIELD_DATE) if existing_att else 'NONE'} existing_la_date={existing_la.get(LA_FIELD_DATE) if existing_la else 'NONE'}")
+        
+        # Guard: verify returned records actually belong to today (prevent cross-day data)
+        if existing_att:
+            att_date_raw = str(existing_att.get(FIELD_DATE) or "")[:10]
+            if att_date_raw and att_date_raw != today_date:
+                print(f"[ATTENDANCE-V2] WARNING: existing_att date {att_date_raw} != today {today_date}, ignoring stale record")
+                existing_att = None
+        if existing_la:
+            la_date_raw = str(existing_la.get(LA_FIELD_DATE) or "")[:10]
+            if la_date_raw and la_date_raw != today_date:
+                print(f"[ATTENDANCE-V2] WARNING: existing_la date {la_date_raw} != today {today_date}, ignoring stale record")
+                existing_la = None
+        
         # Check if already checked in (has checkin but no checkout in login activity)
         if existing_la:
             has_checkin = existing_la.get(LA_FIELD_CHECKIN_TS) or existing_la.get(LA_FIELD_CHECKIN_TIME)
@@ -461,7 +475,7 @@ def checkin_v2():
                     }
                 })
         
-        # Get base seconds from previous sessions today
+        # Get base seconds from previous sessions TODAY ONLY
         base_seconds = 0
         if existing_la:
             base_seconds = int(existing_la.get(LA_FIELD_TOTAL_SECONDS) or existing_la.get(LA_FIELD_BASE_SECONDS) or 0)
@@ -470,6 +484,8 @@ def checkin_v2():
                 base_seconds = int(float(existing_att.get(FIELD_DURATION) or 0) * 3600)
             except:
                 base_seconds = 0
+        
+        print(f"[ATTENDANCE-V2] CHECK-IN base_seconds={base_seconds} for {employee_id} on {today_date}")
         
         attendance_id = None
         record_id = None
@@ -681,6 +697,18 @@ def get_status_v2(employee_id):
         # Get both records
         existing_att = fetch_attendance_record(employee_id, today_date)
         existing_la = fetch_login_activity(employee_id, today_date)
+        
+        # Guard: verify returned records actually belong to today (prevent cross-day data)
+        if existing_att:
+            att_date_raw = str(existing_att.get(FIELD_DATE) or "")[:10]
+            if att_date_raw and att_date_raw != today_date:
+                print(f"[ATTENDANCE-V2] STATUS: existing_att date {att_date_raw} != today {today_date}, ignoring")
+                existing_att = None
+        if existing_la:
+            la_date_raw = str(existing_la.get(LA_FIELD_DATE) or "")[:10]
+            if la_date_raw and la_date_raw != today_date:
+                print(f"[ATTENDANCE-V2] STATUS: existing_la date {la_date_raw} != today {today_date}, ignoring")
+                existing_la = None
         
         if not existing_la and not existing_att:
             # No record for today
