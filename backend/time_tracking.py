@@ -1260,18 +1260,14 @@ def create_task_log():
                 if project_id:
                     safe_project = project_id.replace("'", "''")
                     filter_parts.append(f"crc6f_projectid eq '{safe_project}'")
-                if task_guid and task_id:
-                    safe_task_guid = task_guid.replace("'", "''")
+                # Prefer task_id in lookup to avoid schema-specific failures where
+                # crc6f_taskguid may not exist in some Dataverse environments.
+                if task_id:
                     safe_task_id = task_id.replace("'", "''")
-                    filter_parts.append(
-                        f"(crc6f_taskguid eq '{safe_task_guid}' or crc6f_taskid eq '{safe_task_id}')"
-                    )
+                    filter_parts.append(f"crc6f_taskid eq '{safe_task_id}'")
                 elif task_guid:
                     safe_task_guid = task_guid.replace("'", "''")
                     filter_parts.append(f"crc6f_taskguid eq '{safe_task_guid}'")
-                elif task_id:
-                    safe_task_id = task_id.replace("'", "''")
-                    filter_parts.append(f"crc6f_taskid eq '{safe_task_id}'")
 
                 lookup_q = " and ".join(filter_parts)
                 lookup_url = (
@@ -1279,9 +1275,12 @@ def create_task_log():
                     f"?$filter={lookup_q}&$select=crc6f_hr_timesheetlogid,crc6f_hoursworked&$top=1"
                 )
                 lookup_resp = requests.get(lookup_url, headers=headers, timeout=30)
-                if lookup_resp.status_code != 200:
-                    raise Exception(f"Dataverse lookup failed ({lookup_resp.status_code}): {lookup_resp.text[:250]}")
-                existing_rows = lookup_resp.json().get("value", [])
+                existing_rows = []
+                if lookup_resp.status_code == 200:
+                    existing_rows = lookup_resp.json().get("value", [])
+                else:
+                    # Lookup errors should not block create attempts.
+                    print(f"[TIME_TRACKER] Dataverse lookup warning ({lookup_resp.status_code}): {lookup_resp.text[:250]}")
 
                 if existing_rows:
                     row = existing_rows[0]
@@ -1304,16 +1303,11 @@ def create_task_log():
                     dataverse_saved = True
                 else:
                     post_url = f"{RESOURCE}{DV_API}/crc6f_hr_timesheetlogs"
-                    create_candidates = [
-                        payload,
-                        {k: v for k, v in payload.items() if k != "crc6f_taskguid"},
-                        {k: v for k, v in payload.items() if k != "crc6f_approvalstatus"},
-                        {k: v for k, v in payload.items() if k not in ("crc6f_taskguid", "crc6f_approvalstatus")},
-                    ]
+                    create_candidate = dict(payload)
                     create_error = "Dataverse POST failed"
-                    for idx, candidate in enumerate(create_candidates):
-                        resp = requests.post(post_url, headers=headers, json=candidate, timeout=30)
-                        print(f"[TIME_TRACKER] Dataverse POST attempt {idx + 1} status: {resp.status_code}")
+                    for idx in range(1, 9):
+                        resp = requests.post(post_url, headers=headers, json=create_candidate, timeout=30)
+                        print(f"[TIME_TRACKER] Dataverse POST attempt {idx} status: {resp.status_code}")
                         if resp.status_code in (200, 201, 204):
                             dataverse_saved = True
                             try:
@@ -1323,7 +1317,39 @@ def create_task_log():
                             except Exception:
                                 dv_id = None
                             break
-                        create_error = f"attempt {idx + 1} failed ({resp.status_code}): {resp.text[:250]}"
+                        create_error = f"attempt {idx} failed ({resp.status_code}): {resp.text[:250]}"
+
+                        # Adaptive fallback: if Dataverse says a field is invalid/missing,
+                        # drop only that field and retry without losing other data.
+                        err_text = (resp.text or "")
+                        bad_field = None
+                        m = re.search(r"Invalid property '([^']+)'", err_text, re.IGNORECASE)
+                        if m:
+                            bad_field = m.group(1)
+                        if not bad_field:
+                            m2 = re.search(r"property named '([^']+)'", err_text, re.IGNORECASE)
+                            if m2:
+                                bad_field = m2.group(1)
+
+                        if bad_field and bad_field in create_candidate:
+                            print(f"[TIME_TRACKER] Retrying create without field: {bad_field}")
+                            create_candidate.pop(bad_field, None)
+                            continue
+
+                        # Common fallback for environments with strict option-set/field configs
+                        if idx == 1 and "crc6f_approvalstatus" in create_candidate:
+                            print("[TIME_TRACKER] Retrying create without crc6f_approvalstatus")
+                            create_candidate.pop("crc6f_approvalstatus", None)
+                            continue
+
+                        # Last conservative fallback before failing hard
+                        if idx == 2 and "crc6f_taskguid" in create_candidate:
+                            print("[TIME_TRACKER] Retrying create without crc6f_taskguid")
+                            create_candidate.pop("crc6f_taskguid", None)
+                            continue
+
+                        # Unknown failure: stop retry loop and return clear error upstream.
+                        break
                     if not dataverse_saved:
                         raise Exception(create_error)
             except Exception as dv_err:
