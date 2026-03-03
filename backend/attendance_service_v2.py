@@ -342,6 +342,28 @@ def _auto_close_stale_sessions(employee_id, tz_name="Asia/Calcutta"):
             except Exception as fb_err:
                 print(f"[ATTENDANCE-V2] Fallback query error: {fb_err}")
         
+        # Third fallback: query ALL open sessions for this employee (no date filter)
+        # and filter in Python - most robust approach for any Dataverse schema
+        if not stale_rows:
+            try:
+                filter_q3 = (
+                    f"$filter={LA_FIELD_EMPLOYEE_ID} eq '{safe_emp}' "
+                    f"and {LA_FIELD_CHECKIN_TS} ne null "
+                    f"and {LA_FIELD_CHECKOUT_TS} eq null"
+                )
+                url3 = f"{_get_base_url()}/{LOGIN_ACTIVITY_ENTITY}?{filter_q3}&$orderby={LA_FIELD_DATE} asc"
+                print(f"[ATTENDANCE-V2] Auto-close broad query (no date filter): {url3}")
+                resp3 = requests.get(url3, headers=headers, timeout=20)
+                if resp3.status_code == 200:
+                    all_open = resp3.json().get("value", [])
+                    for row in all_open:
+                        row_date = str(row.get(LA_FIELD_DATE) or "")[:10]
+                        if row_date and row_date < local_today:
+                            stale_rows.append(row)
+                    print(f"[ATTENDANCE-V2] Broad query found {len(all_open)} open, {len(stale_rows)} stale")
+            except Exception as fb2_err:
+                print(f"[ATTENDANCE-V2] Broad query error: {fb2_err}")
+        
         print(f"[ATTENDANCE-V2] Found {len(stale_rows)} stale row(s) for {emp}")
         closed = 0
 
@@ -901,4 +923,19 @@ def get_monthly_attendance_v2(employee_id, year, month):
         print(f"[ATTENDANCE-V2] Monthly fetch error: {e}")
         import traceback
         traceback.print_exc()
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@attendance_v2_bp.route('/force-close-stale/<employee_id>', methods=['POST'])
+def force_close_stale_sessions(employee_id):
+    """
+    Admin endpoint: force-close ALL open login activity sessions for an employee
+    where the record date is before today. Use when auto-close fails.
+    """
+    try:
+        employee_id = employee_id.strip().upper()
+        tz_name = (request.json or {}).get('timezone', 'Asia/Calcutta')
+        result = _auto_close_stale_sessions(employee_id, tz_name)
+        return jsonify({"success": True, "closed": result.get("closed", 0), "employee_id": employee_id})
+    except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
