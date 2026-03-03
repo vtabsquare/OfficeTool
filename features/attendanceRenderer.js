@@ -131,9 +131,33 @@ export async function performCheckIn(employeeId, location = null) {
     }
     
     // Update local cache with new status
-    // For a FRESH check-in (not already_checked_in), always start from 0
-    // to prevent stale cross-day data from contaminating today's session.
-    const freshTotal = data.already_checked_in ? (data.total_seconds_today || 0) : 0;
+    // Detect stale cross-day already_checked_in: if backend says "already checked in"
+    // but the checkin timestamp is from a different local day, it's a stale session.
+    let freshTotal = 0;
+    const localToday = _getLocalDateStr();
+    if (data.already_checked_in) {
+        // Check if the reported check-in is actually from today
+        const checkinDate = (data.checkin_utc || data.display?.date_local || '').slice(0, 10);
+        const displayDate = (data.display?.date_local || '').slice(0, 10);
+        const isFromToday = (checkinDate === localToday) || (displayDate === localToday);
+        
+        if (isFromToday) {
+            freshTotal = data.total_seconds_today || 0;
+        } else {
+            // Stale cross-day session — force fresh start
+            console.warn(`[ATTENDANCE-RENDERER] Stale already_checked_in detected (checkin: ${checkinDate}, today: ${localToday}). Forcing fresh session.`);
+            freshTotal = 0;
+            // Best-effort: try to force-close the stale session on backend
+            try {
+                fetch(`${BASE_URL}/api/v2/attendance/force-close-stale/${employeeId}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC' })
+                }).catch(() => {});
+            } catch { }
+        }
+    }
+    
     lastStatusResponse = {
         success: true,
         server_now_utc: data.server_now_utc,
