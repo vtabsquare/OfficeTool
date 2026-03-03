@@ -1424,18 +1424,39 @@ def _auto_close_stale_login_sessions(employee_id: str):
         }
 
         safe_emp = _safe_odata_string(emp)
-        filter_q = (
-            f"?$filter={LA_FIELD_EMPLOYEE_ID} eq '{safe_emp}' "
-            f"and ({LA_FIELD_CHECKIN_TS} ne null or {LA_FIELD_CHECKIN_TIME} ne null) "
-            f"and ({LA_FIELD_CHECKOUT_TS} eq null and {LA_FIELD_CHECKOUT_TIME} eq null) "
-            f"and {LA_FIELD_DATE} lt '{local_today}'"
-        )
-        url = f"{BASE_URL}/{LOGIN_ACTIVITY_ENTITY}{filter_q}&$orderby={LA_FIELD_DATE} asc"
-        resp = requests.get(url, headers=headers, timeout=20)
-        if resp.status_code != 200:
-            return 0
 
-        rows = resp.json().get("value", [])
+        # Try two filter strategies because Dataverse may store crc6f_date
+        # as plain Date (matches 'lt YYYY-MM-DD') OR as DateTime
+        # (needs 'lt YYYY-MM-DDT00:00:00Z').
+        today_dt_iso = f"{local_today}T00:00:00Z"
+        open_session_cond = (
+            f"({LA_FIELD_CHECKIN_TS} ne null or {LA_FIELD_CHECKIN_TIME} ne null) "
+            f"and ({LA_FIELD_CHECKOUT_TS} eq null and {LA_FIELD_CHECKOUT_TIME} eq null)"
+        )
+
+        rows = []
+        seen_ids = set()
+
+        for date_bound in [local_today, today_dt_iso]:
+            filter_q = (
+                f"?$filter={LA_FIELD_EMPLOYEE_ID} eq '{safe_emp}' "
+                f"and {open_session_cond} "
+                f"and {LA_FIELD_DATE} lt '{date_bound}'"
+            )
+            url = f"{BASE_URL}/{LOGIN_ACTIVITY_ENTITY}{filter_q}&$orderby={LA_FIELD_DATE} asc"
+            try:
+                resp = requests.get(url, headers=headers, timeout=20)
+                if resp.status_code == 200:
+                    for r in resp.json().get("value", []):
+                        rid = r.get(LOGIN_ACTIVITY_PRIMARY_FIELD)
+                        if rid and rid not in seen_ids:
+                            seen_ids.add(rid)
+                            rows.append(r)
+            except Exception:
+                pass
+
+        if not rows:
+            return 0
         closed = 0
 
         for row in rows:
