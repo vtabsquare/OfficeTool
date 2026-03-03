@@ -261,6 +261,115 @@ def upsert_login_activity(employee_id, date_str, payload):
         return False
 
 
+def _auto_close_stale_sessions(employee_id, tz_name="Asia/Calcutta"):
+    """
+    Auto-close any older open sessions (date < local today) at local 00:00:00.
+
+    This keeps attendance totals bounded to the day and prevents cross-day
+    running timers when checkout is forgotten.
+    """
+    try:
+        emp = (employee_id or "").strip().upper()
+        if not emp:
+            return {"closed": 0}
+
+        now_utc = get_server_now_utc()
+        try:
+            tz = ZoneInfo(tz_name)
+        except Exception:
+            try:
+                tz = ZoneInfo("Asia/Calcutta")
+            except Exception:
+                tz = timezone.utc
+
+        local_today = now_utc.astimezone(tz).date().isoformat()
+        token = get_access_token()
+        headers = _get_headers(token)
+
+        safe_emp = emp.replace("'", "''")
+        filter_q = (
+            f"$filter={LA_FIELD_EMPLOYEE_ID} eq '{safe_emp}' "
+            f"and {LA_FIELD_CHECKIN_TS} ne null "
+            f"and {LA_FIELD_CHECKOUT_TS} eq null "
+            f"and {LA_FIELD_DATE} lt '{local_today}'"
+        )
+        url = f"{_get_base_url()}/{LOGIN_ACTIVITY_ENTITY}?{filter_q}&$orderby={LA_FIELD_DATE} asc"
+        resp = requests.get(url, headers=headers, timeout=20)
+        if resp.status_code != 200:
+            return {"closed": 0}
+
+        stale_rows = resp.json().get("value", [])
+        closed = 0
+
+        for row in stale_rows:
+            try:
+                la_id = row.get(LA_PRIMARY_FIELD)
+                raw_date = str(row.get(LA_FIELD_DATE) or "")[:10]
+                checkin_ts = int(row.get(LA_FIELD_CHECKIN_TS) or 0)
+                base_seconds = int(row.get(LA_FIELD_BASE_SECONDS) or 0)
+                if not la_id or not raw_date or not checkin_ts:
+                    continue
+
+                day_obj = datetime.strptime(raw_date, "%Y-%m-%d").date()
+                next_midnight_local = datetime(
+                    day_obj.year, day_obj.month, day_obj.day, 0, 0, 0, tzinfo=tz
+                ) + timedelta(days=1)
+                cutoff_utc = next_midnight_local.astimezone(timezone.utc)
+                cutoff_ts = int(cutoff_utc.timestamp())
+
+                session_seconds = max(0, cutoff_ts - checkin_ts)
+                total_seconds = base_seconds + session_seconds
+                status = derive_status(total_seconds)
+                hours = format_duration_hours(total_seconds)
+                duration_text = format_duration_text(total_seconds)
+
+                # Login activity close at local midnight.
+                la_patch = {
+                    LA_FIELD_CHECKOUT_TIME: next_midnight_local.strftime("%H:%M:%S"),
+                    LA_FIELD_CHECKOUT_TS: cutoff_ts,
+                    LA_FIELD_TOTAL_SECONDS: total_seconds,
+                }
+                la_url = f"{_get_base_url()}/{LOGIN_ACTIVITY_ENTITY}({la_id})"
+                la_resp = requests.patch(la_url, headers=headers, json=la_patch, timeout=20)
+                if la_resp.status_code >= 400:
+                    continue
+
+                # Attendance row close for that historical date.
+                existing_att = fetch_attendance_record(emp, raw_date)
+                if existing_att:
+                    record_id = existing_att.get(FIELD_RECORD_ID) or existing_att.get("crc6f_table13id")
+                    if record_id:
+                        update_payload = {
+                            FIELD_CHECKOUT: next_midnight_local.strftime("%H:%M:%S"),
+                            FIELD_DURATION: str(hours),
+                            FIELD_DURATION_INTEXT: duration_text,
+                        }
+                        if FIELD_STATUS:
+                            update_payload[FIELD_STATUS] = status
+                        try:
+                            update_record(ATTENDANCE_ENTITY, record_id, update_payload)
+                        except Exception:
+                            pass
+
+                # Keep task timer state aligned with auto checkout behavior.
+                try:
+                    stop_active_task_entries_for_user(emp, cutoff_utc.isoformat())
+                except Exception as stop_err:
+                    print(f"[ATTENDANCE-V2] Auto-close task stop failed for {emp}: {stop_err}")
+
+                emit_attendance_changed(emp, "auto_checkout_midnight")
+                closed += 1
+            except Exception as row_err:
+                print(f"[ATTENDANCE-V2] Failed stale auto-close row: {row_err}")
+
+        if closed:
+            print(f"[ATTENDANCE-V2] Auto-closed {closed} stale session(s) for {emp}")
+        return {"closed": closed}
+    except Exception as e:
+        print(f"[ATTENDANCE-V2] auto-close stale sessions error: {e}")
+        return {"closed": 0}
+
+
 # ================== API ROUTES ==================
 
 @attendance_v2_bp.route('/checkin', methods=['POST'])
@@ -277,6 +386,9 @@ def checkin_v2():
         
         if not employee_id:
             return jsonify({"success": False, "error": "MISSING_EMPLOYEE_ID"}), 400
+
+        # Self-heal stale open sessions from previous local days.
+        _auto_close_stale_sessions(employee_id, tz_name)
         
         # SERVER TIME IS TRUTH
         now_utc = get_server_now_utc()
@@ -537,6 +649,9 @@ def get_status_v2(employee_id):
         except Exception:
             # Fallback to UTC if timezone parsing fails
             today_date = now_utc.strftime("%Y-%m-%d")
+
+        # Ensure forgotten checkouts from prior days are auto-closed at midnight.
+        _auto_close_stale_sessions(employee_id, tz_name)
         
         # Get both records
         existing_att = fetch_attendance_record(employee_id, today_date)

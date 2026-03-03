@@ -54,11 +54,22 @@ export async function fetchAttendanceStatus(employeeId) {
         });
         
         if (data.success) {
+            const wasActive = !!lastStatusResponse?.is_active_session;
             lastStatusResponse = {
                 ...data,
                 fetchedAt: Date.now(),
                 serverNowAtFetch: data.server_now_utc ? new Date(data.server_now_utc).getTime() : Date.now()
             };
+
+            // Keep task timer state aligned when backend auto-checks out (e.g. midnight close).
+            if (wasActive && !data.is_active_session) {
+                try {
+                    await stopActiveTaskTimerOnCheckout(employeeId, data.timing?.checkout_utc || data.server_now_utc);
+                } catch (syncErr) {
+                    console.warn('[ATTENDANCE-RENDERER] Task timer sync on status transition failed:', syncErr);
+                }
+            }
+
             console.log('[ATTENDANCE-RENDERER] Stored lastStatusResponse:', lastStatusResponse);
             return data;
         }

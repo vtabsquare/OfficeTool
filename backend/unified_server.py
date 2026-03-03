@@ -31,7 +31,7 @@ from project_boards import bp as boards_bp
 from project_tasks import tasks_bp
 from project_column import columns_bp
 from chats import chat_bp
-from time_tracking import bp_time
+from time_tracking import bp_time, stop_active_task_entries_for_user
 from attendance_service_v2 import attendance_v2_bp
 
 try:
@@ -884,6 +884,29 @@ LA_FIELD_TOTAL_SECONDS = "crc6f_total_seconds"       # total seconds for the day
 LA_FIELD_CHECKIN_TIMESTAMP = LA_FIELD_CHECKIN_TS
 LA_FIELD_CHECKOUT_TIMESTAMP = LA_FIELD_CHECKOUT_TS
 
+# Business timezone for day-boundary auto-close behavior.
+ATTENDANCE_AUTOCLOSE_TZ = os.getenv("ATTENDANCE_AUTOCLOSE_TZ", "Asia/Calcutta")
+
+def _attendance_business_tz():
+    if ZoneInfo:
+        try:
+            return ZoneInfo(ATTENDANCE_AUTOCLOSE_TZ)
+        except Exception:
+            pass
+        try:
+            return ZoneInfo("Asia/Calcutta")
+        except Exception:
+            pass
+    return timezone(timedelta(hours=5, minutes=30))
+
+def _local_day_cutoff_utc(date_str: str):
+    """Return (next_midnight_local_dt, cutoff_utc_dt, cutoff_epoch_seconds)."""
+    day = date.fromisoformat(str(date_str)[:10])
+    biz_tz = _attendance_business_tz()
+    next_midnight_local = datetime(day.year, day.month, day.day, 0, 0, 0, tzinfo=biz_tz) + timedelta(days=1)
+    cutoff_utc = next_midnight_local.astimezone(timezone.utc)
+    return next_midnight_local, cutoff_utc, int(cutoff_utc.timestamp())
+
 def reverse_geocode_to_city(lat, lng):
     """Convert lat/lng to a city/locality string using Nominatim."""
     try:
@@ -1077,7 +1100,15 @@ def _live_session_progress_hours(emp_id: str, target_date: str) -> float:
                 
                 # If checked in but not checked out = active session
                 if checkin_ts and not checkout_ts:
-                    elapsed_seconds = now_ts - int(checkin_ts)
+                    effective_end_ts = now_ts
+                    try:
+                        local_today = datetime.now(timezone.utc).astimezone(_attendance_business_tz()).date().isoformat()
+                        if str(target_date)[:10] < local_today:
+                            _, _, cutoff_ts = _local_day_cutoff_utc(target_date)
+                            effective_end_ts = min(now_ts, cutoff_ts)
+                    except Exception:
+                        pass
+                    elapsed_seconds = effective_end_ts - int(checkin_ts)
                     total_seconds = base_seconds + max(0, elapsed_seconds)
                     return total_seconds / 3600.0
                 
@@ -1372,6 +1403,122 @@ def _fetch_all_employee_ids(token: str):
         if v is not None and str(v).strip():
             ids.append(str(v).strip().upper())
     return sorted(set(ids))
+
+def _auto_close_stale_login_sessions(employee_id: str):
+    """
+    Auto-close forgotten open sessions from prior local days at 00:00 local time.
+    """
+    try:
+        emp = (employee_id or "").strip().upper()
+        if not emp:
+            return 0
+
+        local_today = datetime.now(timezone.utc).astimezone(_attendance_business_tz()).date().isoformat()
+        token = get_access_token()
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "OData-MaxVersion": "4.0",
+            "OData-Version": "4.0",
+        }
+
+        safe_emp = _safe_odata_string(emp)
+        filter_q = (
+            f"?$filter={LA_FIELD_EMPLOYEE_ID} eq '{safe_emp}' "
+            f"and ({LA_FIELD_CHECKIN_TS} ne null or {LA_FIELD_CHECKIN_TIME} ne null) "
+            f"and ({LA_FIELD_CHECKOUT_TS} eq null and {LA_FIELD_CHECKOUT_TIME} eq null) "
+            f"and {LA_FIELD_DATE} lt '{local_today}'"
+        )
+        url = f"{BASE_URL}/{LOGIN_ACTIVITY_ENTITY}{filter_q}&$orderby={LA_FIELD_DATE} asc"
+        resp = requests.get(url, headers=headers, timeout=20)
+        if resp.status_code != 200:
+            return 0
+
+        rows = resp.json().get("value", [])
+        closed = 0
+
+        for row in rows:
+            try:
+                la_id = row.get(LOGIN_ACTIVITY_PRIMARY_FIELD)
+                work_date = str(row.get(LA_FIELD_DATE) or "")[:10]
+                checkin_ts = int(row.get(LA_FIELD_CHECKIN_TS) or 0)
+                if not checkin_ts:
+                    try:
+                        checkin_time_raw = str(row.get(LA_FIELD_CHECKIN_TIME) or "")
+                        checkin_time_only = checkin_time_raw[:8] if len(checkin_time_raw) >= 8 else checkin_time_raw
+                        local_checkin = datetime.strptime(
+                            f"{work_date} {checkin_time_only}",
+                            "%Y-%m-%d %H:%M:%S",
+                        ).replace(tzinfo=_attendance_business_tz())
+                        checkin_ts = int(local_checkin.astimezone(timezone.utc).timestamp())
+                    except Exception:
+                        checkin_ts = 0
+                base_seconds = int(row.get(LA_FIELD_BASE_SECONDS) or 0)
+                if not la_id or not work_date or not checkin_ts:
+                    continue
+
+                next_midnight_local, cutoff_utc, cutoff_ts = _local_day_cutoff_utc(work_date)
+                session_seconds = max(0, cutoff_ts - checkin_ts)
+                total_seconds = base_seconds + session_seconds
+                hours_val = round(max(0, total_seconds) / 3600.0, 2)
+                status = _classify_hours(hours_val)
+
+                la_patch = {
+                    LA_FIELD_CHECKOUT_TIME: next_midnight_local.strftime("%H:%M:%S"),
+                    LA_FIELD_CHECKOUT_TS: cutoff_ts,
+                    LA_FIELD_TOTAL_SECONDS: total_seconds,
+                }
+                la_url = f"{BASE_URL}/{LOGIN_ACTIVITY_ENTITY}({str(la_id).strip('{}')})"
+                la_resp = requests.patch(la_url, headers=headers, json=la_patch, timeout=20)
+                if la_resp.status_code >= 400:
+                    continue
+
+                try:
+                    att_filter = (
+                        f"?$filter={FIELD_EMPLOYEE_ID} eq '{_safe_odata_string(emp)}' "
+                        f"and {FIELD_DATE} eq '{_safe_odata_string(work_date)}'&$top=1"
+                    )
+                    att_url = f"{RESOURCE}/api/data/v9.2/{ATTENDANCE_ENTITY}{att_filter}"
+                    att_resp = requests.get(att_url, headers=headers, timeout=20)
+                    if att_resp.status_code == 200:
+                        vals = att_resp.json().get("value", [])
+                        if vals:
+                            rec = vals[0]
+                            att_id = rec.get(FIELD_RECORD_ID) or rec.get("cr6f_table13id") or rec.get("id")
+                            if att_id:
+                                att_patch = {
+                                    FIELD_CHECKOUT: next_midnight_local.strftime("%H:%M:%S"),
+                                    FIELD_DURATION: str(hours_val),
+                                    FIELD_DURATION_INTEXT: _format_duration_text_from_hours(hours_val),
+                                }
+                                if FIELD_STATUS:
+                                    att_patch[FIELD_STATUS] = status
+                                update_record(ATTENDANCE_ENTITY, att_id, att_patch)
+                except Exception as att_err:
+                    print(f"[AUTO-CLOSE] attendance update warning for {emp} {work_date}: {att_err}")
+
+                try:
+                    stop_active_task_entries_for_user(emp, cutoff_utc.isoformat())
+                except Exception as task_err:
+                    print(f"[AUTO-CLOSE] task stop warning for {emp}: {task_err}")
+
+                try:
+                    if emp in active_sessions:
+                        del active_sessions[emp]
+                except Exception:
+                    pass
+
+                closed += 1
+            except Exception as row_err:
+                print(f"[AUTO-CLOSE] stale row close failed: {row_err}")
+
+        if closed:
+            print(f"[AUTO-CLOSE] Closed {closed} stale session(s) for {emp}")
+        return closed
+    except Exception as e:
+        print(f"[AUTO-CLOSE] failed for {employee_id}: {e}")
+        return 0
 
 def _sync_login_activity_from_event(event: dict):
     try:
@@ -2725,6 +2872,9 @@ def checkin():
         if not normalized_emp_id:
             return jsonify({"success": False, "error": "Employee ID is required"}), 400
         key = normalized_emp_id
+
+        # Self-heal forgotten previous-day sessions before starting today.
+        _auto_close_stale_login_sessions(normalized_emp_id)
 
         now = datetime.now()
         local_now = _coerce_client_local_datetime(client_time, timezone_str) or now
@@ -4360,6 +4510,9 @@ def get_status(employee_id):
             return jsonify({"checked_in": False}), 400
         key = normalized_emp_id
 
+        # Ensure stale prior-day open sessions are closed at local midnight.
+        _auto_close_stale_login_sessions(normalized_emp_id)
+
         # Running totals baseline for today
         total_seconds_today = 0
         checked_out_today = False  # Track if user has checked out today
@@ -4818,6 +4971,9 @@ def get_monthly_attendance(employee_id, year, month):
         normalized_emp_id = employee_id.upper().strip()
         if normalized_emp_id.isdigit():
             normalized_emp_id = format_employee_id(int(normalized_emp_id))
+
+        # Normalize stale sessions before monthly calculations.
+        _auto_close_stale_login_sessions(normalized_emp_id)
         
         print(f"   [USER] Normalized Employee ID: {normalized_emp_id}")
         print(f"   [DATE] Date Range: {start_date} to {end_date}")
@@ -14481,8 +14637,10 @@ def get_login_events():
         employee_ids = _fetch_all_employee_ids(token)
         if employee_id_filter:
             employee_ids = [employee_id_filter]
+            _auto_close_stale_login_sessions(employee_id_filter)
 
         records = _fetch_login_activity_records_range(token, from_date, to_date, employee_id_filter)
+        
         record_map = {}
         for r in records:
             emp = (r.get(LA_FIELD_EMPLOYEE_ID) or "").strip().upper()
