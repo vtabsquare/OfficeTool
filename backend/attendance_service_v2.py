@@ -204,14 +204,7 @@ def fetch_attendance_record(employee_id, date_str):
         resp = requests.get(url, headers=headers, timeout=20)
         if resp.status_code == 200:
             records = resp.json().get("value", [])
-            if records:
-                rec = records[0]
-                # Guard: verify date matches (Dataverse DateTime columns can return wrong day)
-                rec_date = str(rec.get(FIELD_DATE) or "")[:10]
-                if rec_date and rec_date != date_str:
-                    print(f"[ATTENDANCE-V2] fetch_attendance_record date mismatch: wanted {date_str}, got {rec_date}, skipping")
-                    return None
-                return rec
+            return records[0] if records else None
         return None
     except Exception as e:
         print(f"[ATTENDANCE-V2] fetch_attendance_record error: {e}")
@@ -231,14 +224,7 @@ def fetch_login_activity(employee_id, date_str):
         resp = requests.get(url, headers=headers, timeout=20)
         if resp.status_code == 200:
             records = resp.json().get("value", [])
-            if records:
-                rec = records[0]
-                # Guard: verify date matches (Dataverse DateTime columns can return wrong day)
-                rec_date = str(rec.get(LA_FIELD_DATE) or "")[:10]
-                if rec_date and rec_date != date_str:
-                    print(f"[ATTENDANCE-V2] fetch_login_activity date mismatch: wanted {date_str}, got {rec_date}, skipping")
-                    return None
-                return rec
+            return records[0] if records else None
         return None
     except Exception as e:
         print(f"[ATTENDANCE-V2] fetch_login_activity error: {e}")
@@ -255,28 +241,19 @@ def upsert_login_activity(employee_id, date_str, payload):
         existing = fetch_login_activity(emp, date_str)
         
         if existing and existing.get(LA_PRIMARY_FIELD):
-            # Double-check the record date before updating
-            rec_date = str(existing.get(LA_FIELD_DATE) or "")[:10]
-            if rec_date and rec_date != date_str:
-                print(f"[ATTENDANCE-V2] upsert_login_activity: existing record date {rec_date} != target {date_str}, creating new instead")
-                existing = None
-        
-        if existing and existing.get(LA_PRIMARY_FIELD):
-            # Update existing record for today
+            # Update existing
             record_id = existing.get(LA_PRIMARY_FIELD)
             url = f"{_get_base_url()}/{LOGIN_ACTIVITY_ENTITY}({record_id})"
-            print(f"[ATTENDANCE-V2] upsert PATCH {record_id} for {date_str}")
             resp = requests.patch(url, headers=headers, json=payload, timeout=20)
             return resp.status_code < 400
         else:
-            # Create new record for today
+            # Create new
             create_payload = {
                 LA_FIELD_EMPLOYEE_ID: emp,
                 LA_FIELD_DATE: date_str,
                 **payload
             }
             url = f"{_get_base_url()}/{LOGIN_ACTIVITY_ENTITY}"
-            print(f"[ATTENDANCE-V2] upsert POST new for {date_str}")
             resp = requests.post(url, headers=headers, json=create_payload, timeout=20)
             return resp.status_code < 400
     except Exception as e:
@@ -310,7 +287,6 @@ def _auto_close_stale_sessions(employee_id, tz_name="Asia/Calcutta"):
         headers = _get_headers(token)
 
         safe_emp = emp.replace("'", "''")
-        # Primary query: date stored as plain string (YYYY-MM-DD)
         filter_q = (
             f"$filter={LA_FIELD_EMPLOYEE_ID} eq '{safe_emp}' "
             f"and {LA_FIELD_CHECKIN_TS} ne null "
@@ -318,53 +294,11 @@ def _auto_close_stale_sessions(employee_id, tz_name="Asia/Calcutta"):
             f"and {LA_FIELD_DATE} lt '{local_today}'"
         )
         url = f"{_get_base_url()}/{LOGIN_ACTIVITY_ENTITY}?{filter_q}&$orderby={LA_FIELD_DATE} asc"
-        print(f"[ATTENDANCE-V2] Auto-close query: {url}")
         resp = requests.get(url, headers=headers, timeout=20)
-        
-        stale_rows = []
-        if resp.status_code == 200:
-            stale_rows = resp.json().get("value", [])
-        
-        # Fallback: if date column is DateTime, try range query
-        if not stale_rows:
-            try:
-                filter_q2 = (
-                    f"$filter={LA_FIELD_EMPLOYEE_ID} eq '{safe_emp}' "
-                    f"and {LA_FIELD_CHECKIN_TS} ne null "
-                    f"and {LA_FIELD_CHECKOUT_TS} eq null "
-                    f"and {LA_FIELD_DATE} lt '{local_today}T00:00:00Z'"
-                )
-                url2 = f"{_get_base_url()}/{LOGIN_ACTIVITY_ENTITY}?{filter_q2}&$orderby={LA_FIELD_DATE} asc"
-                print(f"[ATTENDANCE-V2] Auto-close fallback query: {url2}")
-                resp2 = requests.get(url2, headers=headers, timeout=20)
-                if resp2.status_code == 200:
-                    stale_rows = resp2.json().get("value", [])
-            except Exception as fb_err:
-                print(f"[ATTENDANCE-V2] Fallback query error: {fb_err}")
-        
-        # Third fallback: query ALL open sessions for this employee (no date filter)
-        # and filter in Python - most robust approach for any Dataverse schema
-        if not stale_rows:
-            try:
-                filter_q3 = (
-                    f"$filter={LA_FIELD_EMPLOYEE_ID} eq '{safe_emp}' "
-                    f"and {LA_FIELD_CHECKIN_TS} ne null "
-                    f"and {LA_FIELD_CHECKOUT_TS} eq null"
-                )
-                url3 = f"{_get_base_url()}/{LOGIN_ACTIVITY_ENTITY}?{filter_q3}&$orderby={LA_FIELD_DATE} asc"
-                print(f"[ATTENDANCE-V2] Auto-close broad query (no date filter): {url3}")
-                resp3 = requests.get(url3, headers=headers, timeout=20)
-                if resp3.status_code == 200:
-                    all_open = resp3.json().get("value", [])
-                    for row in all_open:
-                        row_date = str(row.get(LA_FIELD_DATE) or "")[:10]
-                        if row_date and row_date < local_today:
-                            stale_rows.append(row)
-                    print(f"[ATTENDANCE-V2] Broad query found {len(all_open)} open, {len(stale_rows)} stale")
-            except Exception as fb2_err:
-                print(f"[ATTENDANCE-V2] Broad query error: {fb2_err}")
-        
-        print(f"[ATTENDANCE-V2] Found {len(stale_rows)} stale row(s) for {emp}")
+        if resp.status_code != 200:
+            return {"closed": 0}
+
+        stale_rows = resp.json().get("value", [])
         closed = 0
 
         for row in stale_rows:
@@ -430,13 +364,9 @@ def _auto_close_stale_sessions(employee_id, tz_name="Asia/Calcutta"):
 
         if closed:
             print(f"[ATTENDANCE-V2] Auto-closed {closed} stale session(s) for {emp}")
-        else:
-            print(f"[ATTENDANCE-V2] No stale sessions needed closing for {emp}")
         return {"closed": closed}
     except Exception as e:
         print(f"[ATTENDANCE-V2] auto-close stale sessions error: {e}")
-        import traceback
-        traceback.print_exc()
         return {"closed": 0}
 
 
@@ -477,20 +407,6 @@ def checkin_v2():
         existing_att = fetch_attendance_record(employee_id, today_date)
         existing_la = fetch_login_activity(employee_id, today_date)
         
-        print(f"[ATTENDANCE-V2] CHECK-IN today_date={today_date} existing_att_date={existing_att.get(FIELD_DATE) if existing_att else 'NONE'} existing_la_date={existing_la.get(LA_FIELD_DATE) if existing_la else 'NONE'}")
-        
-        # Guard: verify returned records actually belong to today (prevent cross-day data)
-        if existing_att:
-            att_date_raw = str(existing_att.get(FIELD_DATE) or "")[:10]
-            if att_date_raw and att_date_raw != today_date:
-                print(f"[ATTENDANCE-V2] WARNING: existing_att date {att_date_raw} != today {today_date}, ignoring stale record")
-                existing_att = None
-        if existing_la:
-            la_date_raw = str(existing_la.get(LA_FIELD_DATE) or "")[:10]
-            if la_date_raw and la_date_raw != today_date:
-                print(f"[ATTENDANCE-V2] WARNING: existing_la date {la_date_raw} != today {today_date}, ignoring stale record")
-                existing_la = None
-        
         # Check if already checked in (has checkin but no checkout in login activity)
         if existing_la:
             has_checkin = existing_la.get(LA_FIELD_CHECKIN_TS) or existing_la.get(LA_FIELD_CHECKIN_TIME)
@@ -520,7 +436,7 @@ def checkin_v2():
                     }
                 })
         
-        # Get base seconds from previous sessions TODAY ONLY
+        # Get base seconds from previous sessions today
         base_seconds = 0
         if existing_la:
             base_seconds = int(existing_la.get(LA_FIELD_TOTAL_SECONDS) or existing_la.get(LA_FIELD_BASE_SECONDS) or 0)
@@ -529,8 +445,6 @@ def checkin_v2():
                 base_seconds = int(float(existing_att.get(FIELD_DURATION) or 0) * 3600)
             except:
                 base_seconds = 0
-        
-        print(f"[ATTENDANCE-V2] CHECK-IN base_seconds={base_seconds} for {employee_id} on {today_date}")
         
         attendance_id = None
         record_id = None
@@ -743,18 +657,6 @@ def get_status_v2(employee_id):
         existing_att = fetch_attendance_record(employee_id, today_date)
         existing_la = fetch_login_activity(employee_id, today_date)
         
-        # Guard: verify returned records actually belong to today (prevent cross-day data)
-        if existing_att:
-            att_date_raw = str(existing_att.get(FIELD_DATE) or "")[:10]
-            if att_date_raw and att_date_raw != today_date:
-                print(f"[ATTENDANCE-V2] STATUS: existing_att date {att_date_raw} != today {today_date}, ignoring")
-                existing_att = None
-        if existing_la:
-            la_date_raw = str(existing_la.get(LA_FIELD_DATE) or "")[:10]
-            if la_date_raw and la_date_raw != today_date:
-                print(f"[ATTENDANCE-V2] STATUS: existing_la date {la_date_raw} != today {today_date}, ignoring")
-                existing_la = None
-        
         if not existing_la and not existing_att:
             # No record for today
             return jsonify({
@@ -923,19 +825,4 @@ def get_monthly_attendance_v2(employee_id, year, month):
         print(f"[ATTENDANCE-V2] Monthly fetch error: {e}")
         import traceback
         traceback.print_exc()
-        return jsonify({"success": False, "error": str(e)}), 500
-
-
-@attendance_v2_bp.route('/force-close-stale/<employee_id>', methods=['POST'])
-def force_close_stale_sessions(employee_id):
-    """
-    Admin endpoint: force-close ALL open login activity sessions for an employee
-    where the record date is before today. Use when auto-close fails.
-    """
-    try:
-        employee_id = employee_id.strip().upper()
-        tz_name = (request.json or {}).get('timezone', 'Asia/Calcutta')
-        result = _auto_close_stale_sessions(employee_id, tz_name)
-        return jsonify({"success": True, "closed": result.get("closed", 0), "employee_id": employee_id})
-    except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
