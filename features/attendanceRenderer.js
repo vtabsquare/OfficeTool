@@ -164,12 +164,27 @@ async function _handleMidnightReset(employeeId) {
             await stopActiveTaskTimerOnCheckout(employeeId);
         } catch { }
         
+        // Immediately force UI to CHECK IN / 00:00:00 so the user sees the
+        // reset right away, even before the backend call completes.
+        lastStatusResponse = {
+            success: true,
+            has_record: false,
+            is_active_session: false,
+            timing: { total_seconds_today: 0 },
+            status: { code: null, label: 'Not Checked In' },
+            fetchedAt: Date.now(),
+            serverNowAtFetch: Date.now()
+        };
+        updateTimerDisplay();
+        
         // Fetch fresh status from backend.
         // The backend's _auto_close_stale_sessions will close the old-day session at 00:00
         // and return is_active_session=false for the new day (no record yet).
-        await fetchAttendanceStatus(employeeId);
+        try {
+            await fetchAttendanceStatus(employeeId);
+        } catch { }
         
-        // Force UI to CHECK IN state with 00:00:00
+        // Final UI sync with whatever backend returned
         updateTimerDisplay();
         
         console.log('[ATTENDANCE-RENDERER] Midnight reset complete. Ready for fresh check-in.');
@@ -417,8 +432,7 @@ export function updateTimerDisplay() {
         } else {
             timerBtn.classList.remove('check-out');
             timerBtn.classList.add('check-in');
-            const displayTime = totalSeconds > 0 ? timeString : '00:00:00';
-            timerBtn.innerHTML = `<span id="timer-display">${displayTime}</span> CHECK IN`;
+            timerBtn.innerHTML = `<span id="timer-display">00:00:00</span> CHECK IN`;
         }
     }
     

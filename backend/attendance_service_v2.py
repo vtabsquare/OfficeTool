@@ -287,6 +287,7 @@ def _auto_close_stale_sessions(employee_id, tz_name="Asia/Calcutta"):
         headers = _get_headers(token)
 
         safe_emp = emp.replace("'", "''")
+        # Primary query: date stored as plain string (YYYY-MM-DD)
         filter_q = (
             f"$filter={LA_FIELD_EMPLOYEE_ID} eq '{safe_emp}' "
             f"and {LA_FIELD_CHECKIN_TS} ne null "
@@ -294,11 +295,31 @@ def _auto_close_stale_sessions(employee_id, tz_name="Asia/Calcutta"):
             f"and {LA_FIELD_DATE} lt '{local_today}'"
         )
         url = f"{_get_base_url()}/{LOGIN_ACTIVITY_ENTITY}?{filter_q}&$orderby={LA_FIELD_DATE} asc"
+        print(f"[ATTENDANCE-V2] Auto-close query: {url}")
         resp = requests.get(url, headers=headers, timeout=20)
-        if resp.status_code != 200:
-            return {"closed": 0}
-
-        stale_rows = resp.json().get("value", [])
+        
+        stale_rows = []
+        if resp.status_code == 200:
+            stale_rows = resp.json().get("value", [])
+        
+        # Fallback: if date column is DateTime, try range query
+        if not stale_rows:
+            try:
+                filter_q2 = (
+                    f"$filter={LA_FIELD_EMPLOYEE_ID} eq '{safe_emp}' "
+                    f"and {LA_FIELD_CHECKIN_TS} ne null "
+                    f"and {LA_FIELD_CHECKOUT_TS} eq null "
+                    f"and {LA_FIELD_DATE} lt '{local_today}T00:00:00Z'"
+                )
+                url2 = f"{_get_base_url()}/{LOGIN_ACTIVITY_ENTITY}?{filter_q2}&$orderby={LA_FIELD_DATE} asc"
+                print(f"[ATTENDANCE-V2] Auto-close fallback query: {url2}")
+                resp2 = requests.get(url2, headers=headers, timeout=20)
+                if resp2.status_code == 200:
+                    stale_rows = resp2.json().get("value", [])
+            except Exception as fb_err:
+                print(f"[ATTENDANCE-V2] Fallback query error: {fb_err}")
+        
+        print(f"[ATTENDANCE-V2] Found {len(stale_rows)} stale row(s) for {emp}")
         closed = 0
 
         for row in stale_rows:
@@ -364,9 +385,13 @@ def _auto_close_stale_sessions(employee_id, tz_name="Asia/Calcutta"):
 
         if closed:
             print(f"[ATTENDANCE-V2] Auto-closed {closed} stale session(s) for {emp}")
+        else:
+            print(f"[ATTENDANCE-V2] No stale sessions needed closing for {emp}")
         return {"closed": closed}
     except Exception as e:
         print(f"[ATTENDANCE-V2] auto-close stale sessions error: {e}")
+        import traceback
+        traceback.print_exc()
         return {"closed": 0}
 
 
