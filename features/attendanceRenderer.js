@@ -80,9 +80,22 @@ export async function fetchAttendanceStatus(employeeId) {
             
             // Second guard: if active session but checkin_utc is from a different day,
             // this is a stale cross-day session the old backend didn't close.
+            // BUT: if we already have a local active session (user just checked in),
+            // preserve it — don't let the stale backend response kill the new session.
             if (data.is_active_session && data.timing?.checkin_utc) {
                 const checkinDay = (data.timing.checkin_utc || '').slice(0, 10);
                 if (checkinDay && checkinDay !== localToday) {
+                    // Check if we have a local active session that's recent (< 60s old)
+                    const hasRecentLocalSession = lastStatusResponse?.is_active_session
+                        && lastStatusResponse?.fetchedAt
+                        && (Date.now() - lastStatusResponse.fetchedAt) < 60000;
+                    
+                    if (hasRecentLocalSession) {
+                        // Keep the local session — don't overwrite with stale backend data
+                        console.warn(`[ATTENDANCE-RENDERER] Stale backend checkin ${checkinDay} != today ${localToday}, but keeping recent local session`);
+                        return lastStatusResponse;
+                    }
+                    
                     console.warn(`[ATTENDANCE-RENDERER] Stale active session: checkin ${checkinDay} != today ${localToday}, forcing clean slate`);
                     data.has_record = false;
                     data.is_active_session = false;
