@@ -16,6 +16,18 @@ let statusRefreshIntervalId = null;
 let displayUpdateIntervalId = null;
 let lastStatusResponse = null;
 let isInitialized = false;
+let _trackingLocalDate = null; // tracks the local date while session is active for midnight detection
+let _midnightResetInProgress = false;
+
+/**
+ * Get today's local date string (YYYY-MM-DD) in the user's timezone.
+ */
+function _getLocalDateStr() {
+    const now = new Date();
+    return now.getFullYear() + '-' +
+        String(now.getMonth() + 1).padStart(2, '0') + '-' +
+        String(now.getDate()).padStart(2, '0');
+}
 
 // ================== CORE PRINCIPLE ==================
 // elapsed_display = server_now_utc - last_session_start_utc + total_seconds_today
@@ -59,6 +71,12 @@ export async function fetchAttendanceStatus(employeeId) {
                 fetchedAt: Date.now(),
                 serverNowAtFetch: data.server_now_utc ? new Date(data.server_now_utc).getTime() : Date.now()
             };
+            // Track local date for midnight detection when session is active
+            if (data.is_active_session) {
+                _trackingLocalDate = _trackingLocalDate || _getLocalDateStr();
+            } else {
+                _trackingLocalDate = null;
+            }
             console.log('[ATTENDANCE-RENDERER] Stored lastStatusResponse:', lastStatusResponse);
             return data;
         }
@@ -120,10 +138,47 @@ export async function performCheckIn(employeeId, location = null) {
         serverNowAtFetch: new Date(data.server_now_utc).getTime()
     };
     
+    // Start tracking local date for midnight detection
+    _trackingLocalDate = _getLocalDateStr();
+    
     // Trigger immediate UI update
     updateTimerDisplay();
     
     return data;
+}
+
+/**
+ * Handle midnight crossing while a session is active.
+ * Forces a backend status refresh which auto-closes the stale session,
+ * then resets the UI to allow a fresh CHECK IN on the new day.
+ */
+async function _handleMidnightReset(employeeId) {
+    if (_midnightResetInProgress) return;
+    _midnightResetInProgress = true;
+    
+    console.log('[ATTENDANCE-RENDERER] Midnight crossed! Auto-resetting session.');
+    
+    try {
+        // Stop any running task timers on the frontend side
+        try {
+            await stopActiveTaskTimerOnCheckout(employeeId);
+        } catch { }
+        
+        // Fetch fresh status from backend.
+        // The backend's _auto_close_stale_sessions will close the old-day session at 00:00
+        // and return is_active_session=false for the new day (no record yet).
+        await fetchAttendanceStatus(employeeId);
+        
+        // Force UI to CHECK IN state with 00:00:00
+        updateTimerDisplay();
+        
+        console.log('[ATTENDANCE-RENDERER] Midnight reset complete. Ready for fresh check-in.');
+    } catch (err) {
+        console.error('[ATTENDANCE-RENDERER] Midnight reset error:', err);
+    } finally {
+        _midnightResetInProgress = false;
+        _trackingLocalDate = null;
+    }
 }
 
 async function stopActiveTaskTimerOnCheckout(employeeId, checkoutUtc = null) {
@@ -253,6 +308,9 @@ export async function performCheckOut(employeeId, location = null) {
         fetchedAt: Date.now(),
         serverNowAtFetch: new Date(data.server_now_utc).getTime()
     };
+    
+    // Clear midnight tracking since session is now closed
+    _trackingLocalDate = null;
     
     // Trigger immediate UI update
     updateTimerDisplay();
@@ -409,8 +467,20 @@ export async function initializeAttendance(employeeId) {
     // Initial display update
     updateTimerDisplay();
     
-    // Start display update interval (visual interpolation only)
+    // Track local date for midnight detection
+    _trackingLocalDate = (lastStatusResponse?.is_active_session) ? _getLocalDateStr() : null;
+    
+    // Start display update interval (visual interpolation only + midnight detection)
     displayUpdateIntervalId = setInterval(() => {
+        // Midnight detection: if session is active and local date has changed, trigger reset
+        if (_trackingLocalDate && lastStatusResponse?.is_active_session) {
+            const currentDate = _getLocalDateStr();
+            if (currentDate !== _trackingLocalDate) {
+                console.log(`[ATTENDANCE-RENDERER] Date changed: ${_trackingLocalDate} -> ${currentDate}`);
+                _handleMidnightReset(employeeId);
+                return; // skip normal display update this tick
+            }
+        }
         // Always update display for visual consistency
         updateTimerDisplay();
     }, DISPLAY_UPDATE_INTERVAL_MS);
@@ -540,6 +610,8 @@ export function cleanup() {
     }
     lastStatusResponse = null;
     isInitialized = false;
+    _trackingLocalDate = null;
+    _midnightResetInProgress = false;
 }
 
 // ================== SOCKET EVENT HANDLER ==================
