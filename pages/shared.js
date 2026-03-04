@@ -1319,10 +1319,11 @@ export const renderMyTimesheetPage = async () => {
             const projectId = String(t?.project_id || t?.projectId || t?.project || '').trim();
             const taskGuid = String(t?.guid || t?.task_guid || '').trim();
             const taskId = String(t?.task_id || t?.taskId || '').trim();
+            const taskName = String(t?.task_name || t?.taskName || '').trim();
             const boardId = String(t?.board_id || t?.boardId || '').trim();
             if (!projectId) return;
-            if (taskGuid) taskMetaByIdentity.set(`${projectId}|${taskGuid}`, { board_id: boardId });
-            if (taskId) taskMetaByIdentity.set(`${projectId}|${taskId}`, { board_id: boardId });
+            if (taskGuid) taskMetaByIdentity.set(`${projectId}|${taskGuid}`, { board_id: boardId, task_id: taskId, task_name: taskName });
+            if (taskId) taskMetaByIdentity.set(`${projectId}|${taskId}`, { board_id: boardId, task_id: taskId, task_name: taskName });
         });
 
         // Group logs by project/task
@@ -1338,19 +1339,26 @@ export const renderMyTimesheetPage = async () => {
                 grouped[key] = {
                     project_id: l.project_id,
                     task_guid: l.task_guid || '',
-                    task_id: l.task_id,
-                    task_name: l.task_name,
+                    task_id: l.task_id || matchedMeta.task_id || '',
+                    task_name: l.task_name || matchedMeta.task_name || '',
                     board_id: matchedMeta.board_id || '',
                     billing: 'Non-billable',
                     hours: Array(7).fill(0),
                     manualFlags: Array(7).fill(false),
                     dayLogIds: Array(7).fill(''),
+
                     _logRefs: []
                 };
             }
 
             if (!grouped[key].board_id && matchedMeta.board_id) {
                 grouped[key].board_id = matchedMeta.board_id;
+            }
+            if (!grouped[key].task_name && (l.task_name || matchedMeta.task_name)) {
+                grouped[key].task_name = l.task_name || matchedMeta.task_name;
+            }
+            if (!grouped[key].task_id && (l.task_id || matchedMeta.task_id)) {
+                grouped[key].task_id = l.task_id || matchedMeta.task_id;
             }
             if (l.id) grouped[key]._logRefs.push(String(l.id));
 
