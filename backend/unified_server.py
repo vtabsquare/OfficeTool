@@ -33,6 +33,7 @@ from project_column import columns_bp
 from chats import chat_bp
 from time_tracking import bp_time, stop_active_task_entries_for_user
 from attendance_service_v2 import attendance_v2_bp
+from attendance_scheduler import setup_scheduler as _setup_attendance_scheduler
 
 try:
     from zoneinfo import ZoneInfo
@@ -60,6 +61,12 @@ app.register_blueprint(columns_bp)
 app.register_blueprint(bp_time)
 app.register_blueprint(chat_bp)
 app.register_blueprint(attendance_v2_bp)  # Backend-authoritative attendance (v2)
+
+# Start the midnight auto-checkout scheduler (daemon thread, no extra dependency)
+try:
+    _setup_attendance_scheduler(app)
+except Exception as _sched_err:
+    print(f"[WARN] Failed to start attendance scheduler: {_sched_err}")
 
 def _coerce_client_local_datetime(client_time_str, timezone_name):
     """Convert client-supplied ISO timestamp into the user's local timezone if possible."""
