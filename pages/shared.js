@@ -1059,6 +1059,24 @@ export const renderMyTimesheetPage = async () => {
         }
     }
 
+    const refreshProjectTaskSources = async () => {
+        const [projRes, taskRes] = await Promise.allSettled([
+            fetch(`${API}/projects`, { cache: 'no-store' }).then(r => r.json()),
+            fetch(`${API}/tasks`, { cache: 'no-store' }).then(r => r.json())
+        ]);
+
+        if (projRes.status === 'fulfilled' && projRes.value?.success && Array.isArray(projRes.value.projects)) {
+            projects = projRes.value.projects;
+            try { sessionStorage.setItem('ts_projects_cache', JSON.stringify(projects)); } catch { }
+        }
+        if (taskRes.status === 'fulfilled' && taskRes.value?.success && Array.isArray(taskRes.value.tasks)) {
+            tasks = taskRes.value.tasks;
+            try { sessionStorage.setItem('ts_tasks_cache', JSON.stringify(tasks)); } catch { }
+        }
+
+        return { projects, tasks };
+    };
+
     // State for grid rows (derived from logs) and manual rows (user-added)
     let gridRows = [];
     let manualRows = [];
@@ -1404,12 +1422,6 @@ export const renderMyTimesheetPage = async () => {
         const weekOfMonth = Math.floor((s.getDate() - 1) / 7) + 1;
         const weekLabel = `${s.getDate()} ${s.toLocaleDateString('en-US', { month: 'long' })} ${s.getFullYear()} - ${e.getDate()} ${e.toLocaleDateString('en-US', { month: 'long' })} ${e.getFullYear()} (Week ${weekOfMonth})`;
 
-        // Build project options
-        const projectOpts = projects.map(p => `<option value="${p.crc6f_projectid || p.id}">${p.crc6f_projectname || p.name || p.crc6f_projectid || p.id}</option>`).join('');
-
-        // Build task options
-        const taskOpts = tasks.map(t => `<option value="${t.guid}">${t.task_name || t.task_id}</option>`).join('');
-
         // Helper to format seconds as HH:MM
         const formatTime = (secs) => {
             if (!secs) return '';
@@ -1635,9 +1647,24 @@ export const renderMyTimesheetPage = async () => {
             render();
         };
 
-        document.getElementById('ts-add-row').onclick = () => {
-            const projOpts = ['<option value="">Select project</option>'].concat(projects.map(p => `<option value="${p.crc6f_projectid || p.id}">${p.crc6f_projectname || p.name || p.crc6f_projectid || p.id}</option>`)).join('');
-            const taskOpts = ['<option value="">Select task</option>'].concat(tasks.map(t => `<option value="${t.guid}">${t.task_name || t.task_id}</option>`)).join('');
+        document.getElementById('ts-add-row').onclick = async () => {
+            const addBtn = document.getElementById('ts-add-row');
+            if (addBtn) {
+                addBtn.disabled = true;
+                addBtn.style.opacity = '0.7';
+            }
+
+            const latest = await refreshProjectTaskSources().catch(() => ({ projects, tasks }));
+            const modalProjects = Array.isArray(latest?.projects) ? latest.projects : (projects || []);
+            const modalTasks = Array.isArray(latest?.tasks) ? latest.tasks : (tasks || []);
+
+            if (addBtn) {
+                addBtn.disabled = false;
+                addBtn.style.opacity = '';
+            }
+
+            const projOpts = ['<option value="">Select project</option>'].concat(modalProjects.map(p => `<option value="${p.crc6f_projectid || p.id}">${p.crc6f_projectname || p.name || p.crc6f_projectid || p.id}</option>`)).join('');
+            const taskOpts = ['<option value="">Select task</option>'].concat(modalTasks.map(t => `<option value="${t.guid}">${t.task_name || t.task_id}</option>`)).join('');
             const body = `
               <div id="myts-add-row-form" class="leave-form timesheet-edit-form">
                 <div class="form-section">
@@ -1689,7 +1716,7 @@ export const renderMyTimesheetPage = async () => {
                     if (!taskSel) return;
                     const selectedProjectId = normalizeProjectId(projectSel?.value || '');
                     const currentTaskValue = String(taskSel.value || '').trim();
-                    const filteredTasks = (tasks || []).filter((t) => {
+                    const filteredTasks = (modalTasks || []).filter((t) => {
                         if (!selectedProjectId) return true;
                         const taskProjectId = normalizeProjectId(t?.project_id || t?.crc6f_projectid || t?.projectId || '');
                         return taskProjectId === selectedProjectId;
@@ -1715,9 +1742,9 @@ export const renderMyTimesheetPage = async () => {
                     const tg = document.getElementById('mr-task')?.value || '';
                     const bill = document.getElementById('mr-billing')?.value || 'Non-billable';
 
-                    const selProject = projects.find(p => (p.crc6f_projectid || p.id) === pid) || {};
+                    const selProject = modalProjects.find(p => (p.crc6f_projectid || p.id) === pid) || {};
                     const projectName = selProject.crc6f_projectname || selProject.name || pid || 'Manual project';
-                    const selTask = tasks.find(t => String(t.guid) === String(tg)) || {};
+                    const selTask = modalTasks.find(t => String(t.guid) === String(tg)) || {};
                     // Generate local GUID/task if not chosen from list
                     const genGuid = () => (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : `man-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
                     const guid = tg || genGuid();
