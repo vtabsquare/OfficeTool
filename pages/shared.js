@@ -1271,17 +1271,33 @@ export const renderMyTimesheetPage = async () => {
         console.log('My Timesheet - Loaded logs (after filtering):', logs);
         console.log('My Timesheet - Days in week:', days.map(d => d.toISOString().slice(0, 10)));
 
+        const taskMetaByIdentity = new Map();
+        (tasks || []).forEach(t => {
+            const projectId = String(t?.project_id || t?.projectId || t?.project || '').trim();
+            const taskGuid = String(t?.guid || t?.task_guid || '').trim();
+            const taskId = String(t?.task_id || t?.taskId || '').trim();
+            const boardId = String(t?.board_id || t?.boardId || '').trim();
+            if (!projectId) return;
+            if (taskGuid) taskMetaByIdentity.set(`${projectId}|${taskGuid}`, { board_id: boardId });
+            if (taskId) taskMetaByIdentity.set(`${projectId}|${taskId}`, { board_id: boardId });
+        });
+
         // Group logs by project/task
         const grouped = {};
         logs.forEach(l => {
             const taskIdentity = taskIdentityFor(l);
             const key = `${l.project_id || ''}|${taskIdentity}`;
+            const taskGuidKey = `${l.project_id || ''}|${String(l.task_guid || '').trim()}`;
+            const taskIdKey = `${l.project_id || ''}|${String(l.task_id || '').trim()}`;
+            const matchedMeta = taskMetaByIdentity.get(taskGuidKey) || taskMetaByIdentity.get(taskIdKey) || taskMetaByIdentity.get(key) || {};
+
             if (!grouped[key]) {
                 grouped[key] = {
                     project_id: l.project_id,
                     task_guid: l.task_guid || '',
                     task_id: l.task_id,
                     task_name: l.task_name,
+                    board_id: matchedMeta.board_id || '',
                     billing: 'Non-billable',
                     hours: Array(7).fill(0),
                     manualFlags: Array(7).fill(false),
@@ -1289,11 +1305,13 @@ export const renderMyTimesheetPage = async () => {
                     _logRefs: []
                 };
             }
+
+            if (!grouped[key].board_id && matchedMeta.board_id) {
+                grouped[key].board_id = matchedMeta.board_id;
+            }
             if (l.id) grouped[key]._logRefs.push(String(l.id));
 
-            // Match log date to day column using string comparison (YYYY-MM-DD)
             const logDate = (l.work_date || '').slice(0, 10);
-            // Only process if log date is not in the future (using local date)
             if (logDate <= todayStr) {
                 for (let i = 0; i < 7; i++) {
                     const dayDate = new Date(s);
@@ -1329,6 +1347,7 @@ export const renderMyTimesheetPage = async () => {
                         task_guid: t.guid || '',
                         task_id: t.task_id || '',
                         task_name: t.task_name || '',
+                        board_id: t.board_id || '',
                         billing: 'Non-billable',
                         hours: Array(7).fill(0),
                         dayLogIds: Array(7).fill('')
@@ -1452,8 +1471,9 @@ export const renderMyTimesheetPage = async () => {
             const taskId = row.task_id || row.task_name || 'Manual Task';
 
             const rowProjectId = row.project_id || row.projectId || row.project;
+            const rowBoardId = row.board_id || row.boardId || '';
             return `
-                <tr data-row-id="${row.id || idx}" ${row._manual ? 'data-manual="1"' : ''} ${rowProjectId ? `data-project="${encodeURIComponent(rowProjectId)}" class="ts-row-clickable"` : ''}>
+                <tr data-row-id="${row.id || idx}" ${row._manual ? 'data-manual="1"' : ''} ${rowProjectId ? `data-project="${encodeURIComponent(rowProjectId)}" ${rowBoardId ? `data-board="${encodeURIComponent(rowBoardId)}"` : ''} class="ts-row-clickable"` : ''}>
                     <td>
                         <div style="padding: 8px; font-weight: 500; color: #334155 !important;">${projectName}</div>
                     </td>
@@ -1756,6 +1776,10 @@ export const renderMyTimesheetPage = async () => {
                         const ovMap = loadOverrides();
                         if (Object.prototype.hasOwnProperty.call(ovMap, rowKey)) {
                             delete ovMap[rowKey];
+                            // Remove the entire key array if it's now empty
+                            if (ovMap[rowKey].every(val => val === undefined || val === null)) {
+                                delete ovMap[rowKey];
+                            }
                             saveOverrides(ovMap);
                         }
                     } catch { }
@@ -1927,7 +1951,6 @@ export const renderMyTimesheetPage = async () => {
             if (!row) return;
             const dayDate = new Date(startOfWeek(anchor));
             dayDate.setDate(startOfWeek(anchor).getDate() + dayIdx);
-
             const yyyy = dayDate.getFullYear();
             const mm = String(dayDate.getMonth() + 1).padStart(2, '0');
             const dd = String(dayDate.getDate()).padStart(2, '0');
@@ -2100,8 +2123,11 @@ export const renderMyTimesheetPage = async () => {
                 const skipTags = ['INPUT', 'SELECT', 'TEXTAREA', 'OPTION', 'BUTTON', 'LABEL'];
                 if (skipTags.includes(tag)) return;
                 const projectId = tr.getAttribute('data-project');
+                const boardId = tr.getAttribute('data-board');
                 if (!projectId) return;
-                window.location.hash = `#/time-projects?id=${projectId}&tab=crm`;
+                const boardPart = boardId ? `&tab=crm&board=${boardId}` : '';
+                const tabPart = boardId ? '' : '&tab=crm';
+                window.location.hash = `#/time-projects?id=${projectId}${tabPart}${boardPart}`;
             });
         });
 
