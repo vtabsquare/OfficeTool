@@ -1838,6 +1838,10 @@ export const renderMyTimesheetPage = async () => {
                     // Important: deleting from My Timesheet should only remove time rows/logs,
                     // not delete the task itself from Projects/Kanban.
 
+                    // Re-compute week dates to ensure they are valid for delete payload
+                    const s = startOfWeek(anchor);
+                    const e = endOfWeek(anchor);
+
                     // 1) Manual row cleanup
                     if (row._manual) {
                         manualRows = manualRows.filter(r => r.id !== row.id && rowKeyFor(r) !== rowKey);
