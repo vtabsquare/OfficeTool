@@ -499,7 +499,11 @@ def delete_logs_row():
         if project_id:
             safe_project = project_id.replace("'", "''")
             parts.append(f"crc6f_projectid eq '{safe_project}'")
-        if task_guid:
+        if task_guid and task_id:
+            safe_task_guid = task_guid.replace("'", "''")
+            safe_task_id = task_id.replace("'", "''")
+            parts.append(f"(crc6f_taskguid eq '{safe_task_guid}' or crc6f_taskid eq '{safe_task_id}')")
+        elif task_guid:
             safe_task_guid = task_guid.replace("'", "''")
             parts.append(f"crc6f_taskguid eq '{safe_task_guid}'")
         else:
@@ -532,7 +536,6 @@ def delete_logs_row():
     # Local deletion fallback/cleanup
     logs = _read_logs()
     before = len(logs)
-    match_task_key = (task_guid or task_id)
 
     def _in_range(work_date):
         d = _safe_date_part(work_date)
@@ -542,8 +545,12 @@ def delete_logs_row():
     for r in logs:
         same_emp = str(r.get("employee_id") or "") == employee_id
         same_project = (not project_id) or str(r.get("project_id") or "") == project_id
-        row_task_key = str(r.get("task_guid") or r.get("task_id") or "")
-        same_task = row_task_key == match_task_key
+        same_task = _same_task_identity(
+            r.get("task_guid"),
+            r.get("task_id"),
+            task_guid,
+            task_id,
+        )
         same_window = _in_range(r.get("work_date"))
         if same_emp and same_project and same_task and same_window:
             continue
