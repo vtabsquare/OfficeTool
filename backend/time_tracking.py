@@ -676,6 +676,8 @@ def set_exact_log():
         if dv_id:
             # Use proven update_record helper from dataverse_helper.py
             update_data = {"crc6f_hoursworked": hours_worked_str, "crc6f_workdescription": desc_for_save}
+            if b.get("task_name"):
+                update_data["crc6f_taskname"] = str(b.get("task_name")).strip()
             print(f"[TEAM_TS_EDIT] Updating {dv_id} with {update_data}")
             try:
                 update_record(ENTITY, dv_id, update_data)
@@ -700,6 +702,8 @@ def set_exact_log():
                 create_data["crc6f_taskid"] = task_id
             if task_guid:
                 create_data["crc6f_taskguid"] = task_guid
+            if b.get("task_name"):
+                create_data["crc6f_taskname"] = str(b.get("task_name")).strip()
             print(f"[TEAM_TS_EDIT] Creating new record: {create_data}")
             try:
                 created = create_record(ENTITY, create_data)
