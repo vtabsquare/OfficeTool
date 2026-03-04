@@ -1856,33 +1856,39 @@ export const renderMyTimesheetPage = async () => {
                     // 3) Backend row deletion for persisted logs
                     const hasPersisted = (row._logRefs && row._logRefs.length) || (row.hours || []).some(v => Number(v || 0) > 0);
                     if (hasPersisted && (row.task_guid || row.task_id)) {
-                        try {
-                            const payload = {
-                                employee_id: String(empId || '').toUpperCase(),
+                        const startStr = fmt(s);
+                        const endStr = fmt(e);
+                        if (!startStr || !endStr) {
+                            console.warn('[TS_DELETE] Invalid date range for row delete; skipping backend call', { startStr, endStr, row });
+                        } else {
+                            try {
+                                const payload = {
+                                    employee_id: String(empId || '').toUpperCase(),
 
-                                project_id: row.project_id || '',
-                                task_guid: row.task_guid || '',
-                                task_id: row.task_id || '',
-                                start_date: fmt(s),
-                                end_date: fmt(e),
-                            };
-                            const resp = await fetch(`${API}/time-tracker/logs/row`, {
-                                method: 'DELETE',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify(payload),
-                            });
-                            let data = {};
-                            if (typeof resp?.json === 'function') {
-                                data = await resp.json().catch(() => ({}));
-                            } else if (resp && typeof resp === 'object') {
-                                data = resp;
+                                    project_id: row.project_id || '',
+                                    task_guid: row.task_guid || '',
+                                    task_id: row.task_id || '',
+                                    start_date: startStr,
+                                    end_date: endStr,
+                                };
+                                const resp = await fetch(`${API}/time-tracker/logs/row`, {
+                                    method: 'DELETE',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify(payload),
+                                });
+                                let data = {};
+                                if (typeof resp?.json === 'function') {
+                                    data = await resp.json().catch(() => ({}));
+                                } else if (resp && typeof resp === 'object') {
+                                    data = resp;
+                                }
+                                const rowDeleteOk = (typeof resp?.ok === 'boolean') ? resp.ok : !!data?.success;
+                                if (!rowDeleteOk || data?.success === false) {
+                                    console.warn('Timesheet row delete API did not confirm success', data);
+                                }
+                            } catch (err) {
+                                console.error('Timesheet row delete failed', err);
                             }
-                            const rowDeleteOk = (typeof resp?.ok === 'boolean') ? resp.ok : !!data?.success;
-                            if (!rowDeleteOk || data?.success === false) {
-                                console.warn('Timesheet row delete API did not confirm success', data);
-                            }
-                        } catch (err) {
-                            console.error('Timesheet row delete failed', err);
                         }
                     }
 
