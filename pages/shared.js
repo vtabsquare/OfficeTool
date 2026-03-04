@@ -1038,7 +1038,14 @@ export const renderMyTimesheetPage = async () => {
     // Week navigation helpers
     const startOfWeek = (d) => { const x = new Date(d); const day = x.getDay(); const diff = (day === 0 ? -6 : 1) - day; x.setDate(x.getDate() + diff); x.setHours(0, 0, 0, 0); return x; };
     const endOfWeek = (d) => { const x = startOfWeek(d); x.setDate(x.getDate() + 6); x.setHours(23, 59, 59, 999); return x; };
-    const fmt = (dt) => dt.toISOString().slice(0, 10);
+    const fmt = (dt) => {
+        const d = (dt instanceof Date) ? dt : new Date(dt);
+        if (Number.isNaN(d.getTime())) return '';
+        const yyyy = d.getFullYear();
+        const mm = String(d.getMonth() + 1).padStart(2, '0');
+        const dd = String(d.getDate()).padStart(2, '0');
+        return `${yyyy}-${mm}-${dd}`;
+    };
 
     // Initialize anchor from last log or current date
     let anchor = (() => {
