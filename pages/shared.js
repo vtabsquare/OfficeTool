@@ -1828,32 +1828,8 @@ export const renderMyTimesheetPage = async () => {
                     const rowKey = rowKeyFor(row);
                     const nextHidden = new Set(hiddenRowSet);
 
-                    const taskGuid = String(row.task_guid || '').trim();
-                    const shouldDeleteTaskEverywhere = !row._manual && !!taskGuid;
-                    if (shouldDeleteTaskEverywhere) {
-                        try {
-                            const delTaskResp = await fetch(`${API}/tasks/${encodeURIComponent(taskGuid)}`, { method: 'DELETE' });
-                            let delTaskData = {};
-                            if (typeof delTaskResp?.json === 'function') {
-                                delTaskData = await delTaskResp.json().catch(() => ({}));
-                            } else if (delTaskResp && typeof delTaskResp === 'object') {
-                                delTaskData = delTaskResp;
-                            }
-
-                            const deleteOk = (typeof delTaskResp?.ok === 'boolean')
-                                ? delTaskResp.ok
-                                : !!delTaskData?.success;
-
-                            if (!deleteOk || !delTaskData?.success) {
-                                showToast(delTaskData.error || 'Failed to delete task');
-                                return;
-                            }
-                        } catch (err) {
-                            console.error('Task delete failed', err);
-                            showToast('Failed to delete task');
-                            return;
-                        }
-                    }
+                    // Important: deleting from My Timesheet should only remove time rows/logs,
+                    // not delete the task itself from Projects/Kanban.
 
                     // 1) Manual row cleanup
                     if (row._manual) {
