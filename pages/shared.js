@@ -1785,12 +1785,31 @@ export const renderMyTimesheetPage = async () => {
 
         document.querySelectorAll('.ts-delete-row').forEach(btn => {
             btn.onclick = async (e) => {
+                e.preventDefault();
+                e.stopPropagation();
                 const rowIdx = parseInt(e.currentTarget.getAttribute('data-row'));
                 const row = gridRows[rowIdx];
                 if (!row) return;
                 if (confirm('Delete this row?')) {
                     const rowKey = rowKeyFor(row);
                     const nextHidden = new Set(hiddenRowSet);
+
+                    const taskGuid = String(row.task_guid || '').trim();
+                    const shouldDeleteTaskEverywhere = !row._manual && !!taskGuid;
+                    if (shouldDeleteTaskEverywhere) {
+                        try {
+                            const delTaskResp = await fetch(`${API}/tasks/${encodeURIComponent(taskGuid)}`, { method: 'DELETE' });
+                            const delTaskData = await delTaskResp.json().catch(() => ({}));
+                            if (!delTaskResp.ok || !delTaskData.success) {
+                                showToast(delTaskData.error || 'Failed to delete task');
+                                return;
+                            }
+                        } catch (err) {
+                            console.error('Task delete failed', err);
+                            showToast('Failed to delete task');
+                            return;
+                        }
+                    }
 
                     // 1) Manual row cleanup
                     if (row._manual) {
@@ -2146,10 +2165,12 @@ export const renderMyTimesheetPage = async () => {
         document.querySelectorAll('tr.ts-row-clickable').forEach(tr => {
             tr.style.cursor = 'pointer';
             tr.addEventListener('click', (e) => {
+                if (e.target?.closest('.ts-delete-row, .icon-btn, .ts-hour-input, .ts-billing')) return;
                 const tag = (e.target && e.target.tagName) || '';
                 const skipTags = ['INPUT', 'SELECT', 'TEXTAREA', 'OPTION', 'BUTTON', 'LABEL'];
                 if (skipTags.includes(tag)) return;
                 const projectId = tr.getAttribute('data-project');
+
                 const boardId = tr.getAttribute('data-board');
                 if (!projectId) return;
                 const boardPart = boardId ? `&tab=crm&board=${boardId}` : '';
