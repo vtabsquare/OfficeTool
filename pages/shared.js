@@ -1486,8 +1486,12 @@ export const renderMyTimesheetPage = async () => {
             const project = projects.find(p => (p.crc6f_projectid || p.id) === row.project_id);
             const projectName = project ? (project.crc6f_projectname || project.name || row.project_id) : (row.project_name || row.project_id || 'Manual row');
 
-            // Task ID only (not task name)
-            const taskId = row.task_id || row.task_name || 'Manual Task';
+            // Task column: show task id + task name where available
+            const taskId = String(row.task_id || '').trim();
+            const taskName = String(row.task_name || '').trim();
+            const taskDisplay = (taskId && taskName)
+                ? `${taskId} - ${taskName}`
+                : (taskId || taskName || 'Manual Task');
 
             const rowProjectId = row.project_id || row.projectId || row.project;
             const rowBoardId = row.board_id || row.boardId || '';
@@ -1497,7 +1501,7 @@ export const renderMyTimesheetPage = async () => {
                         <div style="padding: 8px; font-weight: 500; color: #334155 !important;">${projectName}</div>
                     </td>
                     <td>
-                        <div style="padding: 8px; color: #334155 !important;">${taskId}</div>
+                        <div style="padding: 8px; color: #334155 !important;">${taskDisplay}</div>
                     </td>
                     <td>
                         <select class="ts-select ts-billing" data-row="${idx}">
