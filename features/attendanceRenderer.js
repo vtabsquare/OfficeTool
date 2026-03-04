@@ -508,7 +508,7 @@ export function updateTimerDisplay() {
         } else {
             timerBtn.classList.remove('check-out');
             timerBtn.classList.add('check-in');
-            timerBtn.innerHTML = `<span id="timer-display">00:00:00</span> CHECK IN`;
+            timerBtn.innerHTML = `<span id="timer-display">${timeString}</span> CHECK IN`;
         }
     }
     
