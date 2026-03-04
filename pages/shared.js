@@ -1799,8 +1799,18 @@ export const renderMyTimesheetPage = async () => {
                     if (shouldDeleteTaskEverywhere) {
                         try {
                             const delTaskResp = await fetch(`${API}/tasks/${encodeURIComponent(taskGuid)}`, { method: 'DELETE' });
-                            const delTaskData = await delTaskResp.json().catch(() => ({}));
-                            if (!delTaskResp.ok || !delTaskData.success) {
+                            let delTaskData = {};
+                            if (typeof delTaskResp?.json === 'function') {
+                                delTaskData = await delTaskResp.json().catch(() => ({}));
+                            } else if (delTaskResp && typeof delTaskResp === 'object') {
+                                delTaskData = delTaskResp;
+                            }
+
+                            const deleteOk = (typeof delTaskResp?.ok === 'boolean')
+                                ? delTaskResp.ok
+                                : !!delTaskData?.success;
+
+                            if (!deleteOk || !delTaskData?.success) {
                                 showToast(delTaskData.error || 'Failed to delete task');
                                 return;
                             }
