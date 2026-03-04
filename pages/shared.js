@@ -1382,12 +1382,13 @@ export const renderMyTimesheetPage = async () => {
         } catch { }
         // Append any manual rows that don't already exist by key
         if (Array.isArray(manualRows) && manualRows.length) {
-            const existingKeys = new Set(Object.keys(grouped));
+            const existingKeys = new Set((gridRows || []).map(r => rowKeyFor(r)));
             const toAppend = manualRows.filter(r => {
                 const key = rowKeyFor(r);
                 if (hiddenRowSet.has(key)) return false;
                 return !existingKeys.has(key);
             });
+
             gridRows = gridRows.concat(toAppend);
         }
         console.log('My Timesheet - Grid rows:', gridRows);
@@ -1767,9 +1768,18 @@ export const renderMyTimesheetPage = async () => {
                         billing: bill,
                         hours: Array(7).fill(0)
                     };
+                    const newRowKey = rowKeyFor(newRow);
+                    const duplicateExists = (gridRows || []).some(r => rowKeyFor(r) === newRowKey)
+                        || (manualRows || []).some(r => rowKeyFor(r) === newRowKey);
+                    if (duplicateExists) {
+                        showToast('This task row already exists');
+                        closeModal();
+                        return;
+                    }
                     manualRows.push(newRow);
                     try {
                         const key = rowKeyFor(newRow);
+
                         const next = new Set(hiddenRowSet);
                         next.delete(key);
                         sessionStorage.setItem(hiddenRowsKey, JSON.stringify(Array.from(next)));
