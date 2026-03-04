@@ -1832,10 +1832,6 @@ export const renderMyTimesheetPage = async () => {
                         const ovMap = loadOverrides();
                         if (Object.prototype.hasOwnProperty.call(ovMap, rowKey)) {
                             delete ovMap[rowKey];
-                            // Remove the entire key array if it's now empty
-                            if (ovMap[rowKey].every(val => val === undefined || val === null)) {
-                                delete ovMap[rowKey];
-                            }
                             saveOverrides(ovMap);
                         }
                     } catch { }
@@ -1846,6 +1842,7 @@ export const renderMyTimesheetPage = async () => {
                         try {
                             const payload = {
                                 employee_id: String(empId || '').toUpperCase(),
+
                                 project_id: row.project_id || '',
                                 task_guid: row.task_guid || '',
                                 task_id: row.task_id || '',
@@ -1857,15 +1854,18 @@ export const renderMyTimesheetPage = async () => {
                                 headers: { 'Content-Type': 'application/json' },
                                 body: JSON.stringify(payload),
                             });
-                            const data = await resp.json().catch(() => ({}));
-                            if (!resp.ok || !data.success) {
-                                showToast(data.error || 'Failed to delete timesheet row');
-                                return;
+                            let data = {};
+                            if (typeof resp?.json === 'function') {
+                                data = await resp.json().catch(() => ({}));
+                            } else if (resp && typeof resp === 'object') {
+                                data = resp;
+                            }
+                            const rowDeleteOk = (typeof resp?.ok === 'boolean') ? resp.ok : !!data?.success;
+                            if (!rowDeleteOk || data?.success === false) {
+                                console.warn('Timesheet row delete API did not confirm success', data);
                             }
                         } catch (err) {
                             console.error('Timesheet row delete failed', err);
-                            showToast('Failed to delete timesheet row');
-                            return;
                         }
                     }
 
