@@ -490,11 +490,17 @@ export const renderMyTasksPage = async () => {
         try {
             const key = 'tt_manual_tasks_v1';
             const local = JSON.parse(localStorage.getItem(key) || '[]');
+            const localOnlyTasks = (Array.isArray(local) ? local : []).filter(t => {
+                const guid = String(t?.guid || t?.task_guid || t?.id || '').trim().toLowerCase();
+                const taskId = String(t?.task_id || '').trim().toUpperCase();
+                return t?.local_only === true || guid.startsWith('man-') || taskId.startsWith('MAN-');
+            });
             const empKey = String(empId || '').toUpperCase();
             const normalizeStatus = (v) => {
                 const s = String(v || '').trim();
                 if (!s) return '';
                 const low = s.toLowerCase();
+
                 if (low === 'canceled' || low === 'cancelled') return 'Cancelled';
                 if (low === 'inactive') return 'Inactive';
                 if (low === 'deleted') return 'Deleted';
@@ -504,12 +510,13 @@ export const renderMyTasksPage = async () => {
             // Clean up stale manual tasks (so deleted project/task doesn't keep showing in My Tasks)
             // - If assigned to this employee and project is missing from projects cache -> remove
             // - If assigned to this employee and status is Deleted -> remove
-            let cleaned = Array.isArray(local) ? [...local] : [];
+            let cleaned = [...localOnlyTasks];
             cleaned = cleaned.filter(t => {
                 const assigned = String(t?.assigned_to || '').toUpperCase();
                 if (assigned !== empKey) return true; // keep other users' manual tasks
                 const st = normalizeStatus(t?.task_status);
                 if (st.toLowerCase() === 'deleted') return false;
+
                 const pid = String(t?.project_id || '').trim();
                 if (pid && projectsIdx && !projectsIdx[pid]) return false;
                 return true;
@@ -570,10 +577,10 @@ export const renderMyTasksPage = async () => {
             session_end_ms: ended_at || Date.now(),
             tz_offset_minutes: new Date().getTimezoneOffset()
         };
-        console.log('[MY_TASKS] Posting to:', `${API}/time-tracker/task-log`);
+        console.log('[MY_TASKS] Posting to:', `${API}/time-entries/log`);
         console.log('[MY_TASKS] Request body:', body);
         try {
-            const res = await fetch(`${API}/time-tracker/task-log`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+            const res = await fetch(`${API}/time-entries/log`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
             console.log('[MY_TASKS] Response status:', res.status);
             const result = await res.json().catch(() => ({ success: false }));
             console.log('[MY_TASKS] Response data:', result);
@@ -1332,8 +1339,7 @@ export const renderMyTimesheetPage = async () => {
             const logDate = (l.work_date || '').slice(0, 10);
             if (logDate <= todayStr) {
                 for (let i = 0; i < 7; i++) {
-                    const dayDate = new Date(s);
-                    dayDate.setDate(s.getDate() + i);
+                    const dayDate = new Date(s); dayDate.setDate(s.getDate() + i);
                     const dayDateStr = `${dayDate.getFullYear()}-${String(dayDate.getMonth() + 1).padStart(2, '0')}-${String(dayDate.getDate()).padStart(2, '0')}`;
                     if (logDate === dayDateStr) {
                         const seconds = Number(l.seconds || 0);
@@ -1750,6 +1756,7 @@ export const renderMyTimesheetPage = async () => {
                     const guid = tg || genGuid();
                     const taskId = selTask.task_id || `MAN-${String(Date.now()).slice(-6)}`;
                     const taskName = selTask.task_name || selTask.name || taskId;
+                    const isLocalOnlyTask = !tg;
                     const newRow = {
                         id: Date.now(), _manual: true,
                         project_id: pid,
@@ -1773,8 +1780,10 @@ export const renderMyTimesheetPage = async () => {
                         const key = 'tt_manual_tasks_v1';
                         const cur = JSON.parse(localStorage.getItem(key) || '[]');
                         const emp = String(empId || '').toUpperCase();
-                        const rec = { guid, task_id: taskId, task_name: taskName, project_id: pid, project_name: projectName, assigned_to: emp, task_status: 'New', task_priority: 'Normal', due_date: '' };
-                        if (!cur.find(t => String(t.guid) === String(guid))) cur.push(rec);
+                        if (isLocalOnlyTask) {
+                            const rec = { guid, task_id: taskId, task_name: taskName, project_id: pid, project_name: projectName, assigned_to: emp, task_status: 'New', task_priority: 'Normal', due_date: '', local_only: true };
+                            if (!cur.find(t => String(t.guid) === String(guid))) cur.push(rec);
+                        }
                         localStorage.setItem(key, JSON.stringify(cur));
                     } catch { }
                     closeModal();
