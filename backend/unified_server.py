@@ -5917,7 +5917,9 @@ def create_project():
         data = request.get_json(force=True) or {}
 
         # Require Project ID & Name minimally
-        pid = (data.get("crc6f_projectid") or "").strip()
+        raw_pid = (data.get("crc6f_projectid") or "").strip()
+        pid = raw_pid
+        auto_generated_pid = not bool(raw_pid)
         if not pid:
             pid = generate_project_id()
         pname = (data.get("crc6f_projectname") or "").strip()
@@ -5931,11 +5933,34 @@ def create_project():
             "OData-MaxVersion": "4.0",
             "OData-Version": "4.0",
         }
-        safe = pid.replace("'", "''")
-        url = f"{RESOURCE}/api/data/v9.2/{entity_set}?$select=crc6f_projectid&$filter=crc6f_projectid eq '{safe}'&$top=1"
-        chk = requests.get(url, headers=headers)
-        if chk.status_code == 200 and chk.json().get("value"):
-            return jsonify({"success": False, "error": "Project ID already exists"}), 409
+
+        def project_id_exists(project_id: str) -> bool:
+            safe = str(project_id or "").replace("'", "''")
+            url = f"{RESOURCE}/api/data/v9.2/{entity_set}?$select=crc6f_projectid&$filter=crc6f_projectid eq '{safe}'&$top=1"
+            chk = requests.get(url, headers=headers, timeout=20)
+            return chk.status_code == 200 and bool(chk.json().get("value"))
+
+        if project_id_exists(pid):
+            if not auto_generated_pid:
+                return jsonify({"success": False, "error": "Project ID already exists"}), 409
+
+            m = re.match(r"^(.*?)(\d+)$", pid)
+            prefix = m.group(1) if m else "VTAB"
+            width = max(3, len(m.group(2))) if m else 3
+            next_num = (int(m.group(2)) + 1) if m else 1
+
+            resolved = None
+            for _ in range(300):
+                candidate = f"{prefix}{next_num:0{width}d}"
+                if not project_id_exists(candidate):
+                    resolved = candidate
+                    break
+                next_num += 1
+
+            if not resolved:
+                return jsonify({"success": False, "error": "Unable to allocate unique Project ID"}), 409
+
+            pid = resolved
 
         payload = {
             "crc6f_projectid": pid,
