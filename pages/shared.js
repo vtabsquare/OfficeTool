@@ -577,20 +577,31 @@ export const renderMyTasksPage = async () => {
             session_end_ms: ended_at || Date.now(),
             tz_offset_minutes: new Date().getTimezoneOffset()
         };
-        console.log('[MY_TASKS] Posting to:', `${API}/time-entries/log`);
+        const logEndpoints = [`${API}/time-tracker/task-log`, `${API}/time-entries/log`];
         console.log('[MY_TASKS] Request body:', body);
-        try {
-            const res = await fetch(`${API}/time-entries/log`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-            console.log('[MY_TASKS] Response status:', res.status);
-            const result = await res.json().catch(() => ({ success: false }));
-            console.log('[MY_TASKS] Response data:', result);
-            if (res.ok) {
-                try { sessionStorage.setItem('tt_last_log', JSON.stringify(body)); } catch { }
-                if (window.location.hash === '#/time-my-timesheet') { try { await renderMyTimesheetPage(); } catch { } }
-                return true;
+        let lastError = '';
+        for (const endpoint of logEndpoints) {
+            try {
+                console.log('[MY_TASKS] Posting to:', endpoint);
+                const res = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+                console.log('[MY_TASKS] Response status:', res.status);
+                const result = await res.json().catch(() => ({ success: false }));
+                console.log('[MY_TASKS] Response data:', result);
+
+                if (res.ok && result.success !== false) {
+                    try { sessionStorage.setItem('tt_last_log', JSON.stringify(body)); } catch { }
+                    if (window.location.hash === '#/time-my-timesheet') { try { await renderMyTimesheetPage(); } catch { } }
+                    return true;
+                }
+
+                lastError = result.error || String(res.status || 'Request failed');
+                if (res.status === 404) continue;
+            } catch (err) {
+                lastError = String(err?.message || err || 'Network error');
+                console.error('[MY_TASKS] Timesheet upsert network error:', err);
             }
-            console.error('[MY_TASKS] Timesheet upsert failed:', result.error || res.status);
-        } catch (err) { console.error('[MY_TASKS] Timesheet upsert network error:', err); }
+        }
+        console.error('[MY_TASKS] Timesheet upsert failed:', lastError || 'No supported endpoint succeeded');
         return false;
     };
 
