@@ -1810,13 +1810,14 @@ def generate_project_id():
     """
     try:
         token = get_access_token()
+        entity_set = get_projects_entity(token)
         headers = {
             "Authorization": f"Bearer {token}",
             "Accept": "application/json",
         }
 
         # [OK] Fetch latest project record (ordered descending)
-        url = f"{RESOURCE}/api/data/v9.2/{PROJECTS_ENTITY}?$select=crc6f_projectid&$orderby=createdon desc&$top=1"
+        url = f"{RESOURCE}/api/data/v9.2/{entity_set}?$select=crc6f_projectid&$orderby=createdon desc&$top=1"
 
         res = requests.get(url, headers=headers, timeout=20)
 
