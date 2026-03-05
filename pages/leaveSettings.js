@@ -183,8 +183,15 @@ const renderAllocationTypesTable = () => {
 
     return `
         <div class="card">
-            <h3><i class="fa-solid fa-table"></i> Leave Allocation Types</h3>
-            <p class="allocation-description">Configure leave quotas based on employee experience.</p>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                <div>
+                    <h3><i class="fa-solid fa-table"></i> Leave Allocation Types</h3>
+                    <p class="allocation-description">Configure leave quotas based on employee experience.</p>
+                </div>
+                <button type="button" class="btn btn-primary" onclick="window.handleAddAllocationType()" style="height: 40px;">
+                    <i class="fa-solid fa-plus"></i> Add Leave Type
+                </button>
+            </div>
             <div class="table-container">
                 <table class="table">
                     <thead>
@@ -314,6 +321,148 @@ const handleEditAllocationType = (index, triggerEl) => {
 
 const closeEditTypeModal = () => {
     closeModal();
+};
+
+// Handle add new allocation type
+const handleAddAllocationType = () => {
+    const formHTML = `
+        <div class="modal-form modern-form team-modal">
+            <div class="form-section">
+                <div class="form-section-header">
+                    <div>
+                        <p class="form-eyebrow">LEAVE SETTINGS</p>
+                        <h3>Add new allocation type</h3>
+                    </div>
+                </div>
+                
+                <div class="form-field">
+                    <label class="form-label" for="new-type-name">Allocation Type Name *</label>
+                    <input id="new-type-name" class="input-control" type="text" required placeholder="e.g., Type 4" />
+                </div>
+                
+                <div class="form-field">
+                    <label class="form-label" for="new-type-experience">Experience (Years) *</label>
+                    <input id="new-type-experience" class="input-control" type="number" min="0" step="1" required placeholder="e.g., 5" />
+                </div>
+                
+                <div class="form-field">
+                    <label class="form-label">Leave Quotas</label>
+                    <div class="form-grid two-col">
+                        <div class="leave-type-card">
+                            <div class="leave-type-label">Casual Leave *</div>
+                            <input id="new-type-casual" type="number" min="0" step="1" class="input-control center-input" required placeholder="0" />
+                        </div>
+                        <div class="leave-type-card">
+                            <div class="leave-type-label">Sick Leave *</div>
+                            <input id="new-type-sick" type="number" min="0" step="1" class="input-control center-input" required placeholder="0" />
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="form-field">
+                    <label class="form-label">Total Quota</label>
+                    <p id="new-type-total" class="total-quota-display">0</p>
+                </div>
+            </div>
+        </div>
+    `;
+
+    renderModal('Add Leave Type', formHTML, [
+        {
+            id: 'cancel-add-type-btn',
+            text: 'Cancel',
+            className: 'btn-secondary',
+            type: 'button',
+        },
+        {
+            id: 'save-add-type-btn',
+            text: 'Add Leave Type',
+            className: 'btn-primary',
+            type: 'button',
+        },
+    ]);
+
+    const casualInput = document.getElementById('new-type-casual');
+    const sickInput = document.getElementById('new-type-sick');
+    const totalEl = document.getElementById('new-type-total');
+
+    const updateTotal = () => {
+        const cl = Math.max(0, Number(casualInput?.value || 0));
+        const sl = Math.max(0, Number(sickInput?.value || 0));
+        if (totalEl) {
+            totalEl.textContent = String(cl + sl);
+        }
+    };
+
+    if (casualInput && sickInput && totalEl) {
+        casualInput.addEventListener('input', updateTotal);
+        sickInput.addEventListener('input', updateTotal);
+    }
+
+    const saveButton = document.getElementById('save-add-type-btn');
+    const cancelButton = document.getElementById('cancel-add-type-btn');
+
+    if (saveButton) {
+        saveButton.onclick = () => {
+            saveNewAllocationType();
+        };
+    }
+
+    if (cancelButton) {
+        cancelButton.onclick = () => {
+            closeModal();
+        };
+    }
+};
+
+const saveNewAllocationType = () => {
+    const name = document.getElementById('new-type-name')?.value?.trim();
+    const experience = Math.max(0, Number(document.getElementById('new-type-experience')?.value || 0));
+    const casualLeave = Math.max(0, Number(document.getElementById('new-type-casual')?.value || 0));
+    const sickLeave = Math.max(0, Number(document.getElementById('new-type-sick')?.value || 0));
+
+    if (!name) {
+        alert('Please enter an allocation type name');
+        return;
+    }
+
+    // Check if type name already exists
+    const exists = allocationTypes.some(t => t.type.toLowerCase() === name.toLowerCase());
+    if (exists) {
+        alert('An allocation type with this name already exists. Please use a different name.');
+        return;
+    }
+
+    const totalQuota = casualLeave + sickLeave;
+
+    const newType = {
+        type: name,
+        experience,
+        casualLeave,
+        sickLeave,
+        totalQuota,
+    };
+
+    allocationTypes.push(newType);
+
+    // Sort by experience descending
+    allocationTypes.sort((a, b) => (b.experience || 0) - (a.experience || 0));
+
+    try {
+        localStorage.setItem(ALLOCATION_TYPES_STORAGE_KEY, JSON.stringify(allocationTypes));
+        console.log('✅ New allocation type saved:', newType);
+    } catch (err) {
+        console.error('Failed to save to localStorage:', err);
+    }
+
+    closeModal();
+    alert(`✅ Leave type "${name}" added successfully!`);
+    
+    // Invalidate employee cache
+    try { if (state?.cache?.employees) state.cache.employees = {}; } catch { }
+    
+    // Re-render page to show new type
+    renderLeaveSettingsPage();
 };
 
 const saveEditedAllocationType = () => {
@@ -795,6 +944,8 @@ if (typeof window !== 'undefined') {
     window.handleEditAllocationType = handleEditAllocationType;
     window.closeEditTypeModal = closeEditTypeModal;
     window.saveEditedAllocationType = saveEditedAllocationType;
+    window.handleAddAllocationType = handleAddAllocationType;
+    window.saveNewAllocationType = saveNewAllocationType;
 }
 
 // Export dummy function for compatibility
