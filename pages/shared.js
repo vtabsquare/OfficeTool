@@ -4929,6 +4929,34 @@ const showTimesheetRejectModal = (entryId) => {
     renderModal('Reject Timesheet Entry', formHTML, 'timesheet-submit-reject-btn', 'normal', 'Reject');
 };
 
+const handleTimesheetApprove = async (entryId) => {
+    if (!entryId) return;
+    if (!confirm('Approve this timesheet entry?')) return;
+
+    try {
+        const adminId = await resolveCurrentEmployeeId();
+        const resp = await fetch(
+            `${apiBase}/api/time-tracker/timesheet/${encodeURIComponent(entryId)}/approve`,
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ decided_by: adminId }),
+            }
+        );
+        const data = await resp.json().catch(() => ({}));
+
+        if (!resp.ok || !data.success) {
+            throw new Error(data.error || resp.status);
+        }
+
+        alert('✅ Timesheet entry approved successfully!');
+        await loadInboxTimesheets();
+    } catch (err) {
+        console.error('❌ Error approving timesheet entry:', err);
+        alert(`❌ Failed to approve timesheet entry: ${err.message || err}`);
+    }
+};
+
 export const handleTimesheetReject = async (e) => {
     e.preventDefault();
 
