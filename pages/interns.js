@@ -2,6 +2,7 @@ import { state } from '../state.js';
 import { getPageContentHTML } from '../utils.js';
 import { renderModal, closeModal } from '../components/modal.js';
 import { listInterns, createIntern } from '../features/internApi.js';
+import { listEmployees } from '../features/employeeApi.js';
 
 let internPage = 1;
 const INTERN_PAGE_SIZE = 10;
@@ -243,18 +244,33 @@ export const renderInternsPage = async (filter = internSearch, page = internPage
   document.getElementById('app-content').innerHTML = getPageContentHTML('Interns', skeleton, controls);
 
   let fetchedItems = [];
+  let employeeMap = {};
   try {
-    // When searching, fetch all interns; otherwise use pagination
-    const fetchAll = filter && filter.trim().length > 0;
-    const fetchPageSize = fetchAll ? 10000 : INTERN_PAGE_SIZE;
-    const fetchPage = fetchAll ? 1 : page;
-    
-    const { items, total, page: curPage, pageSize } = await listInterns(fetchPage, fetchPageSize);
-    internPage = fetchAll ? 1 : (curPage || page);
+    // Fetch employees and interns in parallel
+    const [internsData, employeesData] = await Promise.all([
+      (async () => {
+        const fetchAll = filter && filter.trim().length > 0;
+        const fetchPageSize = fetchAll ? 10000 : INTERN_PAGE_SIZE;
+        const fetchPage = fetchAll ? 1 : page;
+        return await listInterns(fetchPage, fetchPageSize);
+      })(),
+      listEmployees(1, 5000)
+    ]);
+
+    const { items, total, page: curPage, pageSize } = internsData;
+    internPage = (filter && filter.trim().length > 0) ? 1 : (curPage || page);
     internPageSize = pageSize || INTERN_PAGE_SIZE;
     fetchedItems = items || [];
     internTotalCount = typeof total === 'number' ? total : fetchedItems.length;
     state.interns = fetchedItems;
+
+    // Build employee map: employee_id -> full name
+    (employeesData.items || []).forEach(emp => {
+      if (emp.employee_id) {
+        const fullName = `${emp.first_name || ''} ${emp.last_name || ''}`.trim();
+        employeeMap[emp.employee_id.toUpperCase()] = fullName || emp.employee_id;
+      }
+    });
   } catch (err) {
     console.error('Failed to load interns', err);
     document.getElementById('app-content').innerHTML = getPageContentHTML('Interns', `<div class="card error-card">${err.message || err}</div>`, controls);
@@ -280,13 +296,16 @@ export const renderInternsPage = async (filter = internSearch, page = internPage
     </div>
   `;
 
-  const cards = filtered.map((intern) => `
+  const cards = filtered.map((intern) => {
+    const employeeName = intern.employee_id ? (employeeMap[intern.employee_id.toUpperCase()] || intern.employee_id) : 'Intern';
+    const initials = employeeName.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2) || 'IN';
+    return `
     <div class="employee-card">
       <div class="employee-card-header">
         <div class="employee-card-info">
-          <div class="employee-avatar">${(intern.intern_id || '?').slice(0, 2)}</div>
+          <div class="employee-avatar">${initials}</div>
           <div>
-            <div class="employee-name">${intern.intern_id || 'Intern'}</div>
+            <div class="employee-name">${employeeName}</div>
             <div class="employee-meta">Employee: ${intern.employee_id || '—'}</div>
             <div class="employee-meta subtle">Created: ${formatDate(intern.created_on)}</div>
           </div>
@@ -303,11 +322,14 @@ export const renderInternsPage = async (filter = internSearch, page = internPage
           : ''
       }
     </div>
-  `).join('') || '<div class="placeholder-text">No interns found.</div>';
+  `;
+  }).join('') || '<div class="placeholder-text">No interns found.</div>';
 
-  const tableRows = filtered.map((intern) => `
+  const tableRows = filtered.map((intern) => {
+    const employeeName = intern.employee_id ? (employeeMap[intern.employee_id.toUpperCase()] || intern.employee_id) : '—';
+    return `
     <tr>
-      <td>${intern.intern_id || '—'}</td>
+      <td>${employeeName}</td>
       <td>${intern.employee_id || '—'}</td>
       <td>${formatDate(intern.created_on)}</td>
       <td>
@@ -323,7 +345,8 @@ export const renderInternsPage = async (filter = internSearch, page = internPage
         </div>
       </td>
     </tr>
-  `).join('') || '<tr><td colspan="4" class="placeholder-text">No interns found.</td></tr>';
+  `;
+  }).join('') || '<tr><td colspan="4" class="placeholder-text">No interns found.</td></tr>';
 
   const content = `
     <div class="card employees-card-shell">
@@ -342,7 +365,7 @@ export const renderInternsPage = async (filter = internSearch, page = internPage
             <table class="table employees-table">
               <thead>
                 <tr>
-                  <th>Intern ID</th>
+                  <th>Employee Name</th>
                   <th>Employee ID</th>
                   <th>Created On</th>
                   <th>Actions</th>
