@@ -665,7 +665,10 @@ def set_exact_log():
                     matched_rows = [r for r in rows if _row_matches_exact_target(r)]
                     if matched_rows:
                         dv_id = (matched_rows[0].get("crc6f_hr_timesheetlogid") or "").strip() or None
-                if not dv_id and rows:
+                # Important: when task identity is provided but no match is found,
+                # do NOT fall back to an arbitrary row from the same date. That
+                # would overwrite another task's log instead of creating a new one.
+                if not dv_id and rows and not task_key:
                     dv_id = (rows[0].get("crc6f_hr_timesheetlogid") or "").strip() or None
                 if dv_id:
                     dv_id = dv_id.strip("{}")
