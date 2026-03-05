@@ -4514,6 +4514,141 @@ const loadInboxTimesheets = async () => {
             return;
         }
 
+        // Preferred view: group into weekly Mon-Fri cards with day/task/hours table
+        const toYmd = (v) => {
+            const s = String(v || '').slice(0, 10);
+            return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : '';
+        };
+        const weekStartMon = (ymd) => {
+            const d = new Date(`${ymd}T00:00:00`);
+            if (Number.isNaN(d.getTime())) return '';
+            const day = d.getDay();
+            const delta = day === 0 ? -6 : (1 - day);
+            d.setDate(d.getDate() + delta);
+            return d.toISOString().slice(0, 10);
+        };
+        const plusDays = (ymd, n) => {
+            const d = new Date(`${ymd}T00:00:00`);
+            if (Number.isNaN(d.getTime())) return ymd;
+            d.setDate(d.getDate() + n);
+            return d.toISOString().slice(0, 10);
+        };
+        const isMonToFri = (ymd) => {
+            const d = new Date(`${ymd}T00:00:00`);
+            if (Number.isNaN(d.getTime())) return false;
+            const day = d.getDay();
+            return day >= 1 && day <= 5;
+        };
+        const dayLabel = (ymd) => {
+            const d = new Date(`${ymd}T00:00:00`);
+            if (Number.isNaN(d.getTime())) return ymd;
+            return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: '2-digit' });
+        };
+
+        const grouped = new Map();
+        items.forEach((entry) => {
+            const date = toYmd(entry.date);
+            if (!date || !isMonToFri(date)) return;
+
+            const employeeId = String(entry.employee_id || '').trim();
+            if (!employeeId) return;
+            const status = entry.status || 'Pending';
+            const statusClass = String(status).toLowerCase();
+            const weekStart = weekStartMon(date);
+            const key = `${employeeId}|${statusClass}|${weekStart}`;
+
+            if (!grouped.has(key)) {
+                grouped.set(key, {
+                    first_id: String(entry.id || ''),
+                    employee_id: employeeId,
+                    employee_name: employeeMap[employeeId.toUpperCase()] || entry.employee_name || employeeId,
+                    status,
+                    statusClass,
+                    week_start: weekStart,
+                    week_end: plusDays(weekStart, 4),
+                    submitted_at: entry.submitted_at || '',
+                    decided_at: entry.decided_at || '',
+                    reject_comment: entry.reject_comment || '',
+                    rows: []
+                });
+            }
+
+            const g = grouped.get(key);
+            if (entry.submitted_at && (!g.submitted_at || entry.submitted_at > g.submitted_at)) g.submitted_at = entry.submitted_at;
+            if (entry.decided_at && (!g.decided_at || entry.decided_at > g.decided_at)) g.decided_at = entry.decided_at;
+            if (!g.reject_comment && entry.reject_comment) g.reject_comment = entry.reject_comment;
+
+            const hours = (entry.hours_worked !== undefined && entry.hours_worked !== null)
+                ? Number(entry.hours_worked).toFixed(2)
+                : (entry.seconds ? (entry.seconds / 3600).toFixed(2) : '0.00');
+            g.rows.push({
+                date,
+                day_text: dayLabel(date),
+                task_text: entry.task_name || entry.task_id || '-',
+                hours
+            });
+        });
+
+        const groupedItems = Array.from(grouped.values())
+            .filter(g => Array.isArray(g.rows) && g.rows.length)
+            .sort((a, b) => new Date(b.submitted_at || 0) - new Date(a.submitted_at || 0));
+
+        if (groupedItems.length) {
+            const cards = groupedItems.map(group => {
+                const showActions = isAdmin && currentInboxTab === 'awaiting';
+                const isRejected = group.statusClass === 'rejected';
+                const rowsHtml = group.rows
+                    .sort((a, b) => (a.date === b.date ? a.task_text.localeCompare(b.task_text) : a.date.localeCompare(b.date)))
+                    .map(r => `<tr><td style="padding:8px 10px; border-bottom:1px solid #eef2f7;">${r.day_text}</td><td style="padding:8px 10px; border-bottom:1px solid #eef2f7;">${r.task_text}</td><td style="padding:8px 10px; border-bottom:1px solid #eef2f7; text-align:right;">${r.hours}</td></tr>`)
+                    .join('');
+
+                return `
+                    <div class="inbox-item">
+                        <div class="inbox-item-header">
+                            <div>
+                                <h4 style="font-size: 1.25rem; margin-bottom: 4px;">${group.employee_name}</h4>
+                                <span class="inbox-item-meta" style="font-size: 0.875rem; color: #666;">Timesheet • ${group.employee_id}</span>
+                            </div>
+                            <span class="status-badge ${group.statusClass}">${group.status}</span>
+                        </div>
+                        <div class="inbox-item-body">
+                            <p><strong>Week:</strong> ${group.week_start} to ${group.week_end} (Mon-Fri)</p>
+                            <div style="margin-top:10px; border:1px solid #e5e7eb; border-radius:10px; overflow:hidden;">
+                                <table style="width:100%; border-collapse:collapse; font-size:13px;">
+                                    <thead style="background:#f8fafc;"><tr><th style="text-align:left; padding:8px 10px;">Day</th><th style="text-align:left; padding:8px 10px;">Task</th><th style="text-align:right; padding:8px 10px;">Hours</th></tr></thead>
+                                    <tbody>${rowsHtml}</tbody>
+                                </table>
+                            </div>
+                            <p style="margin-top:10px;"><strong>Submitted:</strong> ${group.submitted_at || '-'}</p>
+                            ${group.decided_at ? `<p><strong>Updated:</strong> ${group.decided_at}</p>` : ''}
+                            ${isRejected && group.reject_comment ? `<div class="rejection-reason-box" style="background: #fff3cd; border-left: 4px solid #ffc107; padding: 12px; margin-top: 12px; border-radius: 4px;"><strong style="color: #856404;"><i class="fa-solid fa-info-circle"></i> Rejection Reason:</strong><p style="margin: 8px 0 0 0; color: #856404;">${group.reject_comment}</p></div>` : ''}
+                        </div>
+                        ${showActions ? `<div class="inbox-item-actions"><button class="btn btn-success btn-sm ts-approve-btn" data-id="${group.first_id}"><i class="fa-solid fa-check"></i> Approve</button><button class="btn btn-danger btn-sm ts-reject-btn" data-id="${group.first_id}"><i class="fa-solid fa-times"></i> Reject</button></div>` : ''}
+                    </div>
+                `;
+            }).join('');
+
+            listContainer.innerHTML = cards;
+
+            if (isAdmin && currentInboxTab === 'awaiting') {
+                document.querySelectorAll('.ts-approve-btn').forEach(btn => {
+                    btn.addEventListener('click', async (e) => {
+                        const entryId = e.currentTarget.getAttribute('data-id');
+                        await handleTimesheetApprove(entryId);
+                    });
+                });
+
+                document.querySelectorAll('.ts-reject-btn').forEach(btn => {
+                    btn.addEventListener('click', (e) => {
+                        const entryId = e.currentTarget.getAttribute('data-id');
+                        showTimesheetRejectModal(entryId);
+                    });
+                });
+            }
+
+            return;
+        }
+
         const cards = items.map(entry => {
             const employeeId = entry.employee_id;
             const employeeName = employeeMap[employeeId?.toUpperCase()] || entry.employee_name || employeeId;
