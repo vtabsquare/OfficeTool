@@ -398,11 +398,11 @@ const handleEditAllocation = async (employeeId, name, currentCL, currentSL, allo
                     </div>
                     <div class="form-field">
                         <label class="form-label" for="edit-casual-leave-display">Casual Leave</label>
-                        <input type="number" id="edit-casual-leave-display" class="input-control" value="${currentCL}" readonly />
+                        <input type="number" id="edit-casual-leave-display" class="input-control" value="${currentCL}" min="0" oninput="window.updateTotalQuota()" />
                     </div>
                     <div class="form-field">
                         <label class="form-label" for="edit-sick-leave-display">Sick Leave</label>
-                        <input type="number" id="edit-sick-leave-display" class="input-control" value="${currentSL}" readonly />
+                        <input type="number" id="edit-sick-leave-display" class="input-control" value="${currentSL}" min="0" oninput="window.updateTotalQuota()" />
                     </div>
                     <div class="form-field">
                         <label class="form-label" for="edit-total-quota">Total Quota</label>
@@ -469,12 +469,24 @@ const updateAllocationTypeValues = () => {
     if (totalInput2) totalInput2.value = cl + sl;
 };
 
+// Update total quota when CL or SL changes manually
+const updateTotalQuota = () => {
+    const casualInput = document.getElementById('edit-casual-leave-display');
+    const sickInput = document.getElementById('edit-sick-leave-display');
+    const totalInput = document.getElementById('edit-total-quota');
+    
+    if (casualInput && sickInput && totalInput) {
+        const cl = Number(casualInput.value) || 0;
+        const sl = Number(sickInput.value) || 0;
+        totalInput.value = cl + sl;
+    }
+};
+
 // Save edited allocation (reads actual values from the displayed input fields)
 const saveEditedAllocation = async () => {
     const employeeId = document.getElementById('edit-employee-id').value;
 
-    // Read CL and SL directly from the displayed (readonly) input fields
-    // These are already kept in sync by updateAllocationTypeValues()
+    // Read CL and SL directly from the displayed input fields (now editable)
     const casualLeave = Number(document.getElementById('edit-casual-leave-display')?.value || 0);
     const sickLeave = Number(document.getElementById('edit-sick-leave-display')?.value || 0);
 
@@ -779,6 +791,7 @@ if (typeof window !== 'undefined') {
     window.closeEditModal = closeEditModal;
     window.saveEditedAllocation = saveEditedAllocation;
     window.updateAllocationTypeValues = updateAllocationTypeValues;
+    window.updateTotalQuota = updateTotalQuota;
     window.handleEditAllocationType = handleEditAllocationType;
     window.closeEditTypeModal = closeEditTypeModal;
     window.saveEditedAllocationType = saveEditedAllocationType;
