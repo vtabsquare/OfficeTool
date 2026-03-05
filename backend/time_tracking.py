@@ -708,17 +708,47 @@ def set_exact_log():
             if b.get("task_name"):
                 create_data["crc6f_taskname"] = str(b.get("task_name")).strip()
             print(f"[TEAM_TS_EDIT] Creating new record: {create_data}")
-            try:
-                created = create_record(ENTITY, create_data)
-            except Exception as create_err:
-                # Some environments may reject approval field format; retry without it
-                print(f"[TEAM_TS_EDIT] Create with approvalstatus failed, retrying without approvalstatus: {create_err}")
-                # Some environments do not have crc6f_taskguid on this table.
-                # Retry without that field when Dataverse reports invalid property.
-                if "Invalid property 'crc6f_taskguid'" in str(create_err) or "crc6f_taskguid" in str(create_err):
-                    create_data.pop("crc6f_taskguid", None)
-                create_data.pop("crc6f_approvalstatus", None)
-                created = create_record(ENTITY, create_data)
+            created = None
+            create_candidate = dict(create_data)
+            last_create_err = None
+            for attempt in range(1, 6):
+                try:
+                    created = create_record(ENTITY, create_candidate)
+                    last_create_err = None
+                    break
+                except Exception as create_err:
+                    last_create_err = create_err
+                    err_msg = str(create_err or "")
+                    print(f"[TEAM_TS_EDIT] Create attempt {attempt} failed: {err_msg}")
+
+                    # Adaptive fallback: drop invalid fields reported by Dataverse.
+                    bad_field = None
+                    m = re.search(r"Invalid property '([^']+)'", err_msg, re.IGNORECASE)
+                    if m:
+                        bad_field = m.group(1)
+                    if not bad_field:
+                        m2 = re.search(r"property named '([^']+)'", err_msg, re.IGNORECASE)
+                        if m2:
+                            bad_field = m2.group(1)
+                    if bad_field and bad_field in create_candidate:
+                        print(f"[TEAM_TS_EDIT] Retrying create without field: {bad_field}")
+                        create_candidate.pop(bad_field, None)
+                        continue
+
+                    # Common compatibility fallbacks seen across environments.
+                    if "crc6f_approvalstatus" in create_candidate:
+                        print("[TEAM_TS_EDIT] Retrying create without crc6f_approvalstatus")
+                        create_candidate.pop("crc6f_approvalstatus", None)
+                        continue
+                    if "crc6f_taskguid" in create_candidate:
+                        print("[TEAM_TS_EDIT] Retrying create without crc6f_taskguid")
+                        create_candidate.pop("crc6f_taskguid", None)
+                        continue
+
+                    break
+
+            if created is None:
+                raise last_create_err or Exception("Error creating record: unknown create failure")
             dv_id = created.get("crc6f_hr_timesheetlogid")
             print(f"[TEAM_TS_EDIT] Created OK: {dv_id}")
 
