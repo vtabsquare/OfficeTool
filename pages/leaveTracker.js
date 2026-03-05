@@ -1028,12 +1028,27 @@ export const showApplyLeaveModal = () => {
           compOffOption.disabled = !canUseCompOff;
         }
         if (!canUseCompOff && isCompOffCompensation(compSel.value)) {
-          compSel.value = "Paid";
+          compSel.value = "Unpaid";
         }
 
         if (leaveType === "Casual Leave" || leaveType === "Sick Leave") {
-          if (paidOption) paidOption.disabled = false;
-          compSel.classList.remove("disabled-option");
+          // Check if user has any balance for the selected leave type
+          let available = 0;
+          try {
+            available = await fetchLeaveBalance(empId, leaveType);
+          } catch { }
+          const canPay = Number(available) > 0;
+          
+          if (paidOption) {
+            paidOption.disabled = !canPay;
+          }
+          
+          // If no balance and Paid is selected, switch to Unpaid
+          if (!canPay && compSel.value === "Paid") {
+            compSel.value = "Unpaid";
+          }
+          
+          compSel.classList.toggle("disabled-option", !canPay);
           return;
         }
 
