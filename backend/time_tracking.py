@@ -1745,21 +1745,65 @@ def delete_logs():
 
 
 def _update_timesheet_status(entry_id, new_status, comment=None, decided_by=None):
-    """Helper to update status of a timesheet submission in TS_ENTRIES_FILE."""
+    """Helper to update status of a timesheet submission in TS_ENTRIES_FILE.
+    
+    Updates all entries for the same employee+week as the target entry to ensure
+    the entire weekly submission moves together (from Pending to Accepted/Rejected).
+    """
     entries = _read_ts_entries()
     updated = None
+    target_employee = None
+    target_week_start = None
+    
+    # First pass: find the target entry and extract employee+week
     for rec in entries:
         if str(rec.get("id")) == str(entry_id):
-            rec["status"] = new_status
-            rec["decided_at"] = _now_iso()
-            if decided_by:
-                rec["decided_by"] = decided_by
-            if comment is not None:
-                rec["reject_comment"] = comment
             updated = rec
+            target_employee = str(rec.get("employee_id") or "").strip()
+            date_str = str(rec.get("date") or "")
+            if date_str and target_employee:
+                try:
+                    from datetime import datetime
+                    d = datetime.fromisoformat(date_str[:10])
+                    day = d.weekday()
+                    delta = -day  # Monday is 0
+                    week_start = (d + timedelta(days=delta)).strftime("%Y-%m-%d")
+                    target_week_start = week_start
+                except Exception:
+                    pass
             break
-    if not updated:
+    
+    if not updated or not target_employee or not target_week_start:
         return None, entries
+    
+    # Second pass: update all entries for the same employee+week
+    now_iso = _now_iso()
+    for rec in entries:
+        emp = str(rec.get("employee_id") or "").strip()
+        if emp != target_employee:
+            continue
+        
+        date_str = str(rec.get("date") or "")
+        if not date_str:
+            continue
+        
+        try:
+            from datetime import datetime
+            d = datetime.fromisoformat(date_str[:10])
+            day = d.weekday()
+            delta = -day
+            week_start = (d + timedelta(days=delta)).strftime("%Y-%m-%d")
+            
+            if week_start == target_week_start:
+                rec["status"] = new_status
+                rec["decided_at"] = now_iso
+                if decided_by:
+                    rec["decided_by"] = decided_by
+                if comment is not None:
+                    rec["reject_comment"] = comment
+        except Exception:
+            continue
+    
     _write_ts_entries(entries)
     return updated, entries
 
