@@ -864,6 +864,35 @@ export const renderMyTasksPage = async () => {
         });
     };
 
+    const updatePlayButtonStates = () => {
+        const checkedIn = state.timer?.isRunning || false;
+        const active = getActive();
+        
+        document.querySelectorAll('tr[data-guid] .action-btn.toggle-timer').forEach(btn => {
+            const tr = btn.closest('tr');
+            const guid = tr?.getAttribute('data-guid');
+            const t = tasks.find(x => x.guid === guid);
+            if (!t) return;
+            
+            const isRunning = active && active.task_guid === t.guid && !active.paused;
+            const isPaused = active && active.task_guid === t.guid && active.paused;
+            
+            // Enable button if checked in OR if this task is already running/paused
+            const shouldEnable = checkedIn || isRunning || isPaused;
+            
+            if (shouldEnable) {
+                btn.removeAttribute('disabled');
+                btn.classList.remove('disabled');
+                const title = isRunning ? 'Pause' : (isPaused ? 'Resume' : 'Start');
+                btn.setAttribute('title', title);
+            } else {
+                btn.setAttribute('disabled', 'disabled');
+                btn.classList.add('disabled');
+                btn.setAttribute('title', 'Please check in first to start task timer');
+            }
+        });
+    };
+
     const render = async () => {
         await normalizeActiveTimer();
         await loadTasks();
@@ -888,6 +917,12 @@ export const renderMyTasksPage = async () => {
             const toggleIcon = isRunning ? 'fa-pause' : 'fa-play';
             const toggleTitle = isRunning ? 'Pause' : (isPaused ? 'Resume' : 'Start');
             const canNavigate = !!t.project_id;
+            
+            // Determine if button should be enabled
+            const shouldEnable = checkedIn || isRunning || isPaused;
+            const disabledAttr = shouldEnable ? '' : 'disabled';
+            const disabledClass = shouldEnable ? '' : 'disabled';
+            const buttonTitle = shouldEnable ? toggleTitle : 'Please check in first to start task timer';
 
             const taskLabel = `
               <div style="display:flex; align-items:center; gap:10px;">
@@ -908,7 +943,7 @@ export const renderMyTasksPage = async () => {
             return `
             <tr data-guid="${t.guid}" ${canNavigate ? `data-project="${encodeURIComponent(t.project_id)}" ${t.board_id ? `data-board="${encodeURIComponent(t.board_id)}"` : ''} class="task-row-clickable"` : ''}>
               <td class="actions-cell" style="width:50px; text-align:left;">
-                <button class="action-btn toggle-timer" title="${toggleTitle}"><i class="fa-solid ${toggleIcon}"></i></button>
+                <button class="action-btn toggle-timer ${disabledClass}" title="${buttonTitle}" ${disabledAttr}><i class="fa-solid ${toggleIcon}"></i></button>
               </td>
 
               <td>${taskLabel}</td>
@@ -983,10 +1018,31 @@ export const renderMyTasksPage = async () => {
                 const t = tasks.find(x => x.guid === guid);
                 if (!t) return;
                 
+                // Double-check at click time as backup validation
+                const active = getActive();
+                const isRunning = active && active.task_guid === t.guid && !active.paused;
+                const isPaused = active && active.task_guid === t.guid && active.paused;
+                const checkedIn = state.timer?.isRunning || false;
+                
+                // Allow pause/resume if already running, but require check-in to start new timer
+                if (!checkedIn && !isRunning && !isPaused) {
+                    alert('⚠️ Please check in first before starting a task timer.');
+                    return;
+                }
+                
                 // Always toggle (start/pause/resume) - never save or navigate
                 toggleTimer(t);
             });
         });
+        
+        // Update button states initially
+        updatePlayButtonStates();
+        
+        // Set up a periodic check to update button states when check-in status changes
+        // This handles the case where user checks in/out while on My Tasks page
+        const checkInStateInterval = setInterval(() => {
+            updatePlayButtonStates();
+        }, 1000);
 
         document.querySelectorAll('.task-link').forEach(btn => {
             btn.addEventListener('click', (e) => {
