@@ -10,7 +10,6 @@ import { fetchPendingLeaves } from '../features/leaveApi.js';
 import { notifyEmployeeLeaveApproval, notifyEmployeeLeaveRejection, updateNotificationBadge, notifyEmployeeCompOffGranted, notifyEmployeeCompOffRejected } from '../features/notificationApi.js';
 import { fetchCompOffRequests, approveCompOffRequest, rejectCompOffRequest } from '../features/compOffApi.js';
 import { listEmployees } from '../features/employeeApi.js';
-import { isCheckedIn } from '../features/attendanceRenderer.js';
 import { apiBase } from '../config.js';
 import { cachedFetch, TTL } from '../features/cache.js';
 
@@ -869,7 +868,7 @@ export const renderMyTasksPage = async () => {
         await normalizeActiveTimer();
         await loadTasks();
         const active = getActive();
-        const checkedIn = isCheckedIn();
+        const checkedIn = state.timer?.isRunning || false;
         const rows = tasks.map(t => {
             const proj = projectsIdx[t.project_id] || {};
             const clientName = proj.client || '';
@@ -994,7 +993,7 @@ export const renderMyTasksPage = async () => {
                 const active = getActive();
                 const isRunning = active && active.task_guid === t.guid && !active.paused;
                 const isPaused = active && active.task_guid === t.guid && active.paused;
-                const checkedIn = isCheckedIn();
+                const checkedIn = state.timer?.isRunning || false;
                 
                 // Allow pause/resume if already running, but require check-in to start new timer
                 if (!checkedIn && !isRunning && !isPaused) {
