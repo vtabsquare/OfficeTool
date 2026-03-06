@@ -910,6 +910,11 @@ def list_my_tasks():
 
         filtered = []
         for rec in out:
+            # Filter out completed tasks FIRST before any status overrides
+            task_status = str(rec.get("task_status") or "").strip().lower()
+            if task_status == "completed":
+                continue
+
             pid = str(rec.get("project_id") or "").strip()
             if pid:
                 # If we were able to fetch projects and this pid isn't present, treat as deleted.
@@ -924,6 +929,7 @@ def list_my_tasks():
                         continue
 
                     # If project is inactive, keep task visible but surface project status.
+                    # Only override if task is not already completed (already filtered above).
                     if pid in inactive_projects or low_proj_status == "inactive":
                         rec["task_status"] = proj_status
 
@@ -933,11 +939,6 @@ def list_my_tasks():
                     rec["task_status"] = _normalize_status(rec.get("task_status") or "Inactive") or "Inactive"
             except Exception:
                 pass
-
-            # Completed tasks should not appear in My Tasks.
-            task_status = str(rec.get("task_status") or "").strip().lower()
-            if task_status == "completed":
-                continue
 
             # Remove internal fields
             rec.pop("_task_statecode", None)
