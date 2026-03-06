@@ -5849,6 +5849,7 @@ def list_projects():
             "OData-MaxVersion": "4.0",
             "OData-Version": "4.0",
             "If-None-Match": "null",
+            "Prefer": 'odata.include-annotations="*"',
         }
         entity_set = get_projects_entity(token)
         select = (
@@ -5877,12 +5878,15 @@ def list_projects():
 
         items = []
         for r in values:
+            # Prefer formatted value for project status (display label) over raw option set value
+            proj_status = r.get("crc6f_projectstatus@OData.Community.Display.V1.FormattedValue") or r.get("crc6f_projectstatus")
+            
             item = {
                 "crc6f_projectid": r.get("crc6f_projectid"),
                 "crc6f_projectname": r.get("crc6f_projectname"),
                 "crc6f_client": r.get("crc6f_client"),
                 "crc6f_manager": r.get("crc6f_manager"),
-                "crc6f_projectstatus": r.get("crc6f_projectstatus"),
+                "crc6f_projectstatus": proj_status,
                 "crc6f_startdate": r.get("crc6f_startdate"),
                 "crc6f_enddate": r.get("crc6f_enddate"),
                 "crc6f_estimationcost": r.get("crc6f_estimationcost"),

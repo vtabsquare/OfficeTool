@@ -508,6 +508,11 @@ export const renderMyTasksPage = async () => {
                 return s;
             };
 
+            const projectShouldHideTasks = (statusVal) => {
+                const low = String(statusVal || '').trim().toLowerCase();
+                return low === 'cancelled' || low === 'canceled' || low === 'completed';
+            };
+
             // Clean up stale manual tasks (so deleted project/task doesn't keep showing in My Tasks)
             // - If assigned to this employee and project is missing from projects cache -> remove
             // - If assigned to this employee and status is Deleted -> remove
@@ -519,7 +524,12 @@ export const renderMyTasksPage = async () => {
                 if (st.toLowerCase() === 'deleted') return false;
 
                 const pid = String(t?.project_id || '').trim();
-                if (pid && projectsIdx && !projectsIdx[pid]) return false;
+                if (pid && projectsIdx) {
+                    const project = projectsIdx[pid];
+                    if (!project) return false;
+                    const projectStatus = project?.status || project?.crc6f_projectstatus || '';
+                    if (projectShouldHideTasks(projectStatus)) return false;
+                }
                 return true;
             });
             try { localStorage.setItem(key, JSON.stringify(cleaned)); } catch { }

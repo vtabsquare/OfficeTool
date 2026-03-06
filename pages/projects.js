@@ -350,7 +350,11 @@ const renderList = () => {
   });
 
   const activeItems = sorted.filter((p) => normalizeProjectStatus(p.status) === "Active");
-  const nonActiveItems = sorted.filter((p) => normalizeProjectStatus(p.status) !== "Active");
+  const inactiveItems = sorted.filter((p) => {
+    const st = normalizeProjectStatus(p.status);
+    return st === "Inactive" || st === "Cancelled";
+  });
+  const completedItems = sorted.filter((p) => normalizeProjectStatus(p.status) === "Completed");
   const maxPage = Math.max(1, Math.ceil(activeItems.length / listState.pageSize || 1));
   if (listState.page > maxPage) listState.page = maxPage;
 
@@ -452,7 +456,7 @@ const renderList = () => {
     )
     .join("");
 
-  const archivedRows = nonActiveItems
+  const inactiveRows = inactiveItems
     .map(
       (p) => `
     <tr data-project-id="${p.id}">
@@ -472,7 +476,67 @@ const renderList = () => {
     )
     .join("");
 
-  const archivedCards = nonActiveItems
+  const completedRows = completedItems
+    .map(
+      (p) => `
+    <tr data-project-id="${p.id}">
+      <td class="project-link" data-id="${p.id}">${p.name || ""}</td>
+      <td>${p.code || ""}</td>
+      <td>${p.client || ""}</td>
+      <td>${p.contributors || 0}</td>
+      <td>${statusControl(p)}</td>
+      <td>${p.start || "."}</td>
+      <td>${p.end || "."}</td>
+      <td class="actions-cell">
+        <button class="icon-btn action-btn delete proj-del" data-id="${p._recordId
+        }"><i class="fa-solid fa-trash"></i></button>
+      </td>
+    </tr>
+  `
+    )
+    .join("");
+
+  const inactiveCards = inactiveItems
+    .map(
+      (p) => `
+      <div class="project-card">
+        <div class="project-card-header">
+          <div class="project-card-main">
+            <button class="project-link as-text" data-id="${p.id}">
+              ${p.name || ""}
+            </button>
+            <div class="project-card-meta">
+              <span class="project-code">${p.code || ""}</span>
+              <span class="dot-separator">•</span>
+              <span class="project-client">${p.client || ""}</span>
+            </div>
+          </div>
+          ${statusControl(p)}
+        </div>
+        <div class="project-card-body">
+          <div class="project-card-stat">
+            <span class="label">Contributors</span>
+            <span class="value">${p.contributors || 0}</span>
+          </div>
+          <div class="project-card-stat">
+            <span class="label">Start date</span>
+            <span class="value">${p.start || "."}</span>
+          </div>
+          <div class="project-card-stat">
+            <span class="label">End date</span>
+            <span class="value">${p.end || "."}</span>
+          </div>
+        </div>
+        <div class="project-card-footer">
+          <button class="icon-btn action-btn delete proj-del" data-id="${p._recordId
+        }"><i class="fa-solid fa-trash"></i></button>
+        </div>
+      </div>
+    `
+    )
+    .join("");
+
+  const completedCards = completedItems
     .map(
       (p) => `
       <div class="project-card">
@@ -515,9 +579,12 @@ const renderList = () => {
   const cardsMarkup =
     cards ||
     `<div class="placeholder-text">No active projects found.</div>`;
-  const archivedCardsMarkup =
-    archivedCards ||
-    `<div class="placeholder-text">No inactive/cancelled/completed projects.</div>`;
+  const inactiveCardsMarkup =
+    inactiveCards ||
+    `<div class="placeholder-text">No inactive/cancelled projects.</div>`;
+  const completedCardsMarkup =
+    completedCards ||
+    `<div class="placeholder-text">No completed projects.</div>`;
   //       <button id="proj-add" class="btn btn-primary">ADD NEW</button>
   //       <button id="proj-filter" class="btn btn-secondary" title="Filter"><i class="fa-solid fa-filter"></i></button>
   //       <button id="proj-more" class="btn btn-secondary" title="More"><i class="fa-solid fa-ellipsis-vertical"></i></button>
@@ -621,7 +688,7 @@ const renderList = () => {
       }
       .pagination-bar select{ padding:6px 10px; border:1px solid var(--border-color); border-radius:6px; }
       /* Fixed-height outer Projects card; inner content scrolls */
-      .projects-table{ display:flex; flex-direction:column; height: 520px; box-sizing: border-box; }
+      .projects-table{ display:flex; flex-direction:column; height: 720px; box-sizing: border-box; }
       .projects-table:hover{ transform: none !important; scale: none !important; }
       .projects-view-wrapper{ margin-top:8px; flex:1; overflow-y:auto; }
       /* Keep outer projects card static; only inner view containers switch */
@@ -694,8 +761,12 @@ const renderList = () => {
               <div class="projects-card-grid-inner">${cardsMarkup}</div>
             </div>
             <div class="project-section">
-              <div class="project-section-title">Inactive / Cancelled / Completed <span class="count">${nonActiveItems.length}</span></div>
-              <div class="projects-card-grid-inner">${archivedCardsMarkup}</div>
+              <div class="project-section-title">Inactive / Cancelled <span class="count">${inactiveItems.length}</span></div>
+              <div class="projects-card-grid-inner">${inactiveCardsMarkup}</div>
+            </div>
+            <div class="project-section">
+              <div class="project-section-title">Completed <span class="count">${completedItems.length}</span></div>
+              <div class="projects-card-grid-inner">${completedCardsMarkup}</div>
             </div>
           </div>
           <div id="projects-table-view" class="view-mode ${isTableMode ? "view-mode-visible" : ""
@@ -725,7 +796,7 @@ const renderList = () => {
               </div>
             </div>
             <div class="project-section">
-              <div class="project-section-title">Inactive / Cancelled / Completed <span class="count">${nonActiveItems.length}</span></div>
+              <div class="project-section-title">Inactive / Cancelled <span class="count">${inactiveItems.length}</span></div>
               <div class="table-container">
                 <table class="table">
                   <thead>
@@ -741,8 +812,32 @@ const renderList = () => {
                     </tr>
                   </thead>
                   <tbody>
-                    ${archivedRows ||
-    `<tr><td colspan="8" class="placeholder-text">No inactive/cancelled/completed projects.</td></tr>`
+                    ${inactiveRows ||
+    `<tr><td colspan="8" class="placeholder-text">No inactive/cancelled projects.</td></tr>`
+    }
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            <div class="project-section">
+              <div class="project-section-title">Completed <span class="count">${completedItems.length}</span></div>
+              <div class="table-container">
+                <table class="table">
+                  <thead>
+                    <tr>
+                      <th>Project name</th>
+                      <th>Project code</th>
+                      <th>Client name</th>
+                      <th>Number of contributors</th>
+                      <th>Status</th>
+                      <th>Start date</th>
+                      <th>End date</th>
+                      <th class="actions-col"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${completedRows ||
+    `<tr><td colspan="8" class="placeholder-text">No completed projects.</td></tr>`
     }
                   </tbody>
                 </table>
