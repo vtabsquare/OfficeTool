@@ -4648,14 +4648,16 @@ const loadInboxTimesheets = async () => {
             if (entry.decided_at && (!g.decided_at || entry.decided_at > g.decided_at)) g.decided_at = entry.decided_at;
             if (!g.reject_comment && entry.reject_comment) g.reject_comment = entry.reject_comment;
 
-            const hours = (entry.hours_worked !== undefined && entry.hours_worked !== null)
-                ? Number(entry.hours_worked).toFixed(2)
-                : (entry.seconds ? (entry.seconds / 3600).toFixed(2) : '0.00');
+            const hoursValueRaw = (entry.hours_worked !== undefined && entry.hours_worked !== null)
+                ? Number(entry.hours_worked)
+                : (entry.seconds ? (Number(entry.seconds) / 3600) : 0);
+            const hoursValue = Number.isFinite(hoursValueRaw) ? hoursValueRaw : 0;
+
             g.rows.push({
                 date,
                 day_text: dayLabel(date),
                 task_text: entry.task_name || entry.task_id || '-',
-                hours
+                hours_value: hoursValue
             });
         });
 
@@ -4667,9 +4669,32 @@ const loadInboxTimesheets = async () => {
             const cards = groupedItems.map(group => {
                 const showActions = isAdmin && currentInboxTab === 'awaiting';
                 const isRejected = group.statusClass === 'rejected';
-                const rowsHtml = group.rows
+
+                const mergedRowsMap = new Map();
+                group.rows.forEach((r) => {
+                    const normalizedTask = String(r.task_text || '-').trim().toLowerCase();
+                    const mergeKey = `${r.date}|${normalizedTask}`;
+                    if (!mergedRowsMap.has(mergeKey)) {
+                        mergedRowsMap.set(mergeKey, {
+                            ...r,
+                            merge_count: 1,
+                        });
+                        return;
+                    }
+
+                    const merged = mergedRowsMap.get(mergeKey);
+                    merged.hours_value += Number(r.hours_value || 0);
+                    merged.merge_count += 1;
+                });
+
+                const rowsHtml = Array.from(mergedRowsMap.values())
                     .sort((a, b) => (a.date === b.date ? a.task_text.localeCompare(b.task_text) : a.date.localeCompare(b.date)))
-                    .map(r => `<tr><td style="padding:8px 10px; border-bottom:1px solid #eef2f7;">${r.day_text}</td><td style="padding:8px 10px; border-bottom:1px solid #eef2f7;">${r.task_text}</td><td style="padding:8px 10px; border-bottom:1px solid #eef2f7; text-align:right;">${r.hours}</td></tr>`)
+                    .map((r) => {
+                        const mergedBadge = r.merge_count > 1
+                            ? `<span style="margin-left:6px; padding:1px 6px; border-radius:999px; font-size:11px; background:#eef2ff; color:#3730a3; font-weight:600;">${r.merge_count} records combined</span>`
+                            : '';
+                        return `<tr><td style="padding:8px 10px; border-bottom:1px solid #eef2f7;">${r.day_text}</td><td style="padding:8px 10px; border-bottom:1px solid #eef2f7;">${r.task_text}${mergedBadge}</td><td style="padding:8px 10px; border-bottom:1px solid #eef2f7; text-align:right;">${Number(r.hours_value || 0).toFixed(2)}</td></tr>`;
+                    })
                     .join('');
 
                 return `
