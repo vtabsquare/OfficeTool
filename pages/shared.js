@@ -888,12 +888,6 @@ export const renderMyTasksPage = async () => {
             const toggleIcon = isRunning ? 'fa-pause' : 'fa-play';
             const toggleTitle = isRunning ? 'Pause' : (isPaused ? 'Resume' : 'Start');
             const canNavigate = !!t.project_id;
-            
-            // Disable play button if not checked in (but allow pause/resume if already running)
-            const canToggle = checkedIn || isRunning || isPaused;
-            const disabledClass = canToggle ? '' : 'disabled';
-            const disabledAttr = canToggle ? '' : 'disabled';
-            const buttonTitle = !canToggle ? 'Please check in first to start task timer' : toggleTitle;
 
             const taskLabel = `
               <div style="display:flex; align-items:center; gap:10px;">
@@ -914,7 +908,7 @@ export const renderMyTasksPage = async () => {
             return `
             <tr data-guid="${t.guid}" ${canNavigate ? `data-project="${encodeURIComponent(t.project_id)}" ${t.board_id ? `data-board="${encodeURIComponent(t.board_id)}"` : ''} class="task-row-clickable"` : ''}>
               <td class="actions-cell" style="width:50px; text-align:left;">
-                <button class="action-btn toggle-timer ${disabledClass}" title="${buttonTitle}" ${disabledAttr}><i class="fa-solid ${toggleIcon}"></i></button>
+                <button class="action-btn toggle-timer" title="${toggleTitle}"><i class="fa-solid ${toggleIcon}"></i></button>
               </td>
 
               <td>${taskLabel}</td>
