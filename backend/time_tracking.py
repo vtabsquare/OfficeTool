@@ -32,6 +32,8 @@ def _normalize_status(val: str) -> str:
         return "Cancelled"
     if low == "inactive":
         return "Inactive"
+    if low == "completed":
+        return "Completed"
     return s
 
 
@@ -916,8 +918,13 @@ def list_my_tasks():
 
                 proj_status = project_status_by_id.get(pid)
                 if proj_status:
-                    # If project is inactive/cancelled, show the exact projectstatus value.
-                    if pid in inactive_projects or proj_status.lower() in ("cancelled", "canceled", "inactive"):
+                    low_proj_status = proj_status.lower()
+                    # Cancelled/completed projects must not appear in My Tasks.
+                    if low_proj_status in ("cancelled", "canceled", "completed"):
+                        continue
+
+                    # If project is inactive, keep task visible but surface project status.
+                    if pid in inactive_projects or low_proj_status == "inactive":
                         rec["task_status"] = proj_status
 
             # If task record is inactive, reflect it in task_status (but do not remove).

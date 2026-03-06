@@ -30,6 +30,22 @@ const listState = {
   sort: { by: "name", dir: "asc" },
 };
 
+const PROJECT_STATUS_OPTIONS = ["Active", "Inactive", "Cancelled", "Completed"];
+
+const normalizeProjectStatus = (value) => {
+  const raw = String(value || "").trim();
+  if (!raw) return "Active";
+  const low = raw.toLowerCase();
+  if (low === "active") return "Active";
+  if (low === "inactive") return "Inactive";
+  if (low === "cancelled" || low === "canceled") return "Cancelled";
+  if (low === "completed") return "Completed";
+  return raw;
+};
+
+const projectStatusClass = (value) =>
+  normalizeProjectStatus(value).toLowerCase().replace(/\s+/g, "-");
+
 // ---------------------- Bulk Upload (CSV) ----------------------
 const parseProjectsCSV = (text) => {
   const rows = (text || "")
@@ -165,7 +181,7 @@ const handleProjectBulkUpload = async (e) => {
       const code = (r.code || "").trim();
       const name = (r.name || "").trim();
       const client = (r.client || "").trim();
-      const status = (r.status || "Active").trim() || "Active";
+      const status = normalizeProjectStatus((r.status || "Active").trim() || "Active");
       const start = (r.start_date || "").trim();
       const end = (r.end_date || "").trim();
       const contrib = Number(r.contributors || 0) || 0;
@@ -326,16 +342,47 @@ const compare = (a, b, by) => {
 };
 
 const renderList = () => {
+  const { canManage } = getProjectAccess();
   const items = projectsCache.slice();
   const sorted = items.slice().sort((a, b) => {
     const s = compare(a, b, listState.sort.by);
     return listState.sort.dir === "asc" ? s : -s;
   });
+
+  const activeItems = sorted.filter((p) => normalizeProjectStatus(p.status) === "Active");
+  const nonActiveItems = sorted.filter((p) => normalizeProjectStatus(p.status) !== "Active");
+  const maxPage = Math.max(1, Math.ceil(activeItems.length / listState.pageSize || 1));
+  if (listState.page > maxPage) listState.page = maxPage;
+
   const start = (listState.page - 1) * listState.pageSize;
-  const pageItems = sorted.slice(start, start + listState.pageSize);
-  const total = items.length;
+  const pageItems = activeItems.slice(start, start + listState.pageSize);
+  const total = activeItems.length;
 
   const isTableMode = projectsViewMode === "table";
+
+  const statusControl = (p) => {
+    const status = normalizeProjectStatus(p.status);
+    if (!canManage || !p._recordId) {
+      return `<span class="status-badge ${projectStatusClass(status)}">${status}</span>`;
+    }
+
+    const hasCustomStatus = !PROJECT_STATUS_OPTIONS.includes(status);
+    const customOpt = hasCustomStatus
+      ? `<option value="${status}" selected>${status}</option>`
+      : "";
+    const options = PROJECT_STATUS_OPTIONS.map(
+      (opt) => `<option value="${opt}" ${status === opt ? "selected" : ""}>${opt}</option>`
+    ).join("");
+
+    return `
+      <select class="project-status-select ${projectStatusClass(status)}"
+              data-record-id="${p._recordId}"
+              data-current-status="${status}"
+              title="Change project status">
+        ${customOpt}${options}
+      </select>
+    `;
+  };
 
   const th = (k, label) =>
     `<th><button class="link like-th" data-sort="${k}">${label} ${listState.sort.by === k
@@ -353,8 +400,7 @@ const renderList = () => {
       <td>${p.code || ""}</td>
       <td>${p.client || ""}</td>
       <td>${p.contributors || 0}</td>
-      <td><span class="status-badge ${String(p.status || "").toLowerCase()}">${p.status || ""
-        }</span></td>
+      <td>${statusControl(p)}</td>
       <td>${p.start || "."}</td>
       <td>${p.end || "."}</td>
       <td class="actions-cell">
@@ -381,8 +427,67 @@ const renderList = () => {
               <span class="project-client">${p.client || ""}</span>
             </div>
           </div>
-          <span class="status-badge ${String(p.status || "").toLowerCase()}">${p.status || ""
-        }</span>
+          ${statusControl(p)}
+        </div>
+        <div class="project-card-body">
+          <div class="project-card-stat">
+            <span class="label">Contributors</span>
+            <span class="value">${p.contributors || 0}</span>
+          </div>
+          <div class="project-card-stat">
+            <span class="label">Start date</span>
+            <span class="value">${p.start || "."}</span>
+          </div>
+          <div class="project-card-stat">
+            <span class="label">End date</span>
+            <span class="value">${p.end || "."}</span>
+          </div>
+        </div>
+        <div class="project-card-footer">
+          <button class="icon-btn action-btn delete proj-del" data-id="${p._recordId
+        }"><i class="fa-solid fa-trash"></i></button>
+        </div>
+      </div>
+    `
+    )
+    .join("");
+
+  const archivedRows = nonActiveItems
+    .map(
+      (p) => `
+    <tr data-project-id="${p.id}">
+      <td class="project-link" data-id="${p.id}">${p.name || ""}</td>
+      <td>${p.code || ""}</td>
+      <td>${p.client || ""}</td>
+      <td>${p.contributors || 0}</td>
+      <td>${statusControl(p)}</td>
+      <td>${p.start || "."}</td>
+      <td>${p.end || "."}</td>
+      <td class="actions-cell">
+        <button class="icon-btn action-btn delete proj-del" data-id="${p._recordId
+        }"><i class="fa-solid fa-trash"></i></button>
+      </td>
+    </tr>
+  `
+    )
+    .join("");
+
+  const archivedCards = nonActiveItems
+    .map(
+      (p) => `
+      <div class="project-card">
+        <div class="project-card-header">
+          <div class="project-card-main">
+            <button class="project-link as-text" data-id="${p.id}">
+              ${p.name || ""}
+            </button>
+            <div class="project-card-meta">
+              <span class="project-code">${p.code || ""}</span>
+              <span class="dot-separator">•</span>
+              <span class="project-client">${p.client || ""}</span>
+            </div>
+          </div>
+          ${statusControl(p)}
         </div>
         <div class="project-card-body">
           <div class="project-card-stat">
@@ -409,7 +514,10 @@ const renderList = () => {
 
   const cardsMarkup =
     cards ||
-    `<div class="placeholder-text">No projects found. Click ADD NEW to create one.</div>`;
+    `<div class="placeholder-text">No active projects found.</div>`;
+  const archivedCardsMarkup =
+    archivedCards ||
+    `<div class="placeholder-text">No inactive/cancelled/completed projects.</div>`;
   //       <button id="proj-add" class="btn btn-primary">ADD NEW</button>
   //       <button id="proj-filter" class="btn btn-secondary" title="Filter"><i class="fa-solid fa-filter"></i></button>
   //       <button id="proj-more" class="btn btn-secondary" title="More"><i class="fa-solid fa-ellipsis-vertical"></i></button>
@@ -443,12 +551,44 @@ const renderList = () => {
         justify-content:center;
         margin:0 4px;
       }
-      /* rely on global .status-badge colors from index.css */
       .status-badge{ padding:4px 8px; border-radius:999px; font-size:12px; font-weight:600; }
+      .status-badge.active{ background:#dcfce7; color:#15803d; }
+      .status-badge.inactive{ background:#e2e8f0; color:#475569; }
+      .status-badge.cancelled{ background:#fee2e2; color:#b91c1c; }
+      .status-badge.completed{ background:#dbeafe; color:#1d4ed8; }
+      .project-status-select{
+        min-width:120px;
+        padding:5px 24px 5px 10px;
+        border-radius:999px;
+        border:1px solid #cbd5e1;
+        font-size:12px;
+        font-weight:600;
+        outline:none;
+        cursor:pointer;
+      }
+      .project-status-select.active{ background:#dcfce7; color:#15803d; border-color:#86efac; }
+      .project-status-select.inactive{ background:#e2e8f0; color:#475569; border-color:#cbd5e1; }
+      .project-status-select.cancelled{ background:#fee2e2; color:#b91c1c; border-color:#fecaca; }
+      .project-status-select.completed{ background:#dbeafe; color:#1d4ed8; border-color:#bfdbfe; }
       .projects-toolbar{ display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; gap:12px; }
       .projects-toolbar-left{ display:flex; align-items:center; gap:12px; }
       .projects-toolbar-actions{ display:inline-flex; align-items:center; gap:10px; }
       .projects-view-toggle{ display:inline-flex; gap:4px; }
+      .project-section{ margin-top:10px; }
+      .project-section-title{
+        display:flex;
+        align-items:center;
+        justify-content:space-between;
+        margin:0 0 8px;
+        color:#334155;
+        font-size:13px;
+        font-weight:700;
+      }
+      .project-section-title .count{
+        font-size:12px;
+        font-weight:600;
+        color:#64748b;
+      }
       .pagination-bar{ 
         display:flex; 
         flex-direction:column; 
@@ -488,14 +628,15 @@ const renderList = () => {
       .projects-view-wrapper .view-mode{ display:none; opacity:1; transform:none; transition:none; width: 100%; }
       .projects-view-wrapper .view-mode.view-mode-visible{ display:block; width: 100%; }
       /* Projects cards grid – 2-3 cards per row */
-      .projects-card-grid{ 
+      .projects-card-grid{ display:block; width:100%; }
+      .projects-card-grid-inner{ 
         display:grid; 
         grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); 
         gap:20px; 
         width: 100%; 
       }
-      @media (max-width: 900px){ .projects-card-grid{ grid-template-columns:1fr; } }
-      .projects-card-grid.view-mode.view-mode-visible{ display:grid; width: 100%; }
+      @media (max-width: 900px){ .projects-card-grid-inner{ grid-template-columns:1fr; } }
+      .projects-card-grid.view-mode.view-mode-visible{ display:block; width: 100%; }
       /* Project cards styled like onboarding/employee cards */
       .project-card{
         background: var(--surface-color);
@@ -548,30 +689,64 @@ const renderList = () => {
         <div class="projects-view-wrapper">
           <div id="projects-card-view" class="projects-card-grid view-mode ${isTableMode ? "" : "view-mode-visible"
     }">
-            ${cardsMarkup}
+            <div class="project-section">
+              <div class="project-section-title">Active Projects <span class="count">${activeItems.length}</span></div>
+              <div class="projects-card-grid-inner">${cardsMarkup}</div>
+            </div>
+            <div class="project-section">
+              <div class="project-section-title">Inactive / Cancelled / Completed <span class="count">${nonActiveItems.length}</span></div>
+              <div class="projects-card-grid-inner">${archivedCardsMarkup}</div>
+            </div>
           </div>
           <div id="projects-table-view" class="view-mode ${isTableMode ? "view-mode-visible" : ""
     }">
-            <div class="table-container">
-              <table class="table">
-                <thead>
-                  <tr>
-                    ${th("name", "Project name")}
-                    ${th("code", "Project code")}
-                    ${th("client", "Client name")}
-                    <th>Number of contributors</th>
-                    ${th("status", "Status")}
-                    ${th("start", "Start date")}
-                    ${th("end", "End date")}
-                    <th class="actions-col"></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  ${rows ||
-    `<tr><td colspan="8" class="placeholder-text">No projects found. Click ADD NEW to create one.</td></tr>`
+            <div class="project-section">
+              <div class="project-section-title">Active Projects <span class="count">${activeItems.length}</span></div>
+              <div class="table-container">
+                <table class="table">
+                  <thead>
+                    <tr>
+                      ${th("name", "Project name")}
+                      ${th("code", "Project code")}
+                      ${th("client", "Client name")}
+                      <th>Number of contributors</th>
+                      ${th("status", "Status")}
+                      ${th("start", "Start date")}
+                      ${th("end", "End date")}
+                      <th class="actions-col"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${rows ||
+    `<tr><td colspan="8" class="placeholder-text">No active projects found.</td></tr>`
     }
-                </tbody>
-              </table>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            <div class="project-section">
+              <div class="project-section-title">Inactive / Cancelled / Completed <span class="count">${nonActiveItems.length}</span></div>
+              <div class="table-container">
+                <table class="table">
+                  <thead>
+                    <tr>
+                      <th>Project name</th>
+                      <th>Project code</th>
+                      <th>Client name</th>
+                      <th>Number of contributors</th>
+                      <th>Status</th>
+                      <th>Start date</th>
+                      <th>End date</th>
+                      <th class="actions-col"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${archivedRows ||
+    `<tr><td colspan="8" class="placeholder-text">No inactive/cancelled/completed projects.</td></tr>`
+    }
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
         </div>
@@ -581,7 +756,7 @@ const renderList = () => {
               Showing <strong>${Math.min(total, start + 1)}-${Math.min(
       total,
       start + pageItems.length
-    )}</strong> of <strong>${total}</strong>
+    )}</strong> of <strong>${total}</strong> active projects
             </div>
           </div>
           <div class="pagination">
@@ -650,8 +825,10 @@ const renderList = () => {
   const next = document.getElementById("proj-next");
   if (next)
     next.onclick = () => {
-      listState.page++;
-      renderList();
+      if (start + pageItems.length < total) {
+        listState.page++;
+        renderList();
+      }
     };
   document.querySelectorAll(".like-th").forEach((el) => {
     el.addEventListener("click", (e) => {
@@ -662,8 +839,6 @@ const renderList = () => {
       renderList();
     });
   });
-  const { canManage } = getProjectAccess();
-
   const addBtn = document.getElementById("proj-add");
   if (addBtn) {
     if (!canManage) {
@@ -676,6 +851,46 @@ const renderList = () => {
   if (bulkUploadBtn) {
     bulkUploadBtn.addEventListener("click", () => showProjectBulkUploadModal());
   }
+
+  document.querySelectorAll(".project-status-select").forEach((select) => {
+    if (!canManage) {
+      select.setAttribute("disabled", "disabled");
+      return;
+    }
+
+    select.addEventListener("click", (e) => e.stopPropagation());
+    select.addEventListener("change", async (e) => {
+      e.stopPropagation();
+      const el = e.currentTarget;
+      const recordId = (el.getAttribute("data-record-id") || "").trim();
+      const previous = normalizeProjectStatus(el.getAttribute("data-current-status") || "Active");
+      const nextStatus = normalizeProjectStatus(el.value);
+
+      if (!recordId || !nextStatus || nextStatus === previous) {
+        el.value = previous;
+        return;
+      }
+
+      el.setAttribute("disabled", "disabled");
+      try {
+        const res = await fetch(`${PROJECTS_API}/${encodeURIComponent(recordId)}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ crc6f_projectstatus: nextStatus }),
+        });
+        const out = await res.json().catch(() => ({}));
+        if (!res.ok || out.success === false) {
+          throw new Error(out.error || "Failed to update project status");
+        }
+        await fetchProjects();
+        renderList();
+      } catch (err) {
+        alert(err?.message || "Failed to update project status");
+        el.value = previous;
+        el.removeAttribute("disabled");
+      }
+    });
+  });
 
   document.querySelectorAll(".proj-edit").forEach((btn) => {
     if (!canManage) {
@@ -703,8 +918,9 @@ const renderList = () => {
     });
   });
 
-  const actionsHeader = document.querySelector(".actions-col");
-  if (actionsHeader) actionsHeader.style.display = canManage ? "" : "none";
+  document.querySelectorAll(".actions-col").forEach((header) => {
+    header.style.display = canManage ? "" : "none";
+  });
   document.querySelectorAll(".actions-cell").forEach((cell) => {
     cell.style.display = canManage ? "" : "none";
   });
@@ -720,7 +936,7 @@ const renderList = () => {
     .querySelectorAll('#projects-table-view tbody tr[data-project-id]')
     .forEach((row) => {
       row.addEventListener('click', (e) => {
-        if (e.target.closest('.actions-cell, .proj-del, .proj-edit, button')) {
+        if (e.target.closest('.actions-cell, .proj-del, .proj-edit, .project-status-select, button')) {
           return;
         }
         navigateToProjectDetails(row.getAttribute('data-project-id'));
@@ -729,7 +945,7 @@ const renderList = () => {
 
   document.querySelectorAll(".project-card").forEach((card) => {
     card.addEventListener("click", (e) => {
-      if (e.target.closest(".proj-edit, .proj-del")) return;
+      if (e.target.closest(".proj-edit, .proj-del, .project-status-select")) return;
       const link = card.querySelector(".project-link");
       if (!link) return;
       const projectId = link.getAttribute("data-id");
@@ -772,7 +988,7 @@ async function fetchProjects() {
       code: r.crc6f_projectid,
       client: r.crc6f_client,
       contributors: Number(r.crc6f_noofcontributors || 0),
-      status: r.crc6f_projectstatus,
+      status: normalizeProjectStatus(r.crc6f_projectstatus),
       start: r.crc6f_startdate || ".",
       end: r.crc6f_enddate || ".",
       description: r.crc6f_projectdescription || "",
@@ -805,6 +1021,7 @@ async function fetchProjects() {
 }
 
 function projectFormHTML(p = {}) {
+  const currentStatus = normalizeProjectStatus(p.status);
   return `
   <div class="modal-form modern-form leave-form project-form-v2">
     <div class="form-section">
@@ -857,10 +1074,10 @@ function projectFormHTML(p = {}) {
           <div class="input-wrapper">
             <i class="fa-solid fa-signal"></i>
             <select class="input-control" id="pj-status">
-              <option ${p.status === "Active" ? "selected" : ""}>Active</option>
-              <option ${p.status === "Inactive" ? "selected" : ""}>Inactive</option>
-              <option ${p.status === "Completed" ? "selected" : ""}>Completed</option>
-              <option ${p.status === "Pending" ? "selected" : ""}>Pending</option>
+              <option ${currentStatus === "Active" ? "selected" : ""}>Active</option>
+              <option ${currentStatus === "Inactive" ? "selected" : ""}>Inactive</option>
+              <option ${currentStatus === "Cancelled" ? "selected" : ""}>Cancelled</option>
+              <option ${currentStatus === "Completed" ? "selected" : ""}>Completed</option>
             </select>
           </div>
         </div>
@@ -1034,6 +1251,8 @@ async function handleSaveProject(p) {
     alert("❌ End date cannot be before start date.");
     return;
   }
+
+  payload.crc6f_projectstatus = normalizeProjectStatus(payload.crc6f_projectstatus);
 
   if (!p || !p._recordId) {
     // create
