@@ -10,6 +10,7 @@ import { fetchPendingLeaves } from '../features/leaveApi.js';
 import { notifyEmployeeLeaveApproval, notifyEmployeeLeaveRejection, updateNotificationBadge, notifyEmployeeCompOffGranted, notifyEmployeeCompOffRejected } from '../features/notificationApi.js';
 import { fetchCompOffRequests, approveCompOffRequest, rejectCompOffRequest } from '../features/compOffApi.js';
 import { listEmployees } from '../features/employeeApi.js';
+import { isCheckedIn } from '../features/attendanceRenderer.js';
 import { apiBase } from '../config.js';
 import { cachedFetch, TTL } from '../features/cache.js';
 
@@ -830,6 +831,7 @@ export const renderMyTasksPage = async () => {
     };
 
     let timerInterval = null;
+    let checkInStateInterval = null;
 
     const updateTimers = () => {
         const active = getActive();
@@ -865,9 +867,9 @@ export const renderMyTasksPage = async () => {
     };
 
     const updatePlayButtonStates = () => {
-        const checkedIn = state.timer?.isRunning || false;
+        const checkedIn = isCheckedIn();
         const active = getActive();
-        
+
         document.querySelectorAll('tr[data-guid] .action-btn.toggle-timer').forEach(btn => {
             const tr = btn.closest('tr');
             const guid = tr?.getAttribute('data-guid');
@@ -897,7 +899,7 @@ export const renderMyTasksPage = async () => {
         await normalizeActiveTimer();
         await loadTasks();
         const active = getActive();
-        const checkedIn = state.timer?.isRunning || false;
+        const checkedIn = isCheckedIn();
         const rows = tasks.map(t => {
             const proj = projectsIdx[t.project_id] || {};
             const clientName = proj.client || '';
@@ -1022,10 +1024,9 @@ export const renderMyTasksPage = async () => {
                 const active = getActive();
                 const isRunning = active && active.task_guid === t.guid && !active.paused;
                 const isPaused = active && active.task_guid === t.guid && active.paused;
-                const checkedIn = state.timer?.isRunning || false;
                 
                 // Allow pause/resume if already running, but require check-in to start new timer
-                if (!checkedIn && !isRunning && !isPaused) {
+                if (!isCheckedIn() && !isRunning && !isPaused) {
                     alert('⚠️ Please check in first before starting a task timer.');
                     return;
                 }
@@ -1040,7 +1041,8 @@ export const renderMyTasksPage = async () => {
         
         // Set up a periodic check to update button states when check-in status changes
         // This handles the case where user checks in/out while on My Tasks page
-        const checkInStateInterval = setInterval(() => {
+        if (checkInStateInterval) clearInterval(checkInStateInterval);
+        checkInStateInterval = setInterval(() => {
             updatePlayButtonStates();
         }, 1000);
 
