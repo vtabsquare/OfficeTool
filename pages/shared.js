@@ -10,6 +10,7 @@ import { fetchPendingLeaves } from '../features/leaveApi.js';
 import { notifyEmployeeLeaveApproval, notifyEmployeeLeaveRejection, updateNotificationBadge, notifyEmployeeCompOffGranted, notifyEmployeeCompOffRejected } from '../features/notificationApi.js';
 import { fetchCompOffRequests, approveCompOffRequest, rejectCompOffRequest } from '../features/compOffApi.js';
 import { listEmployees } from '../features/employeeApi.js';
+import { isCheckedIn } from '../features/attendanceRenderer.js';
 import { apiBase } from '../config.js';
 import { cachedFetch, TTL } from '../features/cache.js';
 
@@ -868,6 +869,7 @@ export const renderMyTasksPage = async () => {
         await normalizeActiveTimer();
         await loadTasks();
         const active = getActive();
+        const checkedIn = isCheckedIn();
         const rows = tasks.map(t => {
             const proj = projectsIdx[t.project_id] || {};
             const clientName = proj.client || '';
@@ -887,6 +889,12 @@ export const renderMyTasksPage = async () => {
             const toggleIcon = isRunning ? 'fa-pause' : 'fa-play';
             const toggleTitle = isRunning ? 'Pause' : (isPaused ? 'Resume' : 'Start');
             const canNavigate = !!t.project_id;
+            
+            // Disable play button if not checked in (but allow pause/resume if already running)
+            const canToggle = checkedIn || isRunning || isPaused;
+            const disabledClass = canToggle ? '' : 'disabled';
+            const disabledAttr = canToggle ? '' : 'disabled';
+            const buttonTitle = !canToggle ? 'Please check in first to start task timer' : toggleTitle;
 
             const taskLabel = `
               <div style="display:flex; align-items:center; gap:10px;">
@@ -907,7 +915,7 @@ export const renderMyTasksPage = async () => {
             return `
             <tr data-guid="${t.guid}" ${canNavigate ? `data-project="${encodeURIComponent(t.project_id)}" ${t.board_id ? `data-board="${encodeURIComponent(t.board_id)}"` : ''} class="task-row-clickable"` : ''}>
               <td class="actions-cell" style="width:50px; text-align:left;">
-                <button class="action-btn toggle-timer" title="${toggleTitle}"><i class="fa-solid ${toggleIcon}"></i></button>
+                <button class="action-btn toggle-timer ${disabledClass}" title="${buttonTitle}" ${disabledAttr}><i class="fa-solid ${toggleIcon}"></i></button>
               </td>
 
               <td>${taskLabel}</td>
@@ -981,6 +989,19 @@ export const renderMyTasksPage = async () => {
                 const guid = tr?.getAttribute('data-guid');
                 const t = tasks.find(x => x.guid === guid);
                 if (!t) return;
+                
+                // Check if user is checked in before allowing timer start
+                const active = getActive();
+                const isRunning = active && active.task_guid === t.guid && !active.paused;
+                const isPaused = active && active.task_guid === t.guid && active.paused;
+                const checkedIn = isCheckedIn();
+                
+                // Allow pause/resume if already running, but require check-in to start new timer
+                if (!checkedIn && !isRunning && !isPaused) {
+                    alert('⚠️ Please check in first before starting a task timer.');
+                    return;
+                }
+                
                 // Always toggle (start/pause/resume) - never save or navigate
                 toggleTimer(t);
             });
