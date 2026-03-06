@@ -983,18 +983,6 @@ export const renderMyTasksPage = async () => {
                 const t = tasks.find(x => x.guid === guid);
                 if (!t) return;
                 
-                // Check if user is checked in before allowing timer start
-                const active = getActive();
-                const isRunning = active && active.task_guid === t.guid && !active.paused;
-                const isPaused = active && active.task_guid === t.guid && active.paused;
-                const checkedIn = state.timer?.isRunning || false;
-                
-                // Allow pause/resume if already running, but require check-in to start new timer
-                if (!checkedIn && !isRunning && !isPaused) {
-                    alert('⚠️ Please check in first before starting a task timer.');
-                    return;
-                }
-                
                 // Always toggle (start/pause/resume) - never save or navigate
                 toggleTimer(t);
             });
