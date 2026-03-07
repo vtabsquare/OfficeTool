@@ -11499,6 +11499,138 @@ body.dark-theme .form-section .btn-secondary:hover {
   color: var(--text-primary);
 }
 
+/* Task Load Card Grid */
+.task-load-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 1rem;
+  margin-top: 0.5rem;
+}
+
+.task-load-card {
+  background: var(--surface-alt);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 1rem;
+  transition: all 0.2s ease;
+}
+
+.task-load-card:hover {
+  border-color: var(--primary-color);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  transform: translateY(-1px);
+}
+
+.task-load-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 0.75rem;
+  gap: 0.5rem;
+}
+
+.task-load-project {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  line-height: 1.3;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.task-load-count {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--primary-color);
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.task-load-bar-wrapper {
+  height: 6px;
+  background: var(--border-color);
+  border-radius: 999px;
+  overflow: hidden;
+  margin-bottom: 0.5rem;
+}
+
+.task-load-bar {
+  height: 100%;
+  border-radius: inherit;
+  transition: width 0.3s ease;
+}
+
+.task-load-bar-high {
+  background: linear-gradient(90deg, #ef4444, #dc2626);
+}
+
+.task-load-bar-medium {
+  background: linear-gradient(90deg, #f59e0b, #d97706);
+}
+
+.task-load-bar-low {
+  background: linear-gradient(90deg, #22c55e, #16a34a);
+}
+
+.task-load-footer {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.task-load-label {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-weight: 500;
+}
+
+.admin-task-load-card {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1rem;
+  padding: 1.4rem;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  background: var(--surface-color);
+  box-shadow: var(--shadow-sm);
+}
+
+.admin-task-load-card .task-load-label {
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+}
+
+.admin-task-load-card .task-load-value {
+  font-size: 1.2rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.admin-task-load-card .task-load-intensity {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.admin-task-load-card .task-load-intensity-bar {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--surface-alt);
+  overflow: hidden;
+}
+
+.admin-task-load-card .task-load-intensity-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--primary-color), #22c55e);
+}
+
 .mono {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   font-variant-numeric: tabular-nums;

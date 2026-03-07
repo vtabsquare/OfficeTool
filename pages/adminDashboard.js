@@ -117,14 +117,22 @@ const buildProjectLoadBars = (items = []) => {
   const max = Math.max(...rows.map(([, count]) => count), 1);
 
   return `
-    <div class="admin-bars">
+    <div class="task-load-grid">
       ${rows.map(([project, count]) => {
         const pct = Math.round((count / max) * 100);
+        const intensity = pct > 66 ? 'high' : pct > 33 ? 'medium' : 'low';
         return `
-          <div class="admin-bar-row">
-            <div class="admin-bar-label">${escapeHtml(project)}</div>
-            <div class="admin-bar-track"><div class="admin-bar-fill" style="width:${pct}%"></div></div>
-            <div class="admin-bar-value">${count}</div>
+          <div class="task-load-card">
+            <div class="task-load-header">
+              <div class="task-load-project">${escapeHtml(project)}</div>
+              <div class="task-load-count">${count}</div>
+            </div>
+            <div class="task-load-bar-wrapper">
+              <div class="task-load-bar task-load-bar-${intensity}" style="width:${pct}%"></div>
+            </div>
+            <div class="task-load-footer">
+              <span class="task-load-label">${count === 1 ? 'task' : 'tasks'}</span>
+            </div>
           </div>
         `;
       }).join('')}
