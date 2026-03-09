@@ -18,10 +18,7 @@ let currentInboxTab = 'awaiting';
 let currentInboxCategory = 'leaves';
 
 const canManageMyTimesheetRows = () => {
-    if (isAdminUser()) return true;
-    if (isManagerOrAdmin()) return true;
-    const designation = String(state.user?.designation || '').trim().toLowerCase();
-    return designation.includes('manager');
+    return true;
 };
 
 const renderMyTsRow = (days, idx = 0) => {
