@@ -697,6 +697,28 @@ const openTeamAttendanceEditModal = (employeeId, day, year, monthIndex) => {
     }, 30);
 };
 
+const normalizeEmployeeFlagForWorkingDays = (value) => {
+    const normalized = String(value || '').trim().toLowerCase();
+    return normalized === 'intern' ? 'Intern' : 'Employee';
+};
+
+const getMonthlyWorkingDays = (year, monthIndex, employeeFlag) => {
+    const includeSaturdays = normalizeEmployeeFlagForWorkingDays(employeeFlag) === 'Intern';
+    const daysInMonth = new Date(year, monthIndex + 1, 0).getDate();
+    let workingDays = 0;
+
+    for (let day = 1; day <= daysInMonth; day++) {
+        const dayOfWeek = new Date(year, monthIndex, day).getDay();
+        const isSunday = dayOfWeek === 0;
+        const isSaturday = dayOfWeek === 6;
+        if (isSunday) continue;
+        if (isSaturday && !includeSaturdays) continue;
+        workingDays += 1;
+    }
+
+    return workingDays;
+};
+
 // Function to export team attendance data to CSV
 const exportTeamAttendanceToCSV = (monthName, year) => {
     const employeeIds = Object.keys(state.attendanceData);
@@ -712,13 +734,15 @@ const exportTeamAttendanceToCSV = (monthName, year) => {
     for (let day = 1; day <= daysInMonth; day++) {
         headers.push(`${day}/${monthNumber}`);
     }
-    headers.push('Total Present', 'Total Leaves', 'Total Absent', 'Total Late Entry');
+    headers.push('Total Present', 'Total Leaves', 'Total Absent', 'Total Late Entry', 'Total Working Days');
     csvRows.push(headers.join(','));
 
     // Add data rows
     employeeIds.forEach(empId => {
         const empData = state.attendanceData[empId] || {};
         const employeeName = empData.employeeName || empId;
+        const employeeFlag = normalizeEmployeeFlagForWorkingDays(empData.employeeFlag);
+        const totalWorkingDays = getMonthlyWorkingDays(year, date.getMonth(), employeeFlag);
         const row = [employeeName, empId];
 
         // Track totals
@@ -754,7 +778,7 @@ const exportTeamAttendanceToCSV = (monthName, year) => {
         }
 
         // Add totals
-        row.push(totalPresent, totalLeaves, totalAbsent, totalLate);
+        row.push(totalPresent, totalLeaves, totalAbsent, totalLate, totalWorkingDays);
         csvRows.push(row.join(','));
     });
 
@@ -1078,10 +1102,14 @@ export const renderTeamAttendancePage = async () => {
         const employeeIds = (allEmployees.items || []).map(emp => {
             const empId = String(emp.employee_id || emp.id || '').toUpperCase();
             if (empId) {
-                employeeMeta[empId] = `${emp.first_name || ''} ${emp.last_name || ''}`.trim() || emp.name || empId;
+                employeeMeta[empId] = {
+                    name: `${emp.first_name || ''} ${emp.last_name || ''}`.trim() || emp.name || empId,
+                    employeeFlag: emp.employee_flag || emp.employeeFlag || emp.crc6f_employeeflag || 'Employee'
+                };
             }
             return empId;
         }).filter(Boolean);
+
         employeesToFetch = employeeIds;
         console.log(`📊 Fetched ${employeesToFetch.length} employees from Dataverse`);
 
@@ -1114,7 +1142,9 @@ export const renderTeamAttendancePage = async () => {
                 }
             });
 
-            attendanceMap.employeeName = employeeMeta[empId];
+            const meta = employeeMeta[empId] || {};
+            attendanceMap.employeeName = meta.name || empId;
+            attendanceMap.employeeFlag = meta.employeeFlag || 'Employee';
 
             // Store both attendance data and employee info
             state.attendanceData[empId] = attendanceMap;
