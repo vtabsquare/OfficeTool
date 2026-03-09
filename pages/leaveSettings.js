@@ -33,26 +33,32 @@ const LEAVE_ALLOCATION_TYPES = [
     }
 ];
 
-// Live allocation types state (can be customized via UI and saved to localStorage)
+// Live allocation types state (loaded from backend API, shared across all admins)
 let allocationTypes = [...LEAVE_ALLOCATION_TYPES];
-
-const ALLOCATION_TYPES_STORAGE_KEY = 'leave_allocation_types_v1';
 
 // Optimistic update overrides — stores recently saved allocation values
 // that may not yet be reflected in Dataverse GET responses (eventual consistency).
 const pendingAllocationOverrides = {};
 
-try {
-    const raw = localStorage.getItem(ALLOCATION_TYPES_STORAGE_KEY);
-    if (raw) {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed) && parsed.length) {
-            allocationTypes = parsed.map(t => ({ ...t }));
+// Load allocation types from backend API
+const loadAllocationTypes = async () => {
+    try {
+        const response = await fetch(`${API_BASE}/leave-allocation-types`);
+        if (response.ok) {
+            const data = await response.json();
+            if (data.success && Array.isArray(data.types) && data.types.length) {
+                allocationTypes = data.types.map(t => ({ ...t }));
+                console.log('✅ Loaded allocation types from backend:', allocationTypes);
+            }
         }
+    } catch (err) {
+        console.error('Failed to load allocation types from backend:', err);
+        allocationTypes = [...LEAVE_ALLOCATION_TYPES];
     }
-} catch {
-    allocationTypes = [...LEAVE_ALLOCATION_TYPES];
-}
+};
+
+// Initialize allocation types on module load
+loadAllocationTypes();
 
 // Parse date from various formats (Dataverse can return different formats)
 const parseDate = (dateString) => {
@@ -415,7 +421,7 @@ const handleAddAllocationType = () => {
     }
 };
 
-const saveNewAllocationType = () => {
+const saveNewAllocationType = async () => {
     const name = document.getElementById('new-type-name')?.value?.trim();
     const experience = Math.max(0, Number(document.getElementById('new-type-experience')?.value || 0));
     const casualLeave = Math.max(0, Number(document.getElementById('new-type-casual')?.value || 0));
@@ -443,29 +449,42 @@ const saveNewAllocationType = () => {
         totalQuota,
     };
 
-    allocationTypes.push(newType);
-
-    // Sort by experience descending
-    allocationTypes.sort((a, b) => (b.experience || 0) - (a.experience || 0));
-
+    // Save to backend API
     try {
-        localStorage.setItem(ALLOCATION_TYPES_STORAGE_KEY, JSON.stringify(allocationTypes));
-        console.log('✅ New allocation type saved:', newType);
+        const response = await fetch(`${API_BASE}/leave-allocation-types`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(newType)
+        });
+        
+        if (response.ok) {
+            const data = await response.json();
+            if (data.success) {
+                console.log('✅ New allocation type saved to backend:', newType);
+                // Reload types from backend to ensure consistency
+                await loadAllocationTypes();
+                closeModal();
+                alert(`✅ Leave type "${name}" added successfully!`);
+                
+                // Invalidate employee cache
+                try { if (state?.cache?.employees) state.cache.employees = {}; } catch { }
+                
+                // Re-render page to show new type
+                renderLeaveSettingsPage();
+            } else {
+                alert(`❌ Failed to save leave type: ${data.error || 'Unknown error'}`);
+            }
+        } else {
+            const data = await response.json().catch(() => ({}));
+            alert(`❌ Failed to save leave type: ${data.error || response.statusText}`);
+        }
     } catch (err) {
-        console.error('Failed to save to localStorage:', err);
+        console.error('Failed to save to backend:', err);
+        alert(`❌ Failed to save leave type: ${err.message}`);
     }
-
-    closeModal();
-    alert(`✅ Leave type "${name}" added successfully!`);
-    
-    // Invalidate employee cache
-    try { if (state?.cache?.employees) state.cache.employees = {}; } catch { }
-    
-    // Re-render page to show new type
-    renderLeaveSettingsPage();
 };
 
-const saveEditedAllocationType = () => {
+const saveEditedAllocationType = async () => {
     const idx = Number(document.getElementById('edit-type-index').value);
     if (Number.isNaN(idx) || idx < 0 || idx >= allocationTypes.length) return;
 
@@ -475,23 +494,40 @@ const saveEditedAllocationType = () => {
     const sickLeave = Math.max(0, Number(document.getElementById('edit-type-sick').value || 0));
     const totalQuota = casualLeave + sickLeave;
 
-    allocationTypes[idx] = {
-        type: name || allocationTypes[idx].type,
+    const typeName = allocationTypes[idx].type;
+    const updatedType = {
+        type: name || typeName,
         experience,
         casualLeave,
         sickLeave,
         totalQuota,
     };
 
+    // Save to backend API
     try {
-        localStorage.setItem(ALLOCATION_TYPES_STORAGE_KEY, JSON.stringify(allocationTypes));
-    } catch { }
-
-    closeEditTypeModal();
-    // Invalidate employee cache so the employee table re-fetches fresh data
-    try { if (state?.cache?.employees) state.cache.employees = {}; } catch { }
-    // Re-render page so both tables use updated configuration
-    renderLeaveSettingsPage();
+        const response = await fetch(`${API_BASE}/leave-allocation-types/${encodeURIComponent(typeName)}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(updatedType)
+        });
+        
+        if (response.ok) {
+            console.log('✅ Allocation type updated in backend');
+            // Reload types from backend to ensure consistency
+            await loadAllocationTypes();
+            closeEditTypeModal();
+            // Invalidate employee cache so the employee table re-fetches fresh data
+            try { if (state?.cache?.employees) state.cache.employees = {}; } catch { }
+            // Re-render page so both tables use updated configuration
+            renderLeaveSettingsPage();
+        } else {
+            const data = await response.json().catch(() => ({}));
+            alert(`❌ Failed to update leave type: ${data.error || response.statusText}`);
+        }
+    } catch (err) {
+        console.error('Failed to update in backend:', err);
+        alert(`❌ Failed to update leave type: ${err.message}`);
+    }
 };
 
 // Dynamically match CL/SL values to an allocation type from the live config
@@ -879,6 +915,9 @@ const renderEmployeeAllocationTable = async () => {
 // Render Leave Settings page (Admin Only)
 export const renderLeaveSettingsPage = async () => {
     console.log('⚙️ Rendering Leave Settings Page...');
+
+    // Load latest allocation types from backend
+    await loadAllocationTypes();
 
     // Check if user is admin or L2/L3
     if (!isL2OrL3User()) {

@@ -14696,51 +14696,118 @@ def get_login_events():
         return jsonify({"success": False, "error": str(e)}), 500
 
 
-# ================== MAIN ==================
-# Register timesheet routes
-# NOTE: Commented out to avoid conflicts with time_tracking.py routes
-# try:
-#     from timesheet_routes import register_timesheet_routes
-#     register_timesheet_routes(app, get_access_token, RESOURCE, TIMESHEET_ENTITY, _apply_timesheet_rpt, create_record)
-#     print("[OK] Timesheet routes registered")
-# except Exception as e:
-#     print(f"[WARN] Failed to register timesheet routes: {e}")
+# ================== LEAVE ALLOCATION TYPES API ==================
+# Simple JSON file storage for leave allocation types (shared across all admins)
+LEAVE_TYPES_FILE = os.path.join(os.path.dirname(__file__), 'data', 'leave_allocation_types.json')
 
-if __name__ == '__main__':
-    print("\n" + "=" * 80)
-    print("UNIFIED BACKEND SERVER STARTING")
-    print("=" * 80)
-    print("Server Configuration:")
-    print("=" * 80)
-    port = int(os.getenv("PORT", "5000"))
-    debug_flag = bool(app.config.get('DEBUG', False))
-    print(f"  Host: 0.0.0.0 (accessible from network)")
-    print(f"  Port: {port}")
-    print(f"  Debug Mode: {'ON' if debug_flag else 'OFF'}")
-    print("=" * 80)
-    print("\nAvailable Services:")
-    print("  [OK] Attendance Management (Check-in/Check-out)")
-    print("  [OK] Leave Tracker (Apply Leave)")
-    print("  [OK] Asset Management (CRUD Operations)")
-    print("  [OK] Employee Master (CRUD & Bulk Upload)")
-    print("  [OK] Employee Onboarding (5-Stage Process)")
-    print("  [OK] Holiday Management (CRUD Operations)")
-    print("  [OK] Deleted Employees Management (CSV)")
-    print("  [OK] Time Tracker (Task Time Logging)")
-    print("=" * 80)
-    print("\nEndpoints:")
-    base = f"http://localhost:{port}"
-    print(f"  -> {base}/ping - Health check")
-    print(f"  -> {base}/api/info - API documentation")
-    print(f"  -> {base}/api/checkin - Check-in")
-    print(f"  -> {base}/api/checkout - Check-out")
-    print(f"  -> {base}/apply_leave - Apply leave")
-    print(f"  -> {base}/assets - Asset management")
-    print(f"  -> {base}/api/employees - Employee management")
-    print(f"  -> {base}/api/onboarding - Employee onboarding")
-    print(f"  -> {base}/api/holidays - Holiday management")
-    print(f"  -> {base}/api/time-tracker/task-log - Save task time")
-    print(f"  -> {base}/api/time-tracker/logs - Get timesheet logs")
-    print("=" * 80 + "\n")
-    
-    app.run(debug=debug_flag, host='0.0.0.0', port=port)
+def _ensure_leave_types_file():
+    """Ensure the leave types data file exists with default values"""
+    os.makedirs(os.path.dirname(LEAVE_TYPES_FILE), exist_ok=True)
+    if not os.path.exists(LEAVE_TYPES_FILE):
+        default_types = [
+            {
+                "type": "Type 1",
+                "experience": 3,
+                "casualLeave": 6,
+                "sickLeave": 6,
+                "totalQuota": 12
+            },
+            {
+                "type": "Type 2",
+                "experience": 2,
+                "casualLeave": 4,
+                "sickLeave": 4,
+                "totalQuota": 8
+            },
+            {
+                "type": "Type 3",
+                "experience": 1,
+                "casualLeave": 3,
+                "sickLeave": 3,
+                "totalQuota": 6
+            }
+        ]
+        with open(LEAVE_TYPES_FILE, 'w') as f:
+            json.dump(default_types, f, indent=2)
+
+def _read_leave_types():
+    """Read leave allocation types from file"""
+    _ensure_leave_types_file()
+    try:
+        with open(LEAVE_TYPES_FILE, 'r') as f:
+            return json.load(f)
+    except Exception:
+        return []
+
+def _write_leave_types(types):
+    """Write leave allocation types to file"""
+    _ensure_leave_types_file()
+    with open(LEAVE_TYPES_FILE, 'w') as f:
+        json.dump(types, f, indent=2)
+
+@app.route('/api/leave-allocation-types', methods=['GET'])
+def get_leave_allocation_types():
+    """Get all leave allocation types (shared across all admins)"""
+    try:
+        types = _read_leave_types()
+        return jsonify({"success": True, "types": types}), 200
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route('/api/leave-allocation-types', methods=['POST'])
+def create_leave_allocation_type():
+    """Create a new leave allocation type"""
+    try:
+        data = request.get_json()
+        new_type = {
+            "type": data.get("type", "").strip(),
+            "experience": int(data.get("experience", 0)),
+            "casualLeave": int(data.get("casualLeave", 0)),
+            "sickLeave": int(data.get("sickLeave", 0)),
+            "totalQuota": int(data.get("totalQuota", 0))
+        }
+        
+        if not new_type["type"]:
+            return jsonify({"success": False, "error": "Type name is required"}), 400
+        
+        types = _read_leave_types()
+        
+        # Check for duplicate type name
+        if any(t["type"] == new_type["type"] for t in types):
+            return jsonify({"success": False, "error": "Type name already exists"}), 400
+        
+        types.append(new_type)
+        types.sort(key=lambda t: t.get("experience", 0), reverse=True)
+        _write_leave_types(types)
+        
+        return jsonify({"success": True, "type": new_type}), 201
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route('/api/leave-allocation-types/<type_name>', methods=['PUT'])
+def update_leave_allocation_type(type_name):
+    """Update an existing leave allocation type"""
+    try:
+        data = request.get_json()
+        types = _read_leave_types()
+        
+        # Find and update the type
+        found = False
+        for t in types:
+            if t["type"] == type_name:
+                t["experience"] = int(data.get("experience", t["experience"]))
+                t["casualLeave"] = int(data.get("casualLeave", t["casualLeave"]))
+                t["sickLeave"] = int(data.get("sickLeave", t["sickLeave"]))
+                t["totalQuota"] = int(data.get("totalQuota", t["totalQuota"]))
+                found = True
+                break
+        
+        if not found:
+            return jsonify({"success": False, "error": "Type not found"}), 404
+        
+        types.sort(key=lambda t: t.get("experience", 0), reverse=True)
+        _write_leave_types(types)
+        
+        return jsonify({"success": True}), 200
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
