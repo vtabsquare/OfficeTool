@@ -623,6 +623,55 @@ export const renderMyTasksPage = async () => {
         return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
     };
 
+    const syncActiveTimerFromBackend = async () => {
+        try {
+            const res = await fetch(`${API}/time-entries/active/${empId}`);
+            const result = await res.json().catch(() => ({ success: false }));
+            
+            if (!result.success || !result.active_timer) {
+                return;
+            }
+
+            const backendTimer = result.active_timer;
+            const localActive = getActive();
+            
+            // If backend has an active timer but local doesn't match, sync it
+            if (backendTimer && backendTimer.task_guid) {
+                const backendTaskGuid = backendTimer.task_guid;
+                const startTime = new Date(backendTimer.start).getTime();
+                
+                // Check if local timer matches backend
+                if (!localActive || localActive.task_guid !== backendTaskGuid) {
+                    // Find the task in our tasks list to get full details
+                    const matchingTask = tasks.find(t => t.guid === backendTaskGuid);
+                    
+                    if (matchingTask) {
+                        console.log('[MY_TASKS] Syncing active timer from backend:', backendTimer);
+                        const now = Date.now();
+                        const elapsed = Math.floor((now - startTime) / 1000);
+                        
+                        setActive({
+                            task_guid: backendTaskGuid,
+                            task_id: matchingTask.task_id,
+                            task_name: matchingTask.task_name,
+                            project_id: matchingTask.project_id,
+                            started_at: startTime,
+                            accumulated: Math.max(0, elapsed),
+                            paused: false,
+                            session_date: todayStr()
+                        });
+                    }
+                }
+            } else if (!backendTimer && localActive && !localActive.paused) {
+                // Backend has no active timer but local does (not paused) - clear local
+                console.log('[MY_TASKS] Clearing local timer - not found on backend');
+                clearActive();
+            }
+        } catch (err) {
+            console.warn('[MY_TASKS] Failed to sync active timer from backend:', err);
+        }
+    };
+
     const normalizeActiveTimer = async () => {
         const active = getActive();
         if (!active || !active.task_guid) return;
@@ -905,6 +954,7 @@ export const renderMyTasksPage = async () => {
     const render = async () => {
         await normalizeActiveTimer();
         await loadTasks();
+        await syncActiveTimerFromBackend();
         const active = getActive();
         const checkedIn = isCheckedIn();
         const rows = tasks.map(t => {

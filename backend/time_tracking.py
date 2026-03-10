@@ -1227,6 +1227,26 @@ def stop_timer():
     return jsonify({"success": True, "entry": stopped})
 
 
+@bp_time.route("/time-entries/active/<user_id>", methods=["GET"])
+def get_active_timer(user_id):
+    """Get active timer entry for a user (for cross-device sync)"""
+    uid = (user_id or "").strip()
+    if not uid:
+        return jsonify({"success": False, "error": "user_id required"}), 400
+    
+    entries = _read_entries()
+    active_entry = None
+    for e in entries:
+        if e.get("user_id") == uid and not e.get("end"):
+            active_entry = e
+            break
+    
+    if not active_entry:
+        return jsonify({"success": True, "active_timer": None})
+    
+    return jsonify({"success": True, "active_timer": active_entry})
+
+
 # ---------- Timesheet logs (create/read/delete) - Dataverse Integration ----------
 @bp_time.route("/time-tracker/task-log", methods=["POST"])
 def create_task_log():
