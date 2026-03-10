@@ -20,7 +20,7 @@ import {
   updateNotificationBadge,
 } from "../features/notificationApi.js";
 import { showLeaveApplicationToast } from "../components/toast.js";
-import { isAdminUser, isManagerOrAdmin } from "../utils/accessControl.js";
+import { isAdminUser } from "../utils/accessControl.js";
 
 let leaveCurrentPage = 1;
 const LEAVE_PAGE_SIZE = 10;
@@ -211,14 +211,19 @@ export const renderLeaveTrackerPage = async (
 
   // Show loading state first
   // Show Apply Leave button only in 'my' view
+  const canApplyForOthers = leaveViewMode === "my" && isAdminUser();
   const applyLeaveBtn =
     leaveViewMode === "my"
       ? `<button id="apply-leave-btn" class="btn btn-primary"><i class="fa-solid fa-plus"></i> APPLY LEAVE</button>`
       : "";
+  const applyForOthersBtn = canApplyForOthers
+    ? `<button id="apply-leave-others-btn" class="btn btn-secondary"><i class="fa-solid fa-user-plus"></i> APPLY FOR OTHERS</button>`
+    : "";
 
   const controls = `
         <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
             ${applyLeaveBtn}
+            ${applyForOthersBtn}
         </div>
     `;
   const loadingContent = `
@@ -872,14 +877,36 @@ window.cancelLeave = async (leaveId, leaveType, startDate) => {
   }, 100);
 };
 
-export const showApplyLeaveModal = () => {
-  console.log("📝 Opening Apply Leave Modal");
+export const showApplyLeaveModal = (options = {}) => {
+  const applyForOthers = Boolean(options?.applyForOthers);
+  console.log("📝 Opening Apply Leave Modal", { applyForOthers });
+
+  if (applyForOthers && !isAdminUser()) {
+    alert("Only admins can apply leave for other employees.");
+    return;
+  }
 
   // Get today's date in YYYY-MM-DD format
   const today = new Date().toISOString().split("T")[0];
+  const employeeSelectionField = applyForOthers
+    ? `
+                    <div class="form-field with-icon">
+                        <label class="form-label" for="leaveEmployeeId">Employee</label>
+                        <div class="input-wrapper">
+                            <i class="fa-solid fa-users"></i>
+                            <select class="input-control" id="leaveEmployeeId" name="leaveEmployeeId" required>
+                                <option value="" selected>Select employee</option>
+                            </select>
+                        </div>
+                    </div>
+      `
+    : "";
 
   const formHTML = `
         <div class="leave-form">
+            <input type="hidden" id="leave-apply-mode" value="${
+              applyForOthers ? "others" : "self"
+            }">
             <div class="form-section">
                 <div class="form-section-header">
                     <div>
@@ -889,6 +916,7 @@ export const showApplyLeaveModal = () => {
                     <p class="form-section-copy">Choose the leave type, payout preference and dates.</p>
                 </div>
                 <div class="form-grid two-col">
+                    ${employeeSelectionField}
                     <div class="form-field with-icon">
                         <label class="form-label" for="leaveType">Leave Type</label>
                         <div class="input-wrapper">
@@ -975,17 +1003,95 @@ export const showApplyLeaveModal = () => {
         </div>
     `;
 
-  renderModal("Apply Leave", formHTML, "submit-leave-btn");
+  renderModal(
+    applyForOthers ? "Apply Leave for Others" : "Apply Leave",
+    formHTML,
+    "submit-leave-btn"
+  );
   console.log("✅ Apply Leave Modal displayed");
 
   // After render, wire up dynamic Paid/Unpaid enablement based on balance
   setTimeout(async () => {
     try {
-      const empId = await resolveCurrentEmployeeId();
+      const selfEmpId = await resolveCurrentEmployeeId();
       const leaveSel = document.getElementById("leaveType");
       const compSel = document.getElementById("compensationType");
       const startInput = document.getElementById("startDate");
       const endInput = document.getElementById("endDate");
+      const employeeSel = document.getElementById("leaveEmployeeId");
+      const submitBtn = document.getElementById("submit-leave-btn");
+
+      const setSubmitDisabled = (disabled) => {
+        if (!submitBtn) return;
+        submitBtn.disabled = Boolean(disabled);
+        submitBtn.style.opacity = disabled ? "0.7" : "";
+        submitBtn.style.cursor = disabled ? "not-allowed" : "";
+      };
+
+      const getTargetEmployeeId = () => {
+        if (!applyForOthers) return selfEmpId;
+        return String(employeeSel?.value || "")
+          .trim()
+          .toUpperCase();
+      };
+
+      const resetBalanceCard = () => {
+        const clEl = document.getElementById("bal-cl");
+        const slEl = document.getElementById("bal-sl");
+        const coEl = document.getElementById("bal-co");
+        const totEl = document.getElementById("bal-total");
+        const actualTotEl = document.getElementById("bal-actual-total");
+        const msgEl = document.getElementById("leave-preview-msg");
+        if (clEl) clEl.textContent = "-";
+        if (slEl) slEl.textContent = "-";
+        if (coEl) coEl.textContent = "-";
+        if (totEl) totEl.textContent = "-";
+        if (actualTotEl) actualTotEl.textContent = "-";
+        if (msgEl) msgEl.textContent = "Select an employee to view leave balances.";
+      };
+
+      if (applyForOthers && employeeSel) {
+        try {
+          const allEmployees = await listEmployees(1, 5000);
+          const options = (allEmployees.items || [])
+            .map((emp) => {
+              const employeeId = String(emp.employee_id || emp.id || "")
+                .trim()
+                .toUpperCase();
+              const employeeName =
+                `${emp.first_name || ""} ${emp.last_name || ""}`.trim() ||
+                emp.name ||
+                employeeId;
+              return {
+                employeeId,
+                employeeName,
+              };
+            })
+            .filter((emp) => emp.employeeId && emp.employeeId !== selfEmpId)
+            .sort((a, b) =>
+              a.employeeName.localeCompare(b.employeeName, undefined, {
+                sensitivity: "base",
+              })
+            );
+
+          options.forEach((emp) => {
+            const option = document.createElement("option");
+            option.value = emp.employeeId;
+            option.textContent = `${emp.employeeName} (${emp.employeeId})`;
+            employeeSel.appendChild(option);
+          });
+        } catch (err) {
+          console.warn("Failed to load employee options for apply-for-others:", err);
+          employeeSel.innerHTML =
+            '<option value="" selected>Unable to load employees</option>';
+        }
+      }
+
+      const initialTargetEmpId = getTargetEmployeeId();
+      setSubmitDisabled(applyForOthers && !initialTargetEmpId);
+      if (applyForOthers && !initialTargetEmpId) {
+        resetBalanceCard();
+      }
 
       const computeRequestedDays = () => {
         const s = startInput.value;
@@ -1018,10 +1124,20 @@ export const showApplyLeaveModal = () => {
           (o) => isCompOffCompensation(o.value)
         );
         const requested = computeRequestedDays();
+        const targetEmpId = getTargetEmployeeId();
+        setSubmitDisabled(applyForOthers && !targetEmpId);
+
+        if (!targetEmpId) {
+          if (paidOption) paidOption.disabled = true;
+          if (compOffOption) compOffOption.disabled = true;
+          compSel.value = "Unpaid";
+          compSel.classList.add("disabled-option");
+          return;
+        }
 
         let compOffAvailable = 0;
         try {
-          compOffAvailable = await fetchLeaveBalance(empId, "Comp Off");
+          compOffAvailable = await fetchLeaveBalance(targetEmpId, "Comp Off");
         } catch {}
         const canUseCompOff = Number(compOffAvailable) >= Number(requested);
         if (compOffOption) {
@@ -1035,7 +1151,7 @@ export const showApplyLeaveModal = () => {
           // Check if user has any balance for the selected leave type
           let available = 0;
           try {
-            available = await fetchLeaveBalance(empId, leaveType);
+            available = await fetchLeaveBalance(targetEmpId, leaveType);
           } catch { }
           const canPay = Number(available) > 0;
           
@@ -1054,7 +1170,7 @@ export const showApplyLeaveModal = () => {
 
         let available = 0;
         try {
-          available = await fetchLeaveBalance(empId, leaveType);
+          available = await fetchLeaveBalance(targetEmpId, leaveType);
         } catch { }
         const canPay = Number(available) >= Number(requested);
         if (paidOption) {
@@ -1069,7 +1185,13 @@ export const showApplyLeaveModal = () => {
       // Load and display live balance + auto-set Paid/Unpaid preview
       const updateBalanceCardAndPreview = async () => {
         try {
-          console.log("🔄 Fetching leave balances for employee:", empId);
+          const targetEmpId = getTargetEmployeeId();
+          if (!targetEmpId) {
+            resetBalanceCard();
+            return;
+          }
+
+          console.log("🔄 Fetching leave balances for employee:", targetEmpId);
 
           let clAvail = 0;
           let slAvail = 0;
@@ -1080,7 +1202,7 @@ export const showApplyLeaveModal = () => {
           // Fetch all leave balances from backend
           const response = await fetch(
             `${API_BASE_URL}/api/leave-balance/all/${encodeURIComponent(
-              empId
+              targetEmpId
             )}`,
             {
               cache: "no-store",
@@ -1206,6 +1328,19 @@ export const showApplyLeaveModal = () => {
           endInput.addEventListener(evt, updateBalanceCardAndPreview);
       });
 
+      if (employeeSel) {
+        employeeSel.addEventListener("change", async () => {
+          const targetEmpId = getTargetEmployeeId();
+          setSubmitDisabled(applyForOthers && !targetEmpId);
+          if (!targetEmpId) {
+            resetBalanceCard();
+            return;
+          }
+          await refreshCompensationOptions();
+          await updateBalanceCardAndPreview();
+        });
+      }
+
       await refreshCompensationOptions();
       await updateBalanceCardAndPreview();
     } catch (err) {
@@ -1241,103 +1376,125 @@ export const handleApplyLeave = async (e) => {
   if (!startDate || !endDate)
     return alert("Please select both start and end dates");
 
-  // Always fetch the employee ID from the employees table using the user's name
+  const applyMode = String(
+    document.getElementById("leave-apply-mode")?.value || "self"
+  )
+    .trim()
+    .toLowerCase();
+  const applyingForOthers = applyMode === "others";
+
+  // Resolve target employee ID
   let appliedBy = null;
-  const userName = state.user?.name;
+  if (applyingForOthers) {
+    if (!isAdminUser()) {
+      return alert("Only admins can apply leave for other employees.");
+    }
+    const selectedEmployeeId = String(
+      document.getElementById("leaveEmployeeId")?.value || ""
+    )
+      .trim()
+      .toUpperCase();
+    if (!selectedEmployeeId) {
+      return alert("Please select an employee.");
+    }
+    appliedBy = selectedEmployeeId;
+  } else {
+    const userName = state.user?.name;
 
-  if (!userName) {
-    return alert("Error: User name not found. Please log in again.");
-  }
-
-  console.log("🔍 Fetching employee ID for name:", userName);
-
-  try {
-    const allEmployees = await listEmployees(1, 5000);
-    console.log("Total employees fetched:", allEmployees.items?.length || 0);
-
-    // First, try to find an exact match
-    let match = (allEmployees.items || []).find((e) => {
-      const empFullName = `${e.first_name || ""} ${e.last_name || ""} `
-        .trim()
-        .toLowerCase();
-      const searchName = userName.toLowerCase().trim();
-      return empFullName === searchName;
-    });
-
-    // If no exact match, try to find a match with "karthick" vs "karthik" specifically
-    if (!match && userName.toLowerCase().includes("karthik")) {
-      match = (allEmployees.items || []).find((e) => {
-        const empFullName = `${e.first_name || ""} ${e.last_name || ""} `
-          .trim()
-          .toLowerCase();
-        return empFullName.includes("karthick");
-      });
-      if (match) {
-        console.log("✅ Found match using special case for Karthik/Karthick");
-      }
+    if (!userName) {
+      return alert("Error: User name not found. Please log in again.");
     }
 
-    // If still no match, try more flexible matching
-    if (!match) {
-      match = (allEmployees.items || []).find((e) => {
+    console.log("🔍 Fetching employee ID for name:", userName);
+
+    try {
+      const allEmployees = await listEmployees(1, 5000);
+      console.log("Total employees fetched:", allEmployees.items?.length || 0);
+
+      // First, try to find an exact match
+      let match = (allEmployees.items || []).find((e) => {
         const empFullName = `${e.first_name || ""} ${e.last_name || ""} `
           .trim()
           .toLowerCase();
         const searchName = userName.toLowerCase().trim();
-
-        // Remove all non-alphanumeric characters for comparison
-        const normalizedEmpName = empFullName.replace(/[^a-z0-9]/g, "");
-        const normalizedSearchName = searchName.replace(/[^a-z0-9]/g, "");
-
-        // Check if names are similar enough (first name matches)
-        const empFirstName = (e.first_name || "").toLowerCase().trim();
-        const searchFirstName = searchName.split(" ")[0];
-
-        const nameMatches =
-          // Check if normalized names match
-          normalizedEmpName === normalizedSearchName ||
-          // Check if one contains the other
-          normalizedEmpName.includes(normalizedSearchName) ||
-          normalizedSearchName.includes(normalizedEmpName) ||
-          // Check if first names are similar (allowing for spelling variations)
-          empFirstName.replace("ck", "k") === searchFirstName ||
-          searchFirstName.replace("ck", "k") === empFirstName;
-
-        console.log(`Comparing: "${empFullName}" with "${searchName}"`, {
-          nameMatches,
-        });
-
-        return nameMatches;
+        return empFullName === searchName;
       });
-    }
 
-    if (match && match.employee_id) {
-      appliedBy = match.employee_id.trim().toUpperCase();
-      // Update state with correct employee ID
-      state.user.id = appliedBy;
-      try {
-        localStorage.setItem(
-          "auth",
-          JSON.stringify({ authenticated: true, user: state.user })
+      // If no exact match, try to find a match with "karthick" vs "karthik" specifically
+      if (!match && userName.toLowerCase().includes("karthik")) {
+        match = (allEmployees.items || []).find((e) => {
+          const empFullName = `${e.first_name || ""} ${e.last_name || ""} `
+            .trim()
+            .toLowerCase();
+          return empFullName.includes("karthick");
+        });
+        if (match) {
+          console.log("✅ Found match using special case for Karthik/Karthick");
+        }
+      }
+
+      // If still no match, try more flexible matching
+      if (!match) {
+        match = (allEmployees.items || []).find((e) => {
+          const empFullName = `${e.first_name || ""} ${e.last_name || ""} `
+            .trim()
+            .toLowerCase();
+          const searchName = userName.toLowerCase().trim();
+
+          // Remove all non-alphanumeric characters for comparison
+          const normalizedEmpName = empFullName.replace(/[^a-z0-9]/g, "");
+          const normalizedSearchName = searchName.replace(/[^a-z0-9]/g, "");
+
+          // Check if names are similar enough (first name matches)
+          const empFirstName = (e.first_name || "").toLowerCase().trim();
+          const searchFirstName = searchName.split(" ")[0];
+
+          const nameMatches =
+            // Check if normalized names match
+            normalizedEmpName === normalizedSearchName ||
+            // Check if one contains the other
+            normalizedEmpName.includes(normalizedSearchName) ||
+            normalizedSearchName.includes(normalizedEmpName) ||
+            // Check if first names are similar (allowing for spelling variations)
+            empFirstName.replace("ck", "k") === searchFirstName ||
+            searchFirstName.replace("ck", "k") === empFirstName;
+
+          console.log(`Comparing: "${empFullName}" with "${searchName}"`, {
+            nameMatches,
+          });
+
+          return nameMatches;
+        });
+      }
+
+      if (match && match.employee_id) {
+        appliedBy = match.employee_id.trim().toUpperCase();
+        // Update state with correct employee ID
+        state.user.id = appliedBy;
+        try {
+          localStorage.setItem(
+            "auth",
+            JSON.stringify({ authenticated: true, user: state.user })
+          );
+        } catch { }
+        console.log(`✅ Found employee ID: ${appliedBy} `);
+      } else {
+        console.error("❌ No employee record found for name:", userName);
+        console.log(
+          "Available employees:",
+          allEmployees.items?.map((e) => ({
+            id: e.employee_id,
+            name: `${e.first_name || ""} ${e.last_name || ""} `.trim(),
+          }))
         );
-      } catch { }
-      console.log(`✅ Found employee ID: ${appliedBy} `);
-    } else {
-      console.error("❌ No employee record found for name:", userName);
-      console.log(
-        "Available employees:",
-        allEmployees.items?.map((e) => ({
-          id: e.employee_id,
-          name: `${e.first_name || ""} ${e.last_name || ""} `.trim(),
-        }))
-      );
-      return alert(
-        "Error: Could not find your employee record. Please contact administrator."
-      );
+        return alert(
+          "Error: Could not find your employee record. Please contact administrator."
+        );
+      }
+    } catch (err) {
+      console.error("❌ Failed to fetch employee data:", err);
+      return alert("Error: Failed to verify employee information.");
     }
-  } catch (err) {
-    console.error("❌ Failed to fetch employee data:", err);
-    return alert("Error: Failed to verify employee information.");
   }
 
   const leavePayload = {

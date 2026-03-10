@@ -911,7 +911,12 @@ const init = async () => {
       return;
     }
     if (target.closest("#add-employee-btn")) showAddEmployeeModal();
-    if (target.id === "apply-leave-btn") showApplyLeaveModal();
+    if (target.id === "apply-leave-btn" || target.closest("#apply-leave-btn")) {
+      showApplyLeaveModal();
+    }
+    if (target.id === "apply-leave-others-btn" || target.closest("#apply-leave-others-btn")) {
+      showApplyLeaveModal({ applyForOthers: true });
+    }
     if (target.id === "request-compoff-btn") showRequestCompOffModal();
     // Edit Comp Off Balance
     const editCompOffBalanceBtn = target.closest(".edit-compoff-balance-btn");
