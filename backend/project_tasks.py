@@ -159,6 +159,7 @@ def add_task(project_code):
             "crc6f_taskid": generated_id,
             "crc6f_taskname": body.get("task_name"),
             "crc6f_taskdescription": body.get("task_description"),
+            "crc6f_tasktype": body.get("task_type"),
             "crc6f_taskpriority": body.get("task_priority"),
             "crc6f_taskstatus": body.get("task_status", "New"),
             "crc6f_assignedto": body.get("assigned_to"),
