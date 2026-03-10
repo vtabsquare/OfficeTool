@@ -3384,6 +3384,12 @@ function taskCardHtml(t, index, projectId) {
   const taskTitle = escapeHtml(t.task_name || "Untitled Task");
   const taskNumber = index + 1;
   const dueDate = t.due_date ? new Date(t.due_date) : null;
+  const taskId = String(t.task_id || "").trim().toUpperCase();
+  const taskType = String(t.task_type || t.type || "").trim().toLowerCase();
+  const isBug = taskType === "bug" || taskId.startsWith("BUG");
+  const workItemIcon = isBug
+    ? '<i class="fa-solid fa-bug" title="Bug" style="color:#dc2626; margin-right:6px;"></i>'
+    : "";
 
   // 🔹 Assignee initials (max 2)
   const assignedPeople = (t.assigned_to || "")
@@ -3420,7 +3426,7 @@ function taskCardHtml(t, index, projectId) {
   return `
     <div class="kan-card modern" draggable="true" data-id="${t.guid}" style="background:#ffffff !important; border-radius:8px; margin-bottom:8px; box-shadow:0 1px 3px rgba(0,0,0,0.1); border:1px solid rgba(0,0,0,0.1); position:relative;">
       <div class="card-top" style="padding:12px; display:flex; justify-content:space-between; align-items:flex-start; gap:8px;">
-        <span class="card-title" style="color:#1f2937 !important; font-size:14px; line-height:1.4;"><strong>${taskNumber ? taskNumber + ". " : ""}${taskTitle}</strong></span>
+        <span class="card-title" style="color:#1f2937 !important; font-size:14px; line-height:1.4;"><strong>${workItemIcon}${taskNumber ? taskNumber + ". " : ""}${taskTitle}</strong></span>
         ${
           canManage
             ? `<button class="task-del-btn" title="Delete task" onclick="handleCardDelete(event, '${t.guid}', '${projectId}')" style="background:transparent; border:none; color:#9ca3af; cursor:pointer; padding:2px;">
@@ -3694,7 +3700,7 @@ async function moveTask(projectId, taskId, newCol) {
 // ==========================
 // Add New Task Modal
 // ==========================
-function showTaskModal(projectId, defaultStatus = "New") {
+function showTaskModal(projectId, defaultStatus = "New", workItemType = "Task") {
   if (!getProjectAccess().canManageTasks) {
     alert("You don't have permission to create project tasks.");
     return;
@@ -3705,7 +3711,7 @@ function showTaskModal(projectId, defaultStatus = "New") {
   const boardName = params.get("boardName") || boardParam;
 
   // ✅ Redirect to full page form instead of modal
-  renderTaskFormPage(projectId, boardParam, defaultStatus);
+  renderTaskFormPage(projectId, boardParam, defaultStatus, workItemType);
 }
 // this fun for multi select for assigned to
 function initMultiSelect(elementId, items) {
@@ -3781,13 +3787,14 @@ function initMultiSelect(elementId, items) {
   };
 }
 
-function renderTaskFormPage(projectId, boardName, defaultStatus = "New") {
+function renderTaskFormPage(projectId, boardName, defaultStatus = "New", workItemType = "Task") {
   // Resolve board identifier safely from URL or fallback to provided name/General
   const params = new URLSearchParams(window.location.hash.split("?")[1] || "");
   const boardParamRaw = params.get("board") || boardName || "General";
   const boardNameRaw = params.get("boardName") || boardName || boardParamRaw;
   const boardParam = decodeURIComponent(boardParamRaw);
   const resolvedBoardName = decodeURIComponent(boardNameRaw);
+  const normalizedWorkItemType = String(workItemType || "Task").trim().toLowerCase() === "bug" ? "Bug" : "Task";
   const app = document.getElementById("app-content");
 
   app.innerHTML = `
@@ -3953,6 +3960,7 @@ function renderTaskFormPage(projectId, boardName, defaultStatus = "New") {
     const payload = {
       task_name: document.getElementById("tk-name").value.trim(),
       task_description: document.getElementById("tk-desc").value.trim(),
+      task_type: normalizedWorkItemType,
       task_priority: document.getElementById("tk-priority").value,
       task_status: defaultStatus,
       assigned_to: assignedTo, // ✅ FIXED

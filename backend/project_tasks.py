@@ -33,34 +33,34 @@ def headers():
 # ======================
 # Auto-generate Task ID
 # ======================
-def generate_task_id():
-    """Generate next Task ID (TASK001, TASK002, etc.)"""
+def generate_task_id(task_type="Task"):
+    """Generate next work-item ID (TASK001 / BUG001, etc.)."""
+    prefix = "BUG" if str(task_type or "Task").strip().lower() == "bug" else "TASK"
     try:
         token = get_access_token()
         hdrs = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+        filter_prefix = prefix.replace("'", "''")
         url = (
             f"{DATAVERSE_BASE}{DATAVERSE_API}/{ENTITY_SET_TASKS}"
-            "?$select=crc6f_taskid&$orderby=createdon desc&$top=1"
+            f"?$select=crc6f_taskid&$filter=startswith(crc6f_taskid,'{filter_prefix}')"
+            "&$orderby=createdon desc&$top=1"
         )
         res = requests.get(url, headers=hdrs, timeout=20)
-        last_id = None
+        next_num = 1
         if res.ok:
             data = res.json().get("value", [])
-            if data and data[0].get("crc6f_taskid"):
-                last_id = data[0]["crc6f_taskid"]
+            if data:
+                current_id = str(data[0].get("crc6f_taskid") or "").strip().upper()
+                match = re.match(rf"^{prefix}(\d+)$", current_id)
+                if match:
+                    next_num = int(match.group(1)) + 1
 
-        if last_id:
-            match = re.search(r"TASK(\d+)", last_id)
-            next_num = int(match.group(1)) + 1 if match else 1
-        else:
-            next_num = 1
-
-        new_id = f"TASK{next_num:03d}"
-        print(f"[generate_task_id] Last: {last_id}, New: {new_id}")
+        new_id = f"{prefix}{next_num:03d}"
+        print(f"[generate_task_id] Prefix: {prefix}, New: {new_id}")
         return new_id
     except Exception as e:
         print(f"⚠️ Error generating task id: {e}")
-        return "TASK001"
+        return f"{prefix}001"
 
 
 # ======================
@@ -123,9 +123,12 @@ def add_task(project_code):
         token = get_access_token()
         hdrs = headers()
 
+        task_type = str(body.get("task_type") or "Task").strip().lower()
+        task_prefix = "BUG" if task_type == "bug" else "TASK"
+
         # ✅ Generate and verify unique Task ID (retry if collision)
         generated_id = None
-        candidate_id = generate_task_id()
+        candidate_id = generate_task_id(task_type)
         attempt = 0
         MAX_ATTEMPTS = 10
 
@@ -140,9 +143,9 @@ def add_task(project_code):
                     break
 
             # Collision detected; increment numeric suffix and retry
-            match = re.search(r"TASK(\d+)", candidate_id)
+            match = re.search(rf"{task_prefix}(\d+)", candidate_id)
             next_num = int(match.group(1)) + 1 if match else attempt + 1
-            candidate_id = f"TASK{next_num:03d}"
+            candidate_id = f"{task_prefix}{next_num:03d}"
             attempt += 1
 
         if not generated_id:

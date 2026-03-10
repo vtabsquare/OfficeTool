@@ -932,10 +932,16 @@ export const renderMyTasksPage = async () => {
             const disabledAttr = shouldEnable ? '' : 'disabled';
             const disabledClass = shouldEnable ? '' : 'disabled';
             const buttonTitle = shouldEnable ? toggleTitle : 'Please check in first to start task timer';
+            const taskIdNormalized = String(t.task_id || '').trim().toUpperCase();
+            const taskTypeNormalized = String(t.task_type || t.type || '').trim().toLowerCase();
+            const isBugTask = taskTypeNormalized === 'bug' || taskIdNormalized.startsWith('BUG');
+            const workItemIcon = isBugTask
+                ? '<i class="fa-solid fa-bug" title="Bug" style="color:#dc2626;"></i>'
+                : '<i class="fa-regular fa-calendar"></i>';
 
             const taskLabel = `
               <div style="display:flex; align-items:center; gap:10px;">
-                <i class="fa-regular fa-calendar"></i>
+                ${workItemIcon}
                 <div>
                   ${canNavigate
                     ? `<button type="button"
