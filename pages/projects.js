@@ -3823,6 +3823,14 @@ function renderTaskFormPage(projectId, boardName, defaultStatus = "New", workIte
               <textarea class="input-control" id="tk-desc" rows="3" placeholder="Task description"></textarea>
             </div>
 
+            <div class="form-field">
+              <label class="form-label" for="tk-workitemtype">Work Item Type</label>
+              <select class="input-control" id="tk-workitemtype">
+                <option value="Task" ${normalizedWorkItemType === "Task" ? "selected" : ""}>Task</option>
+                <option value="Bug" ${normalizedWorkItemType === "Bug" ? "selected" : ""}>Bug</option>
+              </select>
+            </div>
+
             <div class="form-field" style="grid-column:1 / -1;">
               <label class="form-label" for="assignedTo">Assigned To</label>
               <div class="multi-select" id="assignedTo">
@@ -3956,11 +3964,14 @@ function renderTaskFormPage(projectId, boardName, defaultStatus = "New", workIte
 
     const boardIdValue = boardParam;
     const boardNameValue = resolvedBoardName || boardParam;
+    
+    // Read selected work item type from dropdown
+    const selectedWorkItemType = document.getElementById("tk-workitemtype").value;
 
     const payload = {
       task_name: document.getElementById("tk-name").value.trim(),
       task_description: document.getElementById("tk-desc").value.trim(),
-      task_type: normalizedWorkItemType,
+      task_type: selectedWorkItemType,
       task_priority: document.getElementById("tk-priority").value,
       task_status: defaultStatus,
       assigned_to: assignedTo, // ✅ FIXED
