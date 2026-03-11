@@ -22,7 +22,7 @@ import { state } from './state.js';
 import { listEmployees, listAllEmployees } from './features/employeeApi.js';
 import { showAssetModal, handleSaveAsset, showDeleteConfirmModal, handleDeleteAsset, handleDeleteAsset as handleAssetDelete } from "./pages/assets.js";
 import { renderAssetsPage, fetchAssets } from './pages/assets.js'; // adjust path
-import { handleInboxRejectLeave, handleAttendanceRejectReport, handleCompOffReject, handleTimesheetReject } from './pages/shared.js';
+import { handleInboxRejectLeave, handleInboxApproveLeave, handleCompOffReject, handleTimesheetReject } from './pages/shared.js';
 import { updateNotificationBadge, handleNotificationBellClick, startNotificationPolling } from './features/notificationApi.js';
 import { connectSocket } from './src/socket.js';
 import { initAiAssistant } from './components/AiAssistant.js';
@@ -1075,8 +1075,6 @@ const init = async () => {
         handleInboxApproveLeave(e);
       } else if (form.querySelector("#inbox-submit-reject-btn")) {
         handleInboxRejectLeave(e);
-      } else if (form.querySelector("#attendance-submit-reject-btn")) {
-        handleAttendanceRejectReport(e);
       } else if (form.querySelector("#compoff-submit-reject-btn")) {
         handleCompOffReject(e);
       } else if (form.querySelector("#timesheet-submit-reject-btn")) {
