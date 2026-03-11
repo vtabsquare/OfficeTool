@@ -165,7 +165,7 @@ def get_employee_leaves(employee_id):
         
         # Build OData query to filter by employee ID
         filter_query = f"$filter=crc6f_employeeid eq '{employee_id}'"
-        select_query = "$select=crc6f_leaveid,crc6f_leavetype,crc6f_startdate,crc6f_enddate,crc6f_paidunpaid,crc6f_status,crc6f_totaldays,crc6f_employeeid,crc6f_approvedby"
+        select_query = "$select=crc6f_leaveid,crc6f_leavetype,crc6f_startdate,crc6f_enddate,crc6f_paidunpaid,crc6f_status,crc6f_totaldays,crc6f_employeeid,crc6f_approvedby,crc6f_approvalcomments"
         
         url = f"{os.getenv('RESOURCE')}/api/data/v9.2/{entity_name}?{filter_query}&{select_query}"
         
@@ -195,7 +195,8 @@ def get_employee_leaves(employee_id):
                     "status": leave.get("crc6f_status", "Pending"),
                     "total_days": leave.get("crc6f_totaldays", "0"),
                     "employee_id": leave.get("crc6f_employeeid", ""),
-                    "approved_by": leave.get("crc6f_approvedby", "")
+                    "approved_by": leave.get("crc6f_approvedby", ""),
+                    "approval_comments": leave.get("crc6f_approvalcomments", "")
                 })
             
             print(f"   ✅ Successfully fetched {len(transformed_leaves)} leave records")

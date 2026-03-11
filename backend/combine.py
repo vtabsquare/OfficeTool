@@ -1045,6 +1045,7 @@ def get_employee_leaves(employee_id):
                 "paid_unpaid": r.get("crc6f_paidunpaid"),
                 "status": r.get("crc6f_status"),
                 "approved_by": r.get("crc6f_approvedby"),
+                "approval_comments": r.get("crc6f_approvalcomments"),
                 "employee_id": r.get("crc6f_employeeid")
             })
         
