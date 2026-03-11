@@ -1071,6 +1071,8 @@ const init = async () => {
         handleApplyLeave(e);
       } else if (form.querySelector("#update-leave-btn")) {
         handleEditLeave(e);
+      } else if (form.querySelector("#inbox-submit-approve-btn")) {
+        handleInboxApproveLeave(e);
       } else if (form.querySelector("#inbox-submit-reject-btn")) {
         handleInboxRejectLeave(e);
       } else if (form.querySelector("#attendance-submit-reject-btn")) {

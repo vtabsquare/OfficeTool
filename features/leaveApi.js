@@ -157,15 +157,22 @@ export async function fetchPendingLeaves() {
   }
 }
 
-export async function approveLeave(leaveId, approvedBy) {
+export async function approveLeave(leaveId, approvedBy, comments = '') {
   try {
     console.log(`✅ Approving leave: ${leaveId} by ${approvedBy}`);
+    if (comments) {
+      console.log(`💬 Approval comments: ${comments.substring(0, 100)}${comments.length > 100 ? '...' : ''}`);
+    }
+    
     const res = await fetch(`${BASE_URL}/api/leaves/approve/${encodeURIComponent(leaveId)}`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({ approved_by: approvedBy })
+      body: JSON.stringify({ 
+        approved_by: approvedBy,
+        comments: comments 
+      })
     });
     
     const data = await res.json();

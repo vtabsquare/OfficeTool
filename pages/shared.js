@@ -5031,6 +5031,35 @@ const buildRejectReasonForm = ({
     <input type="hidden" id="${hiddenId}" value="${hiddenValue}">
 `;
 
+const buildApprovalCommentsForm = ({
+    eyebrow,
+    textareaId,
+    hiddenId,
+    hiddenValue,
+    helperText = 'This comment is optional and will be shared with the employee.',
+    maxChars = 2000
+}) => `
+    <div class="leave-form">
+        <div class="form-section">
+            <div class="form-section-header">
+                <div>
+                    <p class="form-eyebrow">${eyebrow}</p>
+                    <h3>Approval comments</h3>
+                </div>
+                <p class="form-section-copy">${helperText}</p>
+            </div>
+            <div class="form-field">
+                <div class="field-header">
+                    <label class="form-label" for="${textareaId}">Comments (Optional)</label>
+                    <span class="field-hint" id="${textareaId}-counter">0 / ${maxChars} characters</span>
+                </div>
+                <textarea class="input-control" id="${textareaId}" name="approvalComments" rows="4" maxlength="${maxChars}" placeholder="Add any comments for the approval..."></textarea>
+            </div>
+        </div>
+    </div>
+    <input type="hidden" id="${hiddenId}" value="${hiddenValue}">
+`;
+
 const showCompOffRejectModal = (requestId) => {
     const formHTML = buildRejectReasonForm({
         eyebrow: 'Comp off review',
@@ -5039,106 +5068,6 @@ const showCompOffRejectModal = (requestId) => {
         hiddenValue: requestId
     });
     renderModal('Reject Comp Off Request', formHTML, 'compoff-submit-reject-btn', 'normal', 'Reject');
-};
-
-export const handleCompOffReject = async (e) => {
-    e.preventDefault();
-    const requestId = document.getElementById('compoffRejectId').value;
-    const reason = document.getElementById('compoffRejectionReason')?.value || '';
-
-    if (!requestId) { alert('Error: Request ID not found'); return; }
-    try {
-        const allRequests = await fetchCompOffRequests();
-        const req = allRequests.find(r => String(r.id) === String(requestId));
-        const adminId = await resolveCurrentEmployeeId();
-
-        await rejectCompOffRequest(requestId, adminId || state.user?.id || 'EMP001', reason);
-
-        if (req?.employeeId) {
-            try { await notifyEmployeeCompOffRejected(req.id || requestId, req.employeeId, reason); } catch { }
-        }
-        closeModal();
-        alert('✅ Comp Off rejected');
-        await loadInboxCompOff();
-        await updateNotificationBadge();
-    } catch (err) {
-        console.error('❌ Error rejecting comp off:', err);
-        alert('❌ Failed to reject comp off');
-    }
-};
-
-const showTimesheetRejectModal = (entryId) => {
-    const formHTML = buildRejectReasonForm({
-        eyebrow: 'Timesheet review',
-        textareaId: 'timesheetRejectionReason',
-        hiddenId: 'timesheetRejectId',
-        hiddenValue: entryId
-    });
-    renderModal('Reject Timesheet Entry', formHTML, 'timesheet-submit-reject-btn', 'normal', 'Reject');
-};
-
-const handleTimesheetApprove = async (entryId) => {
-    if (!entryId) return;
-    if (!confirm('Approve this timesheet entry?')) return;
-
-    try {
-        const adminId = await resolveCurrentEmployeeId();
-        const resp = await fetch(
-            `${apiBase}/api/time-tracker/timesheet/${encodeURIComponent(entryId)}/approve`,
-            {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ decided_by: adminId }),
-            }
-        );
-        const data = await resp.json().catch(() => ({}));
-
-        if (!resp.ok || !data.success) {
-            throw new Error(data.error || resp.status);
-        }
-
-        alert('✅ Timesheet entry approved successfully!');
-        await loadInboxTimesheets();
-    } catch (err) {
-        console.error('❌ Error approving timesheet entry:', err);
-        alert(`❌ Failed to approve timesheet entry: ${err.message || err}`);
-    }
-};
-
-export const handleTimesheetReject = async (e) => {
-    e.preventDefault();
-
-    const entryId = document.getElementById('timesheetRejectId')?.value;
-    const reason = document.getElementById('timesheetRejectionReason')?.value || '';
-
-    if (!entryId) {
-        alert('Error: Timesheet entry ID not found');
-        return;
-    }
-
-    try {
-        const adminId = await resolveCurrentEmployeeId();
-        const resp = await fetch(
-            `${apiBase}/api/time-tracker/timesheet/${encodeURIComponent(entryId)}/reject`,
-            {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ decided_by: adminId, comment: reason }),
-            }
-        );
-        const data = await resp.json().catch(() => ({}));
-
-        if (!resp.ok || !data.success) {
-            throw new Error(data.error || resp.status);
-        }
-
-        closeModal();
-        alert('✅ Timesheet entry rejected successfully!');
-        await loadInboxTimesheets();
-    } catch (err) {
-        console.error('❌ Error rejecting timesheet entry:', err);
-        alert(`❌ Failed to reject timesheet entry: ${err.message || err}`);
-    }
 };
 
 const showInboxRejectModal = (leaveId) => {
@@ -5150,6 +5079,30 @@ const showInboxRejectModal = (leaveId) => {
     });
 
     renderModal('Reject Leave Request', formHTML, 'inbox-submit-reject-btn', 'normal', 'Reject');
+};
+
+const showInboxApproveModal = (leaveId) => {
+    const formHTML = buildApprovalCommentsForm({
+        eyebrow: 'Leave review',
+        textareaId: 'inboxApprovalComments',
+        hiddenId: 'inboxApproveLeaveId',
+        hiddenValue: leaveId,
+        maxChars: 2000
+    });
+
+    renderModal('Approve Leave Request', formHTML, 'inbox-submit-approve-btn', 'normal', 'Approve');
+    
+    // Add character counter
+    setTimeout(() => {
+        const textarea = document.getElementById('inboxApprovalComments');
+        const counter = document.getElementById('inboxApprovalComments-counter');
+        if (textarea && counter) {
+            textarea.addEventListener('input', () => {
+                const length = textarea.value.length;
+                counter.textContent = `${length} / 2000 characters`;
+            });
+        }
+    }, 100);
 };
 
 export const handleInboxRejectLeave = async (e) => {
@@ -5199,213 +5152,18 @@ export const handleInboxRejectLeave = async (e) => {
     }
 };
 
-const showAttendanceRejectModal = (markerId) => {
-    const formHTML = buildRejectReasonForm({
-        eyebrow: 'Attendance review',
-        textareaId: 'attendanceRejectionReason',
-        hiddenId: 'rejectReportId',
-        hiddenValue: markerId,
-        helperText: 'This comment is shared with the submitter.'
-    });
-
-    renderModal('Reject Attendance Report', formHTML, 'attendance-submit-reject-btn', 'normal', 'Reject');
+const handleInboxApprove = async (leaveId) => {
+    showInboxApproveModal(leaveId);
 };
 
-export const handleAttendanceRejectReport = async (e) => {
+export const handleInboxApproveLeave = async (e) => {
     e.preventDefault();
 
-    const reportId = document.getElementById('rejectReportId').value;
-    const reason = document.getElementById('attendanceRejectionReason')?.value || '';
+    const leaveId = document.getElementById('inboxApproveLeaveId').value;
+    const comments = document.getElementById('inboxApprovalComments')?.value || '';
 
-    if (!reportId) {
-        alert('Error: Report ID not found');
-        return;
-    }
-
-    try {
-        const response = await fetch(`${apiBase}/api/attendance/submissions/${reportId}/reject`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ reason })
-        });
-
-        const data = await response.json();
-
-        if (!data.success) {
-            throw new Error(data.error || 'Failed to reject attendance report');
-        }
-
-        closeModal();
-        alert(`✅ Attendance report rejected successfully!`);
-        await loadInboxAttendance();
-    } catch (err) {
-        console.error('❌ Error rejecting attendance report:', err);
-        alert(`❌ Failed to reject attendance report: ${err.message}`);
-    }
-};
-
-const loadInboxAttendance = async () => {
-    const isAdmin = isAdminUser();
-    const canViewTeamQueues = isManagerOrAdmin();
-    const listContainer = document.querySelector('.inbox-list');
-
-    if (!listContainer) return;
-
-    listContainer.innerHTML = `
-        <div class="placeholder-text">
-            <i class="fa-solid fa-spinner fa-spin fa-3x" style="color:#ddd; margin-bottom: 1rem;"></i>
-            <p>Loading attendance reports...</p>
-        </div>
-    `;
-
-    try {
-        // Build query for submissions based on current tab
-        let qs = '';
-        if (currentInboxTab === 'awaiting' && canViewTeamQueues) {
-            qs = '?status=pending';
-        } else if (currentInboxTab === 'completed') {
-            // Completed = approved or rejected. We'll fetch all and client-filter.
-            qs = '';
-        }
-        const response = await fetch(`${apiBase}/api/attendance/submissions${qs}`);
-        const data = await response.json();
-
-        if (!data.success) {
-            throw new Error(data.error || 'Failed to fetch attendance submissions');
-        }
-
-        // Fetch all employees to map IDs to names
-        const allEmployees = await listEmployees(1, 5000);
-        const employeeMap = {};
-        (allEmployees.items || []).forEach(emp => {
-            if (emp.employee_id) {
-                employeeMap[emp.employee_id.toUpperCase()] = `${emp.first_name || ''} ${emp.last_name || ''}`.trim();
-            }
-        });
-
-        // Data format: [{ marker_id, employee_id, year, month, status, rejection_reason, created_date }]
-        let attendanceReports = data.items || [];
-        // Client-side filter for requests/completed when not admin
-        if (!isAdmin) {
-            const empId = await resolveCurrentEmployeeId();
-            if (currentInboxTab === 'requests') {
-                attendanceReports = attendanceReports.filter(r => r.employee_id === empId && r.status === 'pending');
-            } else if (currentInboxTab === 'completed') {
-                attendanceReports = attendanceReports.filter(r => r.employee_id === empId && (r.status === 'approved' || r.status === 'rejected'));
-            }
-        } else if (currentInboxTab === 'completed') {
-            attendanceReports = attendanceReports.filter(r => r.status === 'approved' || r.status === 'rejected');
-        }
-
-        // Sort by created_date descending (latest first)
-        attendanceReports.sort((a, b) => {
-            const dateA = new Date(a.created_date || a.submitted_at || '1900-01-01');
-            const dateB = new Date(b.created_date || b.submitted_at || '1900-01-01');
-            return dateB - dateA;
-        });
-        console.log(`📋 Loaded ${attendanceReports.length} attendance reports for ${currentInboxTab} tab (sorted by latest)`);
-
-        if (attendanceReports.length === 0) {
-            listContainer.innerHTML = `
-                <div class="placeholder-text">
-                    <i class="fa-solid fa-envelope-open fa-3x" style="color:#ddd; margin-bottom: 1rem;"></i>
-                    <p>No attendance reports found.</p>
-                </div>
-            `;
-            return;
-        }
-
-        // Render attendance report cards
-        const reportCards = attendanceReports.map(report => {
-            const employeeId = report.employee_id;
-            const employeeName = employeeMap[employeeId?.toUpperCase()] || employeeId;
-            const status = (report.status || 'Pending');
-            const statusClass = status.toLowerCase();
-            const showActions = currentInboxTab === 'awaiting' && isAdmin;
-            const isRejected = status.toLowerCase() === 'rejected';
-            const rejectionReason = report.rejection_reason || '';
-            const year = report.year;
-            const month = report.month;
-            const monthName = month ? new Date(year, month - 1).toLocaleString('default', { month: 'long' }) : 'Unknown';
-
-            return `
-                <div class="inbox-item">
-                    <div class="inbox-item-header">
-                        <div>
-                            <h4 style="font-size: 1.25rem; margin-bottom: 4px;">${employeeName}</h4>
-                            <span class="inbox-item-meta" style="font-size: 0.875rem; color: #666;">Attendance Report • ${employeeId}</span>
-                        </div>
-                        <span class="status-badge ${statusClass}">${status}</span>
-                    </div>
-                    <div class="inbox-item-body">
-                        <p><strong>Period:</strong> ${monthName} ${year}</p>
-                        <p><strong>Submitted:</strong> ${report.created_date || ''}</p>
-                        <p><strong>Marker:</strong> ${report.marker_id}</p>
-                        <div style="margin-top: 8px;">
-                            <p style="margin: 4px 0;"><strong>No. of days checked in:</strong> ${report.days_checked_in ?? '—'}</p>
-                            <p style="margin: 4px 0;"><strong>Halfdays:</strong> ${report.halfdays ?? '—'}</p>
-                            <div style="margin: 4px 0;">
-                                <strong>Leave types:</strong>
-                                ${Array.isArray(report.leave_types) && report.leave_types.length > 0 ? `
-                                    <ul style="margin: 6px 0 0 16px;">
-                                        ${report.leave_types.map(function (l) { return '<li>' + l.type + ': ' + l.days + '</li>'; }).join('')}
-                                    </ul>
-                                ` : `<span> None</span>`}
-                            </div>
-                        </div>
-                        ${isRejected && rejectionReason ? `
-                            <div class="rejection-reason-box" style="background: #fff3cd; border-left: 4px solid #ffc107; padding: 12px; margin-top: 12px; border-radius: 4px;">
-                                <strong style="color: #856404;"><i class="fa-solid fa-info-circle"></i> Rejection Reason:</strong>
-                                <p style="margin: 8px 0 0 0; color: #856404;">${rejectionReason}</p>
-                            </div>
-                        ` : ''}
-                    </div>
-                    ${showActions ? `
-                        <div class="inbox-item-actions">
-                            <button class="btn btn-success btn-sm attendance-approve-btn" data-marker-id="${report.marker_id}">
-                                <i class="fa-solid fa-check"></i> Approve
-                            </button>
-                            <button class="btn btn-danger btn-sm attendance-reject-btn" data-marker-id="${report.marker_id}">
-                                <i class="fa-solid fa-times"></i> Reject
-                            </button>
-                        </div>
-                    ` : ''}
-                </div>
-            `;
-        }).join('');
-
-        listContainer.innerHTML = reportCards;
-
-        // Add event listeners for approve/reject buttons
-        if (currentInboxTab === 'awaiting' && isAdmin) {
-            document.querySelectorAll('.attendance-approve-btn').forEach(btn => {
-                btn.addEventListener('click', async (e) => {
-                    const markerId = e.currentTarget.getAttribute('data-marker-id');
-                    await handleAttendanceApprove(markerId);
-                });
-            });
-
-            document.querySelectorAll('.attendance-reject-btn').forEach(btn => {
-                btn.addEventListener('click', async (e) => {
-                    const markerId = e.currentTarget.getAttribute('data-marker-id');
-                    showAttendanceRejectModal(markerId);
-                });
-            });
-        }
-
-    } catch (err) {
-        console.error('❌ Error loading attendance reports:', err);
-        listContainer.innerHTML = `
-            <div class="placeholder-text">
-                <i class="fa-solid fa-exclamation-triangle fa-3x" style="color:#e74c3c; margin-bottom: 1rem;"></i>
-                <p>Error loading attendance reports.</p>
-            </div>
-        `;
-    }
-};
-
-const handleInboxApprove = async (leaveId) => {
-    if (!confirm(`Are you sure you want to APPROVE leave request ${leaveId}?`)) {
+    if (!leaveId) {
+        alert('Error: Leave ID not found');
         return;
     }
 
@@ -5415,15 +5173,17 @@ const handleInboxApprove = async (leaveId) => {
         const leave = leaves.find(l => l.leave_id === leaveId);
 
         const adminId = await resolveCurrentEmployeeId();
-        await approveLeave(leaveId, adminId);
+        await approveLeave(leaveId, adminId, comments);
 
         // Send notification to employee
         if (leave) {
-            try { await notifyEmployeeLeaveApproval(
-                leaveId,
-                leave.employee_id,
-                leave.leave_type
-            ); } catch (notifErr) {
+            try {
+                await notifyEmployeeLeaveApproval(
+                    leaveId,
+                    leave.employee_id,
+                    leave.leave_type
+                );
+            } catch (notifErr) {
                 console.warn('⚠️ Failed to send approval notification:', notifErr);
             }
         }

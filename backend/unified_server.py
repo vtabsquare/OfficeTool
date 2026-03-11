@@ -6810,12 +6810,16 @@ def approve_leave(leave_id):
         
         data = request.get_json() or {}
         approved_by = data.get('approved_by', 'EMP001')  # Admin employee ID
+        comments = data.get('comments', '')  # Optional approval comments
         
         # Normalize admin ID
         if approved_by.isdigit():
             approved_by = format_employee_id(int(approved_by))
         elif approved_by.upper().startswith("EMP"):
             approved_by = approved_by.upper()
+        
+        if comments:
+            print(f"   [INFO] Approval comments: {comments[:100]}{'...' if len(comments) > 100 else ''}")
         
         token = get_access_token()
         inbox_entity = get_inbox_entity_set(token)
@@ -6850,11 +6854,15 @@ def approve_leave(leave_id):
             print(f"   [ERROR] No primary key found in record")
             return jsonify({"success": False, "error": "Invalid leave record"}), 500
         
-        # Update the leave status to "Approved"
+        # Update the leave status to "Approved" with optional comments
         update_data = {
             "crc6f_status": "Approved",
             "crc6f_approvedby": approved_by
         }
+        
+        # Add approval comments if provided (max 2000 characters)
+        if comments:
+            update_data["crc6f_approvalcomments"] = comments[:2000]
         
         print(f"   [LOG] Updating leave record {record_id} with status: Approved")
         updated_record = update_record(LEAVE_ENTITY, record_id, update_data)
