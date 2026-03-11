@@ -5287,6 +5287,10 @@ export const handleInboxApproveLeave = async (e) => {
     const formComments = e?.target ? new FormData(e.target).get('approvalComments') : '';
     const comments = String(document.getElementById('inboxApprovalComments')?.value ?? formComments ?? '').trim();
 
+    console.log('🔍 [APPROVE] Leave ID:', leaveId);
+    console.log('🔍 [APPROVE] Captured comments:', comments);
+    console.log('🔍 [APPROVE] Comments length:', comments.length);
+
     if (!leaveId) {
         alert('Error: Leave ID not found');
         return;
@@ -5298,6 +5302,7 @@ export const handleInboxApproveLeave = async (e) => {
         const leave = leaves.find(l => l.leave_id === leaveId);
 
         const adminId = await resolveCurrentEmployeeId();
+        console.log('📤 [APPROVE] Sending to API - Leave:', leaveId, 'Admin:', adminId, 'Comments:', comments);
         await approveLeave(leaveId, adminId, comments);
 
         // Clear leave cache to force refresh
