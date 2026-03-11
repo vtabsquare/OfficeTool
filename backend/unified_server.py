@@ -5819,8 +5819,8 @@ def get_employee_leaves(employee_id):
                 "paid_unpaid": r.get("crc6f_paidunpaid"),
                 "status": r.get("crc6f_status"),
                 "approved_by": r.get("crc6f_approvedby"),
-                "approval_comments": r.get("crc6f_approvalcomments", ""),
                 "rejection_reason": r.get("crc6f_rejectionreason"),
+                "approval_comments": r.get("crc6f_approvalcomments"),
                 "reason": r.get("crc6f_rejectionreason", ""),
                 "employee_id": r.get("crc6f_employeeid")
             })
@@ -7077,7 +7077,6 @@ def get_pending_leaves():
                 "status": r.get("crc6f_status"),
                 "paid_unpaid": r.get("crc6f_paidunpaid"),
                 "approved_by": r.get("crc6f_approvedby"),
-                "approval_comments": r.get("crc6f_approvalcomments", ""),
                 "rejection_reason": r.get("crc6f_rejectionreason"),
                 "reason": r.get("crc6f_rejectionreason", ""),
                 "employee_id": r.get("crc6f_employeeid")
