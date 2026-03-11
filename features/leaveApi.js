@@ -160,6 +160,7 @@ export async function fetchPendingLeaves() {
 export async function approveLeave(leaveId, approvedBy, comments = '') {
   try {
     console.log(`✅ Approving leave: ${leaveId} by ${approvedBy}`);
+    console.log(`🔍 [API] Comments received: "${comments}" (length: ${comments.length})`);
     if (comments) {
       console.log(`💬 Approval comments: ${comments.substring(0, 100)}${comments.length > 100 ? '...' : ''}`);
     }
