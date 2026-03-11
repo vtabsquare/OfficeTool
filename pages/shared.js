@@ -5284,7 +5284,8 @@ export const handleInboxApproveLeave = async (e) => {
     e.preventDefault();
 
     const leaveId = document.getElementById('inboxApproveLeaveId').value;
-    const comments = document.getElementById('inboxApprovalComments')?.value || '';
+    const formComments = e?.target ? new FormData(e.target).get('approvalComments') : '';
+    const comments = String(document.getElementById('inboxApprovalComments')?.value ?? formComments ?? '').trim();
 
     if (!leaveId) {
         alert('Error: Leave ID not found');

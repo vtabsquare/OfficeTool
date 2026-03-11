@@ -5820,7 +5820,10 @@ def get_employee_leaves(employee_id):
                 "status": r.get("crc6f_status"),
                 "approved_by": r.get("crc6f_approvedby"),
                 "rejection_reason": r.get("crc6f_rejectionreason"),
-                "approval_comments": r.get("crc6f_approvalcomments"),
+                "approval_comments": (
+                    r.get("crc6f_approvalcomments")
+                    or r.get("crc6f_approvalcomments@OData.Community.Display.V1.FormattedValue")
+                ),
                 "reason": r.get("crc6f_rejectionreason", ""),
                 "employee_id": r.get("crc6f_employeeid")
             })
@@ -6419,7 +6422,7 @@ def get_all_leave_balances(employee_id):
             
             for record in leave_records:
                 leave_type = (record.get("crc6f_leavetype") or "").strip()
-                total_days = float(record.get("crc6f_totaldays") or 0)
+                total_days = float(record.get("crc6f_totaldays", 0))
                 paid_unpaid = (record.get("crc6f_paidunpaid") or "").strip().lower()
                 status = (record.get("crc6f_status") or "").strip()
                 status_low = status.lower()
@@ -6809,9 +6812,14 @@ def approve_leave(leave_id):
         print(f"[OK] APPROVE LEAVE REQUEST: {leave_id}")
         print(f"{'='*70}")
         
-        data = request.get_json() or {}
+        data = request.get_json(silent=True) or {}
         approved_by = data.get('approved_by', 'EMP001')  # Admin employee ID
-        comments = data.get('comments', '')  # Optional approval comments
+        comments = data.get('comments')
+        if comments is None:
+            comments = data.get('approval_comments')
+        if comments is None:
+            comments = data.get('approvalComments')
+        comments = str(comments or '').strip()  # Optional approval comments
         
         # Normalize admin ID
         if approved_by.isdigit():
@@ -6894,6 +6902,7 @@ def approve_leave(leave_id):
             "message": f"Leave {leave_id} approved successfully",
             "leave_id": leave_id,
             "approved_by": approved_by,
+            "approval_comments": comments[:2000],
             "updated_record": updated_record
         }), 200
         
