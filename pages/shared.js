@@ -5070,6 +5070,116 @@ const showCompOffRejectModal = (requestId) => {
     renderModal('Reject Comp Off Request', formHTML, 'compoff-submit-reject-btn', 'normal', 'Reject');
 };
 
+export const handleCompOffReject = async (e) => {
+    e.preventDefault();
+    const requestId = document.getElementById('compoffRejectId')?.value;
+    const reason = document.getElementById('compoffRejectionReason')?.value || '';
+
+    if (!requestId) {
+        alert('Error: Request ID not found');
+        return;
+    }
+
+    try {
+        const allRequests = await fetchCompOffRequests();
+        const req = allRequests.find(r => String(r.id) === String(requestId));
+        const adminId = await resolveCurrentEmployeeId();
+
+        await rejectCompOffRequest(requestId, adminId || state.user?.id || 'EMP001', reason);
+
+        if (req?.employeeId) {
+            try {
+                await notifyEmployeeCompOffRejected(req.id || requestId, req.employeeId, reason);
+            } catch (notifErr) {
+                console.warn('⚠️ Failed to send comp off rejection notification:', notifErr);
+            }
+        }
+
+        closeModal();
+        alert('✅ Comp Off rejected');
+        await loadInboxCompOff();
+        await updateNotificationBadge();
+    } catch (err) {
+        console.error('❌ Error rejecting comp off:', err);
+        alert('❌ Failed to reject comp off');
+    }
+};
+
+const handleTimesheetApprove = async (entryId) => {
+    if (!confirm('Are you sure you want to APPROVE this timesheet entry?')) {
+        return;
+    }
+
+    try {
+        const adminId = await resolveCurrentEmployeeId();
+        const resp = await fetch(
+            `${apiBase}/api/time-tracker/timesheet/${encodeURIComponent(entryId)}/approve`,
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ decided_by: adminId }),
+            }
+        );
+        const data = await resp.json().catch(() => ({}));
+
+        if (!resp.ok || !data.success) {
+            throw new Error(data.error || resp.status);
+        }
+
+        alert('✅ Timesheet entry approved successfully!');
+        await loadInboxTimesheets();
+    } catch (err) {
+        console.error('❌ Error approving timesheet entry:', err);
+        alert(`❌ Failed to approve timesheet entry: ${err.message || err}`);
+    }
+};
+
+const showTimesheetRejectModal = (entryId) => {
+    const formHTML = buildRejectReasonForm({
+        eyebrow: 'Timesheet review',
+        textareaId: 'timesheetRejectionReason',
+        hiddenId: 'timesheetRejectId',
+        hiddenValue: entryId
+    });
+    renderModal('Reject Timesheet Entry', formHTML, 'timesheet-submit-reject-btn', 'normal', 'Reject Timesheet');
+};
+
+export const handleTimesheetReject = async (e) => {
+    e.preventDefault();
+
+    const entryId = document.getElementById('timesheetRejectId')?.value;
+    const reason = document.getElementById('timesheetRejectionReason')?.value || '';
+
+    if (!entryId) {
+        alert('Error: Timesheet entry ID not found');
+        return;
+    }
+
+    try {
+        const adminId = await resolveCurrentEmployeeId();
+        const resp = await fetch(
+            `${apiBase}/api/time-tracker/timesheet/${encodeURIComponent(entryId)}/reject`,
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ decided_by: adminId, comment: reason }),
+            }
+        );
+        const data = await resp.json().catch(() => ({}));
+
+        if (!resp.ok || !data.success) {
+            throw new Error(data.error || resp.status);
+        }
+
+        closeModal();
+        alert('✅ Timesheet entry rejected successfully!');
+        await loadInboxTimesheets();
+    } catch (err) {
+        console.error('❌ Error rejecting timesheet entry:', err);
+        alert(`❌ Failed to reject timesheet entry: ${err.message || err}`);
+    }
+};
+
 const showInboxRejectModal = (leaveId) => {
     const formHTML = buildRejectReasonForm({
         eyebrow: 'Leave review',
