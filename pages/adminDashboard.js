@@ -144,27 +144,47 @@ const buildProjectLoadBars = (items = []) => {
     .slice(0, 8);
 
   const max = Math.max(...rows.map(([, count]) => count), 1);
+  const chartHeight = 200;
 
   return `
-    <div class="task-load-grid">
-      ${rows.map(([project, count]) => {
-        const pct = Math.round((count / max) * 100);
-        const intensity = pct > 66 ? 'high' : pct > 33 ? 'medium' : 'low';
-        return `
-          <div class="task-load-card">
-            <div class="task-load-header">
-              <div class="task-load-project">${escapeHtml(project)}</div>
-              <div class="task-load-count">${count}</div>
+    <div class="project-column-chart">
+      <div class="chart-container" style="height: ${chartHeight}px; position: relative; display: flex; align-items: flex-end; gap: 12px; padding: 10px;">
+        ${rows.map(([project, count]) => {
+          const height = Math.round((count / max) * (chartHeight - 30));
+          const pct = Math.round((count / max) * 100);
+          const intensity = pct > 66 ? 'high' : pct > 33 ? 'medium' : 'low';
+          return `
+            <div class="chart-column" style="flex: 1; display: flex; flex-direction: column; align-items: center; min-width: 0;">
+              <div class="column-bar task-load-bar-${intensity}" 
+                   style="width: 100%; height: ${height}px; background: var(--${intensity === 'high' ? 'danger' : intensity === 'medium' ? 'warning' : 'success'}); 
+                          border-radius: 4px 4px 0 0; position: relative; transition: all 0.3s ease;">
+                <div class="column-value" style="position: absolute; top: -25px; left: 50%; transform: translateX(-50%); 
+                            font-weight: 600; font-size: 0.8rem; color: var(--text-primary);">${count}</div>
+              </div>
+              <div class="column-label" style="margin-top: 8px; text-align: center; font-size: 0.75rem; 
+                            color: var(--text-secondary); font-weight: 500; line-height: 1.2; 
+                            max-width: 100%; overflow: hidden; text-overflow: ellipsis; 
+                            display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;">
+                ${escapeHtml(project)}
+              </div>
             </div>
-            <div class="task-load-bar-wrapper">
-              <div class="task-load-bar task-load-bar-${intensity}" style="width:${pct}%"></div>
-            </div>
-            <div class="task-load-footer">
-              <span class="task-load-label">${count === 1 ? 'task' : 'tasks'}</span>
-            </div>
-          </div>
-        `;
-      }).join('')}
+          `;
+        }).join('')}
+      </div>
+      <div class="chart-legend" style="margin-top: 16px; display: flex; justify-content: center; gap: 20px; flex-wrap: wrap;">
+        <div class="legend-item" style="display: flex; align-items: center; gap: 6px; font-size: 0.8rem; color: var(--text-secondary);">
+          <div class="legend-dot" style="width: 12px; height: 12px; background: var(--success); border-radius: 2px;"></div>
+          <span>Low (1-3)</span>
+        </div>
+        <div class="legend-item" style="display: flex; align-items: center; gap: 6px; font-size: 0.8rem; color: var(--text-secondary);">
+          <div class="legend-dot" style="width: 12px; height: 12px; background: var(--warning); border-radius: 2px;"></div>
+          <span>Medium (4-6)</span>
+        </div>
+        <div class="legend-item" style="display: flex; align-items: center; gap: 6px; font-size: 0.8rem; color: var(--text-secondary);">
+          <div class="legend-dot" style="width: 12px; height: 12px; background: var(--danger); border-radius: 2px;"></div>
+          <span>High (7+)</span>
+        </div>
+      </div>
     </div>
   `;
 };
