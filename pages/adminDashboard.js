@@ -248,7 +248,9 @@ const loadAdminDashboardData = async () => {
 };
 
 const buildDashboardLayout = (data) => {
-  const checkedInList = (data.attendance.checked_in_employees || []).slice(0, 6);
+  const checkedInList = (data.attendance.checked_in_employees || [])
+    .filter(emp => emp.employee_id !== 'VTAB-0001' && emp.employee_name !== 'Vtab Admin')
+    .slice(0, 6);
   const checkedInMarkup = checkedInList.length
     ? `<ul class="mini-list">${checkedInList.map((emp) => `
       <li>
