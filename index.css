@@ -11343,12 +11343,11 @@ body.dark-theme .form-section .btn-secondary:hover {
 
 .admin-dashboard-grid {
   display: grid;
-  grid-template-columns: repeat(12, minmax(0, 1fr));
+  grid-template-columns: 1fr 1fr;
   gap: 1.25rem;
 }
 
 .admin-card {
-  grid-column: span 4;
   border: 1px solid var(--border-color);
   border-radius: var(--radius-lg);
   background: var(--surface-color);
@@ -11357,7 +11356,7 @@ body.dark-theme .form-section .btn-secondary:hover {
 }
 
 .admin-card-span-2 {
-  grid-column: span 8;
+  grid-column: span 2;
 }
 
 .admin-dashboard .card-heading {
