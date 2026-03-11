@@ -4401,7 +4401,7 @@ const loadInboxLeaves = async () => {
                 console.log(`📋 Fetching completed leaves for ${employeeIds.length} employees...`);
 
                 const allLeavesPromises = employeeIds.map(empId =>
-                    fetchEmployeeLeaves(empId).catch(err => {
+                    fetchEmployeeLeaves(empId, true).catch(err => {
                         console.warn(`Failed to fetch leaves for ${empId}:`, err);
                         return [];
                     })
@@ -4424,7 +4424,7 @@ const loadInboxLeaves = async () => {
         } else {
             // Fetch current user's leaves
             const empId = await resolveCurrentEmployeeId();
-            const allLeaves = await fetchEmployeeLeaves(empId);
+            const allLeaves = await fetchEmployeeLeaves(empId, currentInboxTab === 'completed');
 
             if (currentInboxTab === 'requests') {
                 const compMine = compAll.filter(r => String(r.employeeId).toUpperCase() === String(empId).toUpperCase() && (r.status || 'pending').toLowerCase() === 'pending').map(normalizeComp);
@@ -4469,7 +4469,8 @@ const loadInboxLeaves = async () => {
             const status = leave.status || 'Pending';
             const paidUnpaid = leave.paid_unpaid || 'Paid';
             const rejectionReason = leave.rejection_reason || leave.crc6f_rejectionreason || '';
-            const approvalComments = leave.approval_comments || leave.crc6f_approvalcomments || '';
+            const approvalComments = leave.approval_comments || leave.approvalComments || leave.crc6f_approvalcomments || '';
+            const approvalCommentsText = String(approvalComments || '').trim();
             const leaveReason = leave.reason || leave.rejection_reason || leave.crc6f_rejectionreason || '';
 
             // Debug logging for rejected leaves
@@ -4507,10 +4508,10 @@ const loadInboxLeaves = async () => {
                                 <p style="margin: 8px 0 0 0; color: #856404;">${rejectionReason}</p>
                             </div>
                         ` : ''}
-                        ${isApproved && approvalComments ? `
+                        ${isApproved && !isCompOff ? `
                             <div class="approval-comments-box" style="background: #fff3cd; border-left: 4px solid #34c759; padding: 12px; margin-top: 12px; border-radius: 4px;">
                                 <strong style="color: #2f855a;"><i class="fa-solid fa-comment"></i> Approval Comments:</strong>
-                                <p style="margin: 8px 0 0 0; color: #2f855a;">${approvalComments}</p>
+                                <p style="margin: 8px 0 0 0; color: #2f855a;">${approvalCommentsText || 'No comments added.'}</p>
                             </div>
                         ` : ''}
                     </div>
