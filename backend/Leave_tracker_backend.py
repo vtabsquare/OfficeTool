@@ -196,10 +196,7 @@ def get_employee_leaves(employee_id):
                     "total_days": leave.get("crc6f_totaldays", "0"),
                     "employee_id": leave.get("crc6f_employeeid", ""),
                     "approved_by": leave.get("crc6f_approvedby", ""),
-                    "approval_comments": (
-                        leave.get("crc6f_approvalcomments")
-                        or leave.get("crc6f_approvalcomments@OData.Community.Display.V1.FormattedValue")
-                    )
+                    "approval_comments": leave.get("crc6f_approvalcomments", "")
                 })
             
             print(f"   ✅ Successfully fetched {len(transformed_leaves)} leave records")
