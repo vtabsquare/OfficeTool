@@ -267,16 +267,29 @@ const buildDashboardLayout = (data) => {
       </div>
 
       <div class="dashboard-grid admin-dashboard-grid">
-        <section class="card admin-card">
+        <section class="card admin-card admin-card-span-2">
           <header class="card-heading">
             <div>
-              <p class="eyebrow">Attendance</p>
-              <h3>Employee Monitoring</h3>
+              <p class="eyebrow">Live Work</p>
+              <h3>Active Tasks Across Organization</h3>
             </div>
-            <span class="badge">Today</span>
+            <span class="badge">Auto refresh: 15s</span>
           </header>
-          ${buildStatusDonut(data.attendance.checked_in_count || 0, data.attendance.not_checked_in_count || 0)}
-          ${checkedInMarkup}
+          <div class="leave-table-scroll admin-table-scroll">
+            <table class="table leave-table">
+              <thead>
+                <tr>
+                  <th>Employee</th>
+                  <th>Task</th>
+                  <th>Project</th>
+                  <th>Running</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${activeTaskRows}
+              </tbody>
+            </table>
+          </div>
         </section>
 
         <section class="card admin-card admin-card-span-2">
@@ -305,29 +318,16 @@ const buildDashboardLayout = (data) => {
           </div>
         </section>
 
-        <section class="card admin-card admin-card-span-2">
+        <section class="card admin-card">
           <header class="card-heading">
             <div>
-              <p class="eyebrow">Live Work</p>
-              <h3>Active Tasks Across Organization</h3>
+              <p class="eyebrow">Attendance</p>
+              <h3>Employee Monitoring</h3>
             </div>
-            <span class="badge">Auto refresh: 15s</span>
+            <span class="badge">Today</span>
           </header>
-          <div class="leave-table-scroll admin-table-scroll">
-            <table class="table leave-table">
-              <thead>
-                <tr>
-                  <th>Employee</th>
-                  <th>Task</th>
-                  <th>Project</th>
-                  <th>Running</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${activeTaskRows}
-              </tbody>
-            </table>
-          </div>
+          ${buildStatusDonut(data.attendance.checked_in_count || 0, data.attendance.not_checked_in_count || 0)}
+          ${checkedInMarkup}
         </section>
 
         <section class="card admin-card">
