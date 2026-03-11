@@ -276,7 +276,7 @@ const buildDashboardLayout = (data) => {
 
   const activeTaskRows = data.activeTasks.length
     ? data.activeTasks
-        .filter(task => task.employee_id !== 'VTAB-0001' && (task.employee_name || task.employee_id) !== 'Vtab Admin')
+        .filter(task => task.employee_id !== 'VTAB-0001' && (task.employee_name || task.employee_id) !== 'Vtab Admin' && task.employee_id !== 'EMP023' && (task.employee_name || task.employee_id) !== 'EMP023')
         .map((task) => `
       <tr>
         <td>${escapeHtml(task.employee_name || task.employee_id)}</td>
