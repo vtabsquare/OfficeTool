@@ -254,7 +254,6 @@ const buildDashboardLayout = (data) => {
       <li>
         <div>
           <h4>${escapeHtml(emp.employee_name || emp.employee_id)}</h4>
-          <p>${escapeHtml(emp.employee_id || '')}</p>
         </div>
         <span class="badge">${escapeHtml(formatCheckInTime(emp.check_in))}</span>
       </li>
