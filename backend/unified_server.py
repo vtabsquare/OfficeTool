@@ -5827,6 +5827,7 @@ def get_employee_leaves(employee_id):
                 "reason": r.get("crc6f_rejectionreason", ""),
                 "employee_id": r.get("crc6f_employeeid")
             })
+            print(f"[DEBUG] Leave {r.get('crc6f_leaveid')} - approval_comments raw: {r.get('crc6f_approvalcomments')} formatted: {r.get('crc6f_approvalcomments@OData.Community.Display.V1.FormattedValue')}")
         
         print(f"[OK] Successfully formatted {len(formatted_leaves)} leave records")
         print(f"{'='*70}\n")
