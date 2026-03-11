@@ -43,6 +43,33 @@ const formatDuration = (seconds = 0) => {
   return `${hh}:${mm}:${ss}`;
 };
 
+const formatCheckInTime = (timeStr = '') => {
+  if (!timeStr) return '--';
+  
+  // Handle ISO format: 2025-03-11T09:30:00Z or 2025-03-11T09:30:00+05:30
+  if (timeStr.includes('T') && (timeStr.includes('Z') || timeStr.includes('+'))) {
+    try {
+      const date = new Date(timeStr);
+      if (isNaN(date.getTime())) return timeStr; // Return original if invalid
+      
+      // Get local time in HH:MM format
+      const hours = date.getHours().toString().padStart(2, '0');
+      const minutes = date.getMinutes().toString().padStart(2, '0');
+      return `${hours}:${minutes}`;
+    } catch (e) {
+      return timeStr; // Return original if parsing fails
+    }
+  }
+  
+  // Handle time-only format: 09:30:00 or 09:30
+  if (timeStr.match(/^\d{1,2}:\d{2}/)) {
+    return timeStr.split(':').slice(0, 2).join(':');
+  }
+  
+  // Return original if no format matches
+  return timeStr;
+};
+
 const stopDashboardTimers = () => {
   if (adminDashboardPollId) {
     clearInterval(adminDashboardPollId);
@@ -229,7 +256,7 @@ const buildDashboardLayout = (data) => {
           <h4>${escapeHtml(emp.employee_name || emp.employee_id)}</h4>
           <p>${escapeHtml(emp.employee_id || '')}</p>
         </div>
-        <span class="badge">${escapeHtml(emp.check_in || '--')}</span>
+        <span class="badge">${escapeHtml(formatCheckInTime(emp.check_in))}</span>
       </li>
     `).join('')}</ul>`
     : '<p class="placeholder-text">No employees are currently checked in.</p>';
