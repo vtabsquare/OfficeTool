@@ -5045,13 +5045,15 @@ const buildRejectReasonForm = ({
     <input type="hidden" id="${hiddenId}" value="${hiddenValue}">
 `;
 
+const APPROVAL_COMMENTS_MAX_CHARS = 100;
+
 const buildApprovalCommentsForm = ({
     eyebrow,
     textareaId,
     hiddenId,
     hiddenValue,
     helperText = 'This comment is optional and will be shared with the employee.',
-    maxChars = 2000
+    maxChars = APPROVAL_COMMENTS_MAX_CHARS
 }) => `
     <div class="leave-form">
         <div class="form-section">
@@ -5206,12 +5208,13 @@ const showInboxRejectModal = (leaveId) => {
 };
 
 const showInboxApproveModal = (leaveId) => {
+    const maxChars = APPROVAL_COMMENTS_MAX_CHARS;
     const formHTML = buildApprovalCommentsForm({
         eyebrow: 'Leave review',
         textareaId: 'inboxApprovalComments',
         hiddenId: 'inboxApproveLeaveId',
         hiddenValue: leaveId,
-        maxChars: 2000
+        maxChars
     });
 
     renderModal('Approve Leave Request', formHTML, 'inbox-submit-approve-btn', 'normal', 'Approve');
@@ -5223,7 +5226,7 @@ const showInboxApproveModal = (leaveId) => {
         if (textarea && counter) {
             textarea.addEventListener('input', () => {
                 const length = textarea.value.length;
-                counter.textContent = `${length} / 2000 characters`;
+                counter.textContent = `${length} / ${maxChars} characters`;
             });
         }
     }, 100);

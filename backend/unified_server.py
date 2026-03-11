@@ -5738,7 +5738,13 @@ def get_employee_leaves(employee_id):
         print(f"   [USER] Normalized Employee ID: {normalized_emp_id}")
         
         # Try fetching by employee_id first
-        filter_query = f"?$filter=crc6f_employeeid eq '{normalized_emp_id}'"
+        leave_select = (
+            "$select="
+            "crc6f_leaveid,crc6f_leavetype,crc6f_startdate,crc6f_enddate,"
+            "crc6f_totaldays,crc6f_paidunpaid,crc6f_status,crc6f_approvedby,"
+            "crc6f_rejectionreason,crc6f_approvalcomments,crc6f_employeeid"
+        )
+        filter_query = f"?{leave_select}&$filter=crc6f_employeeid eq '{normalized_emp_id}'"
         url = f"{RESOURCE}/api/data/v9.2/{LEAVE_ENTITY}{filter_query}"
         
         print(f"   [URL] Sending request to Dataverse: {url}")
@@ -5764,7 +5770,7 @@ def get_employee_leaves(employee_id):
                 
                 for variation in variations:
                     if variation != normalized_emp_id:
-                        filter_query = f"?$filter=crc6f_employeeid eq '{variation}'"
+                        filter_query = f"?{leave_select}&$filter=crc6f_employeeid eq '{variation}'"
                         url = f"{RESOURCE}/api/data/v9.2/{LEAVE_ENTITY}{filter_query}"
                         response = requests.get(url, headers=headers)
                         
@@ -5798,7 +5804,7 @@ def get_employee_leaves(employee_id):
                             if actual_emp_id:
                                 print(f"[OK] Resolved email {employee_id} to employee ID {actual_emp_id}")
                                 # Retry fetching leaves with actual employee_id
-                                filter_query = f"?$filter=crc6f_employeeid eq '{actual_emp_id}'"
+                                filter_query = f"?{leave_select}&$filter=crc6f_employeeid eq '{actual_emp_id}'"
                                 url = f"{RESOURCE}/api/data/v9.2/{LEAVE_ENTITY}{filter_query}"
                                 response = requests.get(url, headers=headers)
                                 if response.status_code == 200:
@@ -6820,6 +6826,7 @@ def approve_leave(leave_id):
         if comments is None:
             comments = data.get('approvalComments')
         comments = str(comments or '').strip()  # Optional approval comments
+        approval_comment = comments[:100] if comments else ''
         
         # Normalize admin ID
         if approved_by.isdigit():
@@ -6828,7 +6835,9 @@ def approve_leave(leave_id):
             approved_by = approved_by.upper()
         
         if comments:
-            print(f"   [INFO] Approval comments: {comments[:100]}{'...' if len(comments) > 100 else ''}")
+            print(f"   [INFO] Approval comments: {approval_comment}{'...' if len(comments) > 100 else ''}")
+            if len(comments) > 100:
+                print("   [WARN] Approval comments exceeded 100 chars and were truncated to fit Dataverse column limit")
         
         token = get_access_token()
         inbox_entity = get_inbox_entity_set(token)
@@ -6869,9 +6878,9 @@ def approve_leave(leave_id):
             "crc6f_approvedby": approved_by
         }
         
-        # Add approval comments if provided (max 2000 characters)
-        if comments:
-            update_data["crc6f_approvalcomments"] = comments[:2000]
+        # Add approval comments if provided (Dataverse column max length = 100)
+        if approval_comment:
+            update_data["crc6f_approvalcomments"] = approval_comment
         
         print(f"   [LOG] Updating leave record {record_id} with status: Approved")
         updated_record = update_record(LEAVE_ENTITY, record_id, update_data)
@@ -6902,7 +6911,7 @@ def approve_leave(leave_id):
             "message": f"Leave {leave_id} approved successfully",
             "leave_id": leave_id,
             "approved_by": approved_by,
-            "approval_comments": comments[:2000],
+            "approval_comments": approval_comment,
             "updated_record": updated_record
         }), 200
         
