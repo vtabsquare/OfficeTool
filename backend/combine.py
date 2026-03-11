@@ -1045,7 +1045,10 @@ def get_employee_leaves(employee_id):
                 "paid_unpaid": r.get("crc6f_paidunpaid"),
                 "status": r.get("crc6f_status"),
                 "approved_by": r.get("crc6f_approvedby"),
-                "approval_comments": r.get("crc6f_approvalcomments"),
+                "approval_comments": (
+                    r.get("crc6f_approvalcomments")
+                    or r.get("crc6f_approvalcomments@OData.Community.Display.V1.FormattedValue")
+                ),
                 "employee_id": r.get("crc6f_employeeid")
             })
         
