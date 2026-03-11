@@ -133,7 +133,9 @@ const buildProjectLoadBars = (items = []) => {
 
   const grouped = items.reduce((acc, row) => {
     const key = row.project_name || row.project_id || 'Unmapped Project';
-    acc[key] = (acc[key] || 0) + 1;
+    if (key !== 'Unmapped Project') {
+      acc[key] = (acc[key] || 0) + 1;
+    }
     return acc;
   }, {});
 
