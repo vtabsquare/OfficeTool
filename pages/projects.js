@@ -3058,7 +3058,7 @@ const crmTab = async (project) => {
   let colColors = {};
   
   try {
-    const res = await fetch(`${API_BASE}/api/projects/${project.id}/columns?board_id=${boardParam}`);
+    const res = await fetch(`${API_BASE}/api/projects/${project.id}/columns?board=${encodeURIComponent(boardParam || "")}`);
     if (res.ok) {
       const data = await res.json();
       if (data.success && data.columns) {
@@ -3074,14 +3074,21 @@ const crmTab = async (project) => {
     console.error("Failed to fetch columns from database:", error);
   }
   
-  // If no columns from database, use defaults
-  if (cols.length === 0) {
-    cols = [...DEFAULT_COLS];
-    // Set default colors
-    cols.forEach(col => {
+  // Always keep base workflow columns visible; append any custom DB columns.
+  const mergedCols = [...DEFAULT_COLS];
+  cols.forEach((col) => {
+    const exists = mergedCols.some((baseCol) => baseCol.toLowerCase() === String(col || "").toLowerCase());
+    if (!exists) {
+      mergedCols.push(col);
+    }
+  });
+  cols = mergedCols;
+
+  cols.forEach((col) => {
+    if (!colColors[col]) {
       colColors[col] = getDefaultColor(col);
-    });
-  }
+    }
+  });
   
   // Update global columns reference
   if (typeof window !== "undefined") {
