@@ -4469,6 +4469,7 @@ const loadInboxLeaves = async () => {
             const status = leave.status || 'Pending';
             const paidUnpaid = leave.paid_unpaid || 'Paid';
             const rejectionReason = leave.rejection_reason || leave.crc6f_rejectionreason || '';
+            const approvalComments = leave.approval_comments || leave.crc6f_approvalcomments || '';
             const leaveReason = leave.reason || leave.rejection_reason || leave.crc6f_rejectionreason || '';
 
             // Debug logging for rejected leaves
@@ -4483,6 +4484,7 @@ const loadInboxLeaves = async () => {
             const statusClass = status.toLowerCase();
             const showActions = currentInboxTab === 'awaiting' && isAdmin;
             const isRejected = status.toLowerCase() === 'rejected';
+            const isApproved = status.toLowerCase() === 'approved';
             const isCompOff = leave._source === 'compoff' || (String(leaveType).toLowerCase() === 'comp off');
 
             return `
@@ -4503,6 +4505,12 @@ const loadInboxLeaves = async () => {
                             <div class="rejection-reason-box" style="background: #fff3cd; border-left: 4px solid #ffc107; padding: 12px; margin-top: 12px; border-radius: 4px;">
                                 <strong style="color: #856404;"><i class="fa-solid fa-info-circle"></i> Rejection Reason:</strong>
                                 <p style="margin: 8px 0 0 0; color: #856404;">${rejectionReason}</p>
+                            </div>
+                        ` : ''}
+                        ${isApproved && approvalComments ? `
+                            <div class="approval-comments-box" style="background: #fff3cd; border-left: 4px solid #34c759; padding: 12px; margin-top: 12px; border-radius: 4px;">
+                                <strong style="color: #2f855a;"><i class="fa-solid fa-comment"></i> Approval Comments:</strong>
+                                <p style="margin: 8px 0 0 0; color: #2f855a;">${approvalComments}</p>
                             </div>
                         ` : ''}
                     </div>
@@ -4769,7 +4777,12 @@ const loadInboxTimesheets = async () => {
                             </div>
                             <p style="margin-top:10px;"><strong>Submitted:</strong> ${group.submitted_at || '-'}</p>
                             ${group.decided_at ? `<p><strong>Updated:</strong> ${group.decided_at}</p>` : ''}
-                            ${isRejected && group.reject_comment ? `<div class="rejection-reason-box" style="background: #fff3cd; border-left: 4px solid #ffc107; padding: 12px; margin-top: 12px; border-radius: 4px;"><strong style="color: #856404;"><i class="fa-solid fa-info-circle"></i> Rejection Reason:</strong><p style="margin: 8px 0 0 0; color: #856404;">${group.reject_comment}</p></div>` : ''}
+                            ${isRejected && group.reject_comment ? `
+                                <div class="rejection-reason-box" style="background: #fff3cd; border-left: 4px solid #ffc107; padding: 12px; margin-top: 12px; border-radius: 4px;">
+                                    <strong style="color: #856404;"><i class="fa-solid fa-info-circle"></i> Rejection Reason:</strong>
+                                    <p style="margin: 8px 0 0 0; color: #856404;">${group.reject_comment}</p>
+                                </div>
+                            ` : ''}
                         </div>
                         ${showActions ? `<div class="inbox-item-actions"><button class="btn btn-success btn-sm ts-approve-btn" data-id="${group.first_id}"><i class="fa-solid fa-check"></i> Approve</button><button class="btn btn-danger btn-sm ts-reject-btn" data-id="${group.first_id}"><i class="fa-solid fa-times"></i> Reject</button></div>` : ''}
                     </div>
@@ -5141,7 +5154,7 @@ const showTimesheetRejectModal = (entryId) => {
         hiddenId: 'timesheetRejectId',
         hiddenValue: entryId
     });
-    renderModal('Reject Timesheet Entry', formHTML, 'timesheet-submit-reject-btn', 'normal', 'Reject Timesheet');
+    renderModal('Reject Timesheet Entry', formHTML, 'timesheet-submit-reject-btn', 'normal', 'Reject');
 };
 
 export const handleTimesheetReject = async (e) => {
@@ -5284,6 +5297,12 @@ export const handleInboxApproveLeave = async (e) => {
 
         const adminId = await resolveCurrentEmployeeId();
         await approveLeave(leaveId, adminId, comments);
+
+        // Clear leave cache to force refresh
+        if (leave?.employee_id && state?.cache?.leaves) {
+            const empKey = String(leave.employee_id).toUpperCase();
+            delete state.cache.leaves[empKey];
+        }
 
         // Send notification to employee
         if (leave) {
