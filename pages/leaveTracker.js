@@ -888,6 +888,7 @@ export const showApplyLeaveModal = (options = {}) => {
 
   // Get today's date in YYYY-MM-DD format
   const today = new Date().toISOString().split("T")[0];
+  const dateMinAttr = applyForOthers ? "" : ` min="${today}"`;
   const employeeSelectionField = applyForOthers
     ? `
                     <div class="form-field with-icon">
@@ -944,14 +945,14 @@ export const showApplyLeaveModal = (options = {}) => {
                         <label class="form-label" for="startDate">Start Date</label>
                         <div class="input-wrapper">
                             <i class="fa-solid fa-calendar"></i>
-                            <input class="input-control" type="date" id="startDate" name="startDate" min="${today}" required>
+                            <input class="input-control" type="date" id="startDate" name="startDate"${dateMinAttr} required>
                         </div>
                     </div>
                     <div class="form-field with-icon">
                         <label class="form-label" for="endDate">End Date</label>
                         <div class="input-wrapper">
                             <i class="fa-solid fa-calendar"></i>
-                            <input class="input-control" type="date" id="endDate" name="endDate" min="${today}" required>
+                            <input class="input-control" type="date" id="endDate" name="endDate"${dateMinAttr} required>
                         </div>
                     </div>
                 </div>
