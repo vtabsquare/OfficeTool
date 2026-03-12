@@ -7209,7 +7209,7 @@ def get_on_leave_today():
 
 @app.route('/api/leaves/upcoming', methods=['GET'])
 def get_upcoming_leaves():
-    """Return approved upcoming leaves within the next N days."""
+    """Return approved upcoming leaves for the remaining days of the current month."""
     try:
         print(f"\n{'='*70}")
         print(f"[FETCH] FETCHING UPCOMING LEAVES")
@@ -7223,14 +7223,11 @@ def get_upcoming_leaves():
             "OData-Version": "4.0"
         }
 
-        try:
-            days = max(1, min(int(request.args.get('days', '3')), 30))
-        except Exception:
-            days = 3
-
         today_dt = datetime.now().date()
+        last_day = monthrange(today_dt.year, today_dt.month)[1]
         start_date = (today_dt + timedelta(days=1)).isoformat()
-        end_date = (today_dt + timedelta(days=days)).isoformat()
+        end_date = today_dt.replace(day=last_day).isoformat()
+        days = max(0, (datetime.strptime(end_date, "%Y-%m-%d").date() - today_dt).days)
 
         filter_query = (
             "?$select="

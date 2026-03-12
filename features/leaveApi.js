@@ -89,10 +89,8 @@ export async function fetchOnLeaveToday(employeeIds = []) {
   return data.leaves || [];
 }
 
-export async function fetchUpcomingLeaves(days = 3) {
-  const qs = new URLSearchParams();
-  qs.set('days', String(days || 3));
-  const res = await timedFetch(`${BASE_URL}/api/leaves/upcoming?${qs.toString()}`, {}, 'fetchUpcomingLeaves');
+export async function fetchUpcomingLeaves() {
+  const res = await timedFetch(`${BASE_URL}/api/leaves/upcoming`, {}, 'fetchUpcomingLeaves');
   const data = await res.json();
   if (!res.ok || !data.success) {
     throw new Error(data.error || 'Failed to fetch upcoming leaves');

@@ -249,7 +249,7 @@ const loadAdminDashboardData = async () => {
     fetchAttendanceMonitoring(),
     fetchActiveTaskSnapshot(),
     fetchOnLeaveToday(),
-    fetchUpcomingLeaves(3),
+    fetchUpcomingLeaves(),
     listAllEmployees(),
     fetchLoginEvents(),
   ]);
@@ -345,7 +345,7 @@ const buildDashboardLayout = (data) => {
         <td><span class="badge">${escapeHtml(formatUpcomingLabel(row.days_until))}</span></td>
       </tr>
     `).join('')
-    : '<tr><td colspan="5" style="color: var(--text-secondary);">No upcoming approved leaves in the next 3 days.</td></tr>';
+    : '<tr><td colspan="5" style="color: var(--text-secondary);">No upcoming approved leaves for this month.</td></tr>';
 
   const loginActivityRows = data.loginActivityRows.length
     ? data.loginActivityRows.map((row) => `
@@ -444,7 +444,7 @@ const buildDashboardLayout = (data) => {
               <p class="eyebrow">Leave</p>
               <h3>Upcoming Leaves</h3>
             </div>
-            <span class="badge">Next 3 days</span>
+            <span class="badge">This month</span>
           </header>
           <div class="leave-table-scroll admin-table-scroll">
             <table class="table leave-table">
