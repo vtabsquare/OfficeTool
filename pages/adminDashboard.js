@@ -457,13 +457,13 @@ const buildDashboardLayout = (data) => {
           ${(data.idleEmployeeRows || []).length ? `<div style="padding:6px 16px 10px;font-size:0.75rem;color:var(--text-secondary);"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#f59e0b;margin-right:5px;"></span>${(data.idleEmployeeRows || []).length} employee${(data.idleEmployeeRows || []).length > 1 ? 's' : ''} checked in but no task started</div>` : ''}
         </section>
 
-        <section class="card admin-card admin-card-span-2">
+        <section class="card admin-card">
           <header class="card-heading">
             <div>
               <p class="eyebrow">Leave</p>
-              <h3>On Leave Today & Upcoming This Month</h3>
+              <h3>On Leave Today</h3>
             </div>
-            <span class="badge">Today + This month</span>
+            <span class="badge">Filter: Today</span>
           </header>
           <div class="leave-table-scroll admin-table-scroll">
             <table class="table leave-table">
@@ -477,7 +477,49 @@ const buildDashboardLayout = (data) => {
                 </tr>
               </thead>
               <tbody>
-                ${leaveTableRows}
+                ${(data.leaveRows || []).map((row) => `
+                  <tr>
+                    <td>${escapeHtml(row.employee_id)}</td>
+                    <td>${escapeHtml(row.employee_name)}</td>
+                    <td>${escapeHtml(row.leave_type)}</td>
+                    <td>${escapeHtml(row.start_date)}</td>
+                    <td>${escapeHtml(row.end_date)}</td>
+                  </tr>
+                `).join('') || '<tr><td colspan="5" style="color: var(--text-secondary);">No employees are on leave today.</td></tr>'}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="card admin-card">
+          <header class="card-heading">
+            <div>
+              <p class="eyebrow">Leave</p>
+              <h3>Upcoming Leaves This Month</h3>
+            </div>
+            <span class="badge">This month</span>
+          </header>
+          <div class="leave-table-scroll admin-table-scroll">
+            <table class="table leave-table">
+              <thead>
+                <tr>
+                  <th>Employee ID</th>
+                  <th>Name</th>
+                  <th>Leave Type</th>
+                  <th>Start</th>
+                  <th>End</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${(data.upcomingLeaveRows || []).map((row) => `
+                  <tr>
+                    <td>${escapeHtml(row.employee_id)}</td>
+                    <td>${escapeHtml(row.employee_name)}</td>
+                    <td>${escapeHtml(row.leave_type)}</td>
+                    <td>${escapeHtml(row.start_date)}</td>
+                    <td>${escapeHtml(row.end_date)}</td>
+                  </tr>
+                `).join('') || '<tr><td colspan="5" style="color: var(--text-secondary);">No upcoming approved leaves for this month.</td></tr>'}
               </tbody>
             </table>
           </div>
