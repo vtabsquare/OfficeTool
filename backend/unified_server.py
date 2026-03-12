@@ -7264,10 +7264,10 @@ def get_upcoming_leaves():
             raw_start = str(r.get("crc6f_startdate") or "").strip()
             emp_id = r.get("crc6f_employeeid")
             leave_type = r.get("crc6f_leavetype")
-            status_raw = (r.get("crc6f_status") or "").strip().lower()
+            status_raw = (r.get("crc6f_status") or "").strip()
 
-            # Filter by approved status case-insensitively
-            if status_raw != "approved":
+            # Skip canceled and rejected leaves; include all others (Approved, Pending, etc.)
+            if status_raw.lower() in ("canceled", "cancelled", "rejected"):
                 continue
 
             try:
@@ -7283,7 +7283,7 @@ def get_upcoming_leaves():
             raw_end = str(r.get("crc6f_enddate") or "").strip()
             normalized_end = raw_end[:10] if raw_end else raw_start[:10]
 
-            print(f"   [LEAVE] {emp_id} - {leave_type} - Start: {raw_start} - Status: {r.get('crc6f_status')} - Days until: {days_until}")
+            print(f"   [LEAVE] {emp_id} - {leave_type} - Start: {raw_start} - Status: {status_raw} - Days until: {days_until}")
 
             leaves.append({
                 "employee_id": emp_id,

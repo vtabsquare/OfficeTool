@@ -288,6 +288,22 @@ const loadAdminDashboardData = async () => {
     };
   });
 
+  const activeTaskEmpIds = new Set(
+    (activeTasks.items || activeTasks || []).map(t => normalizeEmpId(t.employee_id))
+  );
+
+  const idleEmployeeRows = (loginEvents.daily_summary || []).filter(row => {
+    const id = normalizeEmpId(row.employee_id);
+    return Boolean(row.check_in_time) && !row.check_out_time && !activeTaskEmpIds.has(id);
+  }).map(row => {
+    const id = normalizeEmpId(row.employee_id);
+    return {
+      employee_id: id,
+      employee_name: employeeNameMap.get(id) || id,
+      check_in_time: row.check_in_time || '',
+    };
+  });
+
   const upcomingLeaveRows = (upcomingLeaves || []).map((leave) => {
     const id = normalizeEmpId(leave.employee_id);
     return {
@@ -319,6 +335,7 @@ const loadAdminDashboardData = async () => {
     leaveRows,
     upcomingLeaveRows,
     loginActivityRows,
+    idleEmployeeRows,
   };
 };
 
@@ -345,7 +362,7 @@ const buildDashboardLayout = (data) => {
         <td><span class="badge">${escapeHtml(formatUpcomingLabel(row.days_until))}</span></td>
       </tr>
     `).join('')
-    : '<tr><td colspan="5" style="color: var(--text-secondary);">No upcoming approved leaves for this month.</td></tr>';
+    : '<tr><td colspan="5" style="color: var(--text-secondary);">No upcoming leaves for this month.</td></tr>';
 
   const loginActivityRows = data.loginActivityRows.length
     ? data.loginActivityRows.map((row) => `
@@ -377,6 +394,16 @@ const buildDashboardLayout = (data) => {
     `).join('')
     : '<tr><td colspan="4" style="color: var(--text-secondary);">No active task sessions right now.</td></tr>';
 
+  const idleRows = (data.idleEmployeeRows || []).length
+    ? (data.idleEmployeeRows || []).map((row) => `
+      <tr>
+        <td>${escapeHtml(row.employee_name || row.employee_id)}</td>
+        <td colspan="2" style="color:var(--text-secondary);">Checked in — no task started</td>
+        <td>${escapeHtml(formatCheckInTime(row.check_in_time))}</td>
+      </tr>
+    `).join('')
+    : '';
+
   return `
     <section class="admin-dashboard">
       <div class="admin-kpis">
@@ -407,9 +434,11 @@ const buildDashboardLayout = (data) => {
               </thead>
               <tbody>
                 ${activeTaskRows}
+                ${idleRows}
               </tbody>
             </table>
           </div>
+          ${(data.idleEmployeeRows || []).length ? `<div style="padding:6px 16px 10px;font-size:0.75rem;color:var(--text-secondary);"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#f59e0b;margin-right:5px;"></span>${(data.idleEmployeeRows || []).length} employee${(data.idleEmployeeRows || []).length > 1 ? 's' : ''} checked in but no task started</div>` : ''}
         </section>
 
         <section class="card admin-card">
