@@ -307,6 +307,15 @@ const loadAdminDashboardData = async () => {
 
   const upcomingLeaveRows = (upcomingLeaves || []).map((leave) => {
     const id = normalizeEmpId(leave.employee_id);
+    const rawStart = String(leave.start_date || '').slice(0, 10);
+    let daysLeft = '';
+    if (rawStart) {
+      const today = new Date();
+      const start = new Date(`${rawStart}T00:00:00`);
+      const todayOnly = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+      const diffMs = start.getTime() - todayOnly.getTime();
+      daysLeft = Number.isNaN(diffMs) ? '' : String(Math.max(0, Math.ceil(diffMs / 86400000)));
+    }
     return {
       employee_id: id,
       employee_name: employeeNameMap.get(id) || id,
@@ -315,6 +324,7 @@ const loadAdminDashboardData = async () => {
       end_date: leave.end_date || leave.start_date || '',
       total_days: leave.total_days || '',
       days_until: leave.days_until,
+      days_left: daysLeft,
       row_kind: 'upcoming',
     };
   });
@@ -503,23 +513,17 @@ const buildDashboardLayout = (data) => {
             <table class="table leave-table">
               <thead>
                 <tr>
-                  <th>Employee ID</th>
                   <th>Name</th>
-                  <th>Leave Type</th>
-                  <th>Start</th>
-                  <th>End</th>
+                  <th>Days Left</th>
                 </tr>
               </thead>
               <tbody>
                 ${(data.upcomingLeaveRows || []).map((row) => `
                   <tr>
-                    <td>${escapeHtml(row.employee_id)}</td>
                     <td>${escapeHtml(row.employee_name)}</td>
-                    <td>${escapeHtml(row.leave_type)}</td>
-                    <td>${escapeHtml(row.start_date)}</td>
-                    <td>${escapeHtml(row.end_date)}</td>
+                    <td>${escapeHtml(row.days_left || '--')}</td>
                   </tr>
-                `).join('') || '<tr><td colspan="5" style="color: var(--text-secondary);">No upcoming approved leaves for this month.</td></tr>'}
+                `).join('') || '<tr><td colspan="2" style="color: var(--text-secondary);">No upcoming approved leaves for this month.</td></tr>'}
               </tbody>
             </table>
           </div>
