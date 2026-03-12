@@ -7207,6 +7207,93 @@ def get_on_leave_today():
         }), 500
 
 
+@app.route('/api/leaves/upcoming', methods=['GET'])
+def get_upcoming_leaves():
+    """Return approved upcoming leaves within the next N days."""
+    try:
+        print(f"\n{'='*70}")
+        print(f"[FETCH] FETCHING UPCOMING LEAVES")
+        print(f"{'='*70}")
+
+        token = get_access_token()
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json",
+            "OData-MaxVersion": "4.0",
+            "OData-Version": "4.0"
+        }
+
+        try:
+            days = max(1, min(int(request.args.get('days', '3')), 30))
+        except Exception:
+            days = 3
+
+        today_dt = datetime.now().date()
+        start_date = (today_dt + timedelta(days=1)).isoformat()
+        end_date = (today_dt + timedelta(days=days)).isoformat()
+
+        filter_query = (
+            "?$select="
+            "crc6f_employeeid,crc6f_leavetype,crc6f_startdate,crc6f_enddate,crc6f_totaldays,crc6f_status"
+            f"&$filter=crc6f_status eq 'Approved' and crc6f_startdate ge '{start_date}' and crc6f_startdate le '{end_date}'"
+        )
+        url = f"{RESOURCE}/api/data/v9.2/{LEAVE_ENTITY}{filter_query}"
+        print(f"   [URL] Request URL: {url}")
+
+        response = requests.get(url, headers=headers)
+        if response.status_code != 200:
+            print(f"   [ERROR] Failed to fetch upcoming leaves: {response.status_code}")
+            return jsonify({
+                "success": False,
+                "error": f"Failed to fetch upcoming leaves: {response.status_code}",
+                "leaves": []
+            }), 500
+
+        records = response.json().get("value", [])
+        leaves = []
+        for r in records:
+            raw_start = r.get("crc6f_startdate") or ""
+            try:
+                days_until = (datetime.strptime(raw_start, "%Y-%m-%d").date() - today_dt).days
+            except Exception:
+                days_until = None
+
+            leaves.append({
+                "employee_id": r.get("crc6f_employeeid"),
+                "leave_type": r.get("crc6f_leavetype"),
+                "start_date": raw_start,
+                "end_date": r.get("crc6f_enddate") or raw_start,
+                "total_days": r.get("crc6f_totaldays"),
+                "status": r.get("crc6f_status"),
+                "days_until": days_until,
+            })
+
+        leaves.sort(key=lambda row: ((row.get("days_until") if row.get("days_until") is not None else 9999), row.get("employee_id") or ""))
+
+        print(f"   [SEND] Returning {len(leaves)} upcoming leave records")
+        print(f"{'='*70}\n")
+
+        return jsonify({
+            "success": True,
+            "leaves": leaves,
+            "count": len(leaves),
+            "days": days,
+            "range_start": start_date,
+            "range_end": end_date,
+        }), 200
+
+    except Exception as e:
+        print(f"   [ERROR] ERROR in /api/leaves/upcoming: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        print(f"{'='*70}\n")
+        return jsonify({
+            "success": False,
+            "error": str(e),
+            "leaves": []
+        }), 500
+
+
 @app.route('/api/admin/attendance-monitoring/today', methods=['GET'])
 def get_admin_attendance_monitoring_today():
     """Return org-wide checked-in vs not-checked-in snapshot for today's date."""

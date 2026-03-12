@@ -11393,6 +11393,7 @@ body.dark-theme .form-section .btn-secondary:hover {
   align-items: center;
   gap: 1rem;
   margin: 0.75rem 0 1rem;
+  flex-wrap: wrap;
 }
 
 .admin-donut {
@@ -11457,6 +11458,86 @@ body.dark-theme .form-section .btn-secondary:hover {
 .admin-table-scroll .table td,
 .admin-table-scroll .table th {
   white-space: nowrap;
+}
+
+.admin-monitoring-table-wrap {
+  margin-top: 0.5rem;
+  max-height: 320px;
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  overflow: auto;
+}
+
+.admin-monitoring-table {
+  min-width: 560px;
+}
+
+.admin-employee-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  line-height: 1.25;
+}
+
+.admin-employee-cell strong {
+  color: var(--text-primary);
+  font-size: 0.82rem;
+}
+
+.admin-employee-cell span {
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+}
+
+.admin-split-leave-card {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  padding: 1.4rem;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  background: var(--surface-color);
+  box-shadow: var(--shadow-sm);
+}
+
+.admin-split-leave-card .card-heading {
+  grid-column: span 2;
+}
+
+.admin-split-leave-card .card-content {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.admin-split-leave-card .card-content > div {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.admin-split-leave-card .card-content h4,
+.admin-split-leave-card .card-content p {
+  margin: 0;
+}
+
+.admin-split-leave-card .card-content .eyebrow {
+  margin: 0;
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.admin-split-leave-card .card-content .value {
+  font-size: 1.2rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.admin-split-leave-card .card-content .label {
+  font-size: 0.82rem;
+  color: var(--text-secondary);
 }
 
 .admin-bars {

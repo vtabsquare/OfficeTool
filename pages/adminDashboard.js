@@ -1,8 +1,9 @@
 import { getPageContentHTML } from '../utils.js';
 import { API_BASE_URL } from '../config.js';
 import { timedFetch } from '../features/timedFetch.js';
-import { fetchOnLeaveToday } from '../features/leaveApi.js';
+import { fetchOnLeaveToday, fetchUpcomingLeaves } from '../features/leaveApi.js';
 import { listAllEmployees } from '../features/employeeApi.js';
+import { fetchLoginEvents } from '../features/loginSettingsApi.js';
 import { isAdminUser } from '../utils/accessControl.js';
 import { state } from '../state.js';
 
@@ -68,6 +69,27 @@ const formatCheckInTime = (timeStr = '') => {
   
   // Return original if no format matches
   return timeStr;
+};
+
+const formatDisplayDate = (dateStr = '') => {
+  if (!dateStr) return '--';
+  try {
+    const date = new Date(dateStr);
+    if (Number.isNaN(date.getTime())) return dateStr;
+    return date.toLocaleDateString('en-IN', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+    });
+  } catch {
+    return dateStr;
+  }
+};
+
+const formatUpcomingLabel = (daysUntil) => {
+  const safeDays = Number(daysUntil);
+  if (!Number.isFinite(safeDays) || safeDays <= 0) return 'Starting soon';
+  return `Upcoming in ${safeDays} day${safeDays === 1 ? '' : 's'}`;
 };
 
 const stopDashboardTimers = () => {
@@ -223,11 +245,13 @@ const fetchActiveTaskSnapshot = async () => {
 };
 
 const loadAdminDashboardData = async () => {
-  const [attendanceResult, activeTasksResult, leavesResult, employeesResult] = await Promise.allSettled([
+  const [attendanceResult, activeTasksResult, leavesResult, upcomingLeavesResult, employeesResult, loginEventsResult] = await Promise.allSettled([
     fetchAttendanceMonitoring(),
     fetchActiveTaskSnapshot(),
     fetchOnLeaveToday(),
+    fetchUpcomingLeaves(3),
     listAllEmployees(),
+    fetchLoginEvents(),
   ]);
 
   if (attendanceResult.status !== 'fulfilled') {
@@ -241,7 +265,9 @@ const loadAdminDashboardData = async () => {
   const attendance = attendanceResult.value || {};
   const activeTasks = activeTasksResult.value || {};
   const leaves = leavesResult.status === 'fulfilled' ? (leavesResult.value || []) : [];
+  const upcomingLeaves = upcomingLeavesResult.status === 'fulfilled' ? (upcomingLeavesResult.value || []) : [];
   const employees = employeesResult.status === 'fulfilled' ? (employeesResult.value || []) : [];
+  const loginEvents = loginEventsResult.status === 'fulfilled' ? (loginEventsResult.value || {}) : {};
 
   const employeeNameMap = new Map(
     (employees || []).map((emp) => {
@@ -262,28 +288,41 @@ const loadAdminDashboardData = async () => {
     };
   });
 
+  const upcomingLeaveRows = (upcomingLeaves || []).map((leave) => {
+    const id = normalizeEmpId(leave.employee_id);
+    return {
+      employee_id: id,
+      employee_name: employeeNameMap.get(id) || id,
+      leave_type: leave.leave_type || 'Leave',
+      start_date: leave.start_date || '',
+      end_date: leave.end_date || leave.start_date || '',
+      total_days: leave.total_days || '',
+      days_until: leave.days_until,
+    };
+  });
+
+  const loginActivityRows = (loginEvents.daily_summary || []).map((row) => {
+    const id = normalizeEmpId(row.employee_id);
+    return {
+      employee_id: id,
+      employee_name: employeeNameMap.get(id) || id,
+      date: row.date || '',
+      check_in_time: row.check_in_time || '',
+      check_out_time: row.check_out_time || '',
+      is_checked_in: Boolean(row.check_in_time) && !row.check_out_time,
+    };
+  });
+
   return {
     attendance,
     activeTasks: activeTasks.items || [],
     leaveRows,
+    upcomingLeaveRows,
+    loginActivityRows,
   };
 };
 
 const buildDashboardLayout = (data) => {
-  const checkedInList = (data.attendance.checked_in_employees || [])
-    .filter(emp => emp.employee_id !== 'VTAB-0001' && emp.employee_name !== 'Vtab Admin')
-    .slice(0, 6);
-  const checkedInMarkup = checkedInList.length
-    ? `<ul class="mini-list">${checkedInList.map((emp) => `
-      <li>
-        <div>
-          <h4>${escapeHtml(emp.employee_name || emp.employee_id)}</h4>
-        </div>
-        <span class="badge">${escapeHtml(formatCheckInTime(emp.check_in))}</span>
-      </li>
-    `).join('')}</ul>`
-    : '<p class="placeholder-text">No employees are currently checked in.</p>';
-
   const leaveTableRows = data.leaveRows.length
     ? data.leaveRows.map((row) => `
       <tr>
@@ -295,6 +334,35 @@ const buildDashboardLayout = (data) => {
       </tr>
     `).join('')
     : '<tr><td colspan="5" style="color: var(--text-secondary);">No employees are on leave today.</td></tr>';
+
+  const upcomingLeaveTableRows = data.upcomingLeaveRows.length
+    ? data.upcomingLeaveRows.map((row) => `
+      <tr>
+        <td>${escapeHtml(row.employee_name)}</td>
+        <td>${escapeHtml(row.leave_type)}</td>
+        <td>${escapeHtml(formatDisplayDate(row.start_date))}</td>
+        <td>${escapeHtml(row.total_days || '--')}</td>
+        <td><span class="badge">${escapeHtml(formatUpcomingLabel(row.days_until))}</span></td>
+      </tr>
+    `).join('')
+    : '<tr><td colspan="5" style="color: var(--text-secondary);">No upcoming approved leaves in the next 3 days.</td></tr>';
+
+  const loginActivityRows = data.loginActivityRows.length
+    ? data.loginActivityRows.map((row) => `
+      <tr>
+        <td>
+          <div class="admin-employee-cell">
+            <strong>${escapeHtml(row.employee_id)}</strong>
+            <span>${escapeHtml(row.employee_name)}</span>
+          </div>
+        </td>
+        <td>${escapeHtml(row.date || '--')}</td>
+        <td>${escapeHtml(formatCheckInTime(row.check_in_time))}</td>
+        <td><span class="status-badge compact ${row.is_checked_in ? 'present' : 'absent'}">${row.is_checked_in ? 'Checked In' : 'Offline'}</span></td>
+        <td>${escapeHtml(formatCheckInTime(row.check_out_time))}</td>
+      </tr>
+    `).join('')
+    : '<tr><td colspan="5" style="color: var(--text-secondary);">No login activity available for today.</td></tr>';
 
   const activeTaskRows = data.activeTasks.length
     ? data.activeTasks
@@ -344,7 +412,7 @@ const buildDashboardLayout = (data) => {
           </div>
         </section>
 
-        <section class="card admin-card admin-card-span-2">
+        <section class="card admin-card">
           <header class="card-heading">
             <div>
               <p class="eyebrow">Leave</p>
@@ -373,13 +441,54 @@ const buildDashboardLayout = (data) => {
         <section class="card admin-card">
           <header class="card-heading">
             <div>
+              <p class="eyebrow">Leave</p>
+              <h3>Upcoming Leaves</h3>
+            </div>
+            <span class="badge">Next 3 days</span>
+          </header>
+          <div class="leave-table-scroll admin-table-scroll">
+            <table class="table leave-table">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Leave Type</th>
+                  <th>Leave Date</th>
+                  <th>Days</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${upcomingLeaveTableRows}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="card admin-card">
+          <header class="card-heading">
+            <div>
               <p class="eyebrow">Attendance</p>
               <h3>Employee Monitoring</h3>
             </div>
             <span class="badge">Today</span>
           </header>
           ${buildStatusDonut(data.attendance.checked_in_count || 0, data.attendance.not_checked_in_count || 0)}
-          ${checkedInMarkup}
+          <div class="admin-monitoring-table-wrap admin-table-scroll">
+            <table class="table leave-table admin-monitoring-table">
+              <thead>
+                <tr>
+                  <th>Employee</th>
+                  <th>Date</th>
+                  <th>Check-In</th>
+                  <th>Presence</th>
+                  <th>Check-Out</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${loginActivityRows}
+              </tbody>
+            </table>
+          </div>
         </section>
 
         <section class="card admin-card">
