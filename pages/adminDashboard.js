@@ -457,7 +457,7 @@ const buildDashboardLayout = (data) => {
           ${(data.idleEmployeeRows || []).length ? `<div style="padding:6px 16px 10px;font-size:0.75rem;color:var(--text-secondary);"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#f59e0b;margin-right:5px;"></span>${(data.idleEmployeeRows || []).length} employee${(data.idleEmployeeRows || []).length > 1 ? 's' : ''} checked in but no task started</div>` : ''}
         </section>
 
-        <section class="card admin-card">
+        <section class="card admin-card admin-card-span-2">
           <header class="card-heading">
             <div>
               <p class="eyebrow">Leave</p>
@@ -483,7 +483,6 @@ const buildDashboardLayout = (data) => {
           </div>
         </section>
 
-        
         <section class="card admin-card">
           <header class="card-heading">
             <div>
