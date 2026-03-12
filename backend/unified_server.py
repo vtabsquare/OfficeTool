@@ -7235,12 +7235,13 @@ def get_upcoming_leaves():
         print(f"   [DATE] Filter range: {start_date} to {end_date}")
         print(f"   [DATE] Days remaining in month: {days}")
 
-        # Fetch approved leaves and apply date-window filtering server-side.
-        # This is resilient to Dataverse returning either date-only or datetime strings.
+        # Fetch ALL leaves without status filter - Dataverse may store status
+        # in different cases (e.g. "approved", "Approved", "APPROVED").
+        # Filter status and date window in Python, same pattern as the working
+        # attendance monthly overlay code (line ~5143 in this file).
         filter_query = (
             "?$select="
             "crc6f_employeeid,crc6f_leavetype,crc6f_startdate,crc6f_enddate,crc6f_totaldays,crc6f_status"
-            "&$filter=crc6f_status eq 'Approved'"
             "&$top=5000"
         )
         url = f"{RESOURCE}/api/data/v9.2/{LEAVE_ENTITY}{filter_query}"
@@ -7256,13 +7257,18 @@ def get_upcoming_leaves():
             }), 500
 
         records = response.json().get("value", [])
-        print(f"   [DATA] Found {len(records)} upcoming leave records from Dataverse")
+        print(f"   [DATA] Total leave records from Dataverse: {len(records)}")
 
         leaves = []
         for r in records:
             raw_start = str(r.get("crc6f_startdate") or "").strip()
             emp_id = r.get("crc6f_employeeid")
             leave_type = r.get("crc6f_leavetype")
+            status_raw = (r.get("crc6f_status") or "").strip().lower()
+
+            # Filter by approved status case-insensitively
+            if status_raw != "approved":
+                continue
 
             try:
                 start_dt = datetime.strptime(raw_start[:10], "%Y-%m-%d").date()
@@ -7277,7 +7283,7 @@ def get_upcoming_leaves():
             raw_end = str(r.get("crc6f_enddate") or "").strip()
             normalized_end = raw_end[:10] if raw_end else raw_start[:10]
 
-            print(f"   [LEAVE] {emp_id} - {leave_type} - Start: {raw_start} - Days until: {days_until}")
+            print(f"   [LEAVE] {emp_id} - {leave_type} - Start: {raw_start} - Status: {r.get('crc6f_status')} - Days until: {days_until}")
 
             leaves.append({
                 "employee_id": emp_id,
