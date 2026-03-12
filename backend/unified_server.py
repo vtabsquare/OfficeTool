@@ -7225,20 +7225,23 @@ def get_upcoming_leaves():
 
         today_dt = datetime.now().date()
         last_day = monthrange(today_dt.year, today_dt.month)[1]
-        start_date = (today_dt + timedelta(days=1)).isoformat()
-        end_date = today_dt.replace(day=last_day).isoformat()
-        days = max(0, (datetime.strptime(end_date, "%Y-%m-%d").date() - today_dt).days)
+        range_start_dt = today_dt + timedelta(days=1)
+        range_end_dt = today_dt.replace(day=last_day)
+        start_date = range_start_dt.isoformat()
+        end_date = range_end_dt.isoformat()
+        days = max(0, (range_end_dt - today_dt).days)
 
         print(f"   [DATE] Today: {today_dt.isoformat()}")
         print(f"   [DATE] Filter range: {start_date} to {end_date}")
         print(f"   [DATE] Days remaining in month: {days}")
 
-        # Use date comparison with datetime format for Dataverse
+        # Fetch approved leaves and apply date-window filtering server-side.
+        # This is resilient to Dataverse returning either date-only or datetime strings.
         filter_query = (
             "?$select="
             "crc6f_employeeid,crc6f_leavetype,crc6f_startdate,crc6f_enddate,crc6f_totaldays,crc6f_status"
-            f"&$filter=crc6f_status eq 'Approved' and "
-            f"crc6f_startdate ge '{start_date}T00:00:00Z' and crc6f_startdate le '{end_date}T23:59:59Z'"
+            "&$filter=crc6f_status eq 'Approved'"
+            "&$top=5000"
         )
         url = f"{RESOURCE}/api/data/v9.2/{LEAVE_ENTITY}{filter_query}"
         print(f"   [URL] Request URL: {url}")
@@ -7257,22 +7260,30 @@ def get_upcoming_leaves():
 
         leaves = []
         for r in records:
-            raw_start = r.get("crc6f_startdate") or ""
+            raw_start = str(r.get("crc6f_startdate") or "").strip()
             emp_id = r.get("crc6f_employeeid")
             leave_type = r.get("crc6f_leavetype")
 
             try:
-                days_until = (datetime.strptime(raw_start, "%Y-%m-%d").date() - today_dt).days
+                start_dt = datetime.strptime(raw_start[:10], "%Y-%m-%d").date()
             except Exception:
-                days_until = None
+                continue
+
+            # Upcoming for this month: tomorrow .. month end
+            if start_dt < range_start_dt or start_dt > range_end_dt:
+                continue
+
+            days_until = (start_dt - today_dt).days
+            raw_end = str(r.get("crc6f_enddate") or "").strip()
+            normalized_end = raw_end[:10] if raw_end else raw_start[:10]
 
             print(f"   [LEAVE] {emp_id} - {leave_type} - Start: {raw_start} - Days until: {days_until}")
 
             leaves.append({
                 "employee_id": emp_id,
                 "leave_type": leave_type,
-                "start_date": raw_start,
-                "end_date": r.get("crc6f_enddate") or raw_start,
+                "start_date": raw_start[:10],
+                "end_date": normalized_end,
                 "total_days": r.get("crc6f_totaldays"),
                 "status": r.get("crc6f_status"),
                 "days_until": days_until,
@@ -7302,36 +7313,6 @@ def get_upcoming_leaves():
             "error": str(e),
             "leaves": []
         }), 500
-
-
-@app.route('/api/debug/leaves/<employee_id>', methods=['GET'])
-def debug_employee_leaves(employee_id):
-    """Debug endpoint to see raw leave data for an employee"""
-    try:
-        token = get_access_token()
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "Accept": "application/json",
-            "OData-MaxVersion": "4.0",
-            "OData-Version": "4.0"
-        }
-        
-        safe_emp = employee_id.replace("'", "''").upper()
-        url = f"{RESOURCE}/api/data/v9.2/{LEAVE_ENTITY}?$filter=crc6f_employeeid eq '{safe_emp}'"
-        
-        response = requests.get(url, headers=headers)
-        if response.status_code != 200:
-            return jsonify({"success": False, "error": f"HTTP {response.status_code}"}), 500
-        
-        records = response.json().get("value", [])
-        return jsonify({
-            "success": True,
-            "employee_id": safe_emp,
-            "count": len(records),
-            "leaves": records
-        }), 200
-    except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
 
 
 @app.route('/api/admin/attendance-monitoring/today', methods=['GET'])
