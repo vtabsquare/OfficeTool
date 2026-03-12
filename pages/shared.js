@@ -13,6 +13,7 @@ import { listEmployees } from '../features/employeeApi.js';
 import { isCheckedIn } from '../features/attendanceRenderer.js';
 import { apiBase } from '../config.js';
 import { cachedFetch, TTL } from '../features/cache.js';
+import { runWithSubmissionLoading } from '../utils/submissionLoading.js';
 
 let currentInboxTab = 'awaiting';
 let currentInboxCategory = 'leaves';
@@ -383,9 +384,6 @@ const openTeamTsEditModal = async (employeeId, workDate) => {
     }, 30);
 };
 
-// Resolve current employee ID (cached to avoid repeated 5000-employee fetches)
-let _resolvedEmpIdCache = null;
-let _resolvedEmpIdPromise = null;
 const resolveCurrentEmployeeId = async () => {
     // Return cached result if available
     if (_resolvedEmpIdCache) return _resolvedEmpIdCache;
@@ -1676,7 +1674,7 @@ export const renderMyTimesheetPage = async () => {
         const content = `
         <style>
             :root { --ts-blue: #1e88e5; --ts-blue-light:#e3f2fd; --ts-gray:#f3f4f6; }
-            .ts-header { background: var(--ts-blue); color: #fff; padding: 16px 20px; display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; border-radius: 12px 12px 0 0; box-shadow: 0 2px 6px rgba(0,0,0,0.08); }
+            .ts-header { background: var(--ts-blue); color:#fff; padding:16px 20px; border-radius:12px 12px 0 0; box-shadow:0 2px 6px rgba(0,0,0,0.08); display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap; }
             .ts-header h2 { margin:0; font-size: 18px; font-weight:700; opacity:.95; }
             .ts-week-nav { display: flex; gap: 12px; align-items: center; justify-content: center; }
             .ts-week-nav button { background: rgba(255,255,255,0.2); border: none; color: #fff; padding: 8px 12px; border-radius: 999px; cursor: pointer; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.25); }
@@ -1984,6 +1982,10 @@ export const renderMyTimesheetPage = async () => {
                         const ovMap = loadOverrides();
                         if (Object.prototype.hasOwnProperty.call(ovMap, rowKey)) {
                             delete ovMap[rowKey];
+                            // Remove the entire key array if it's now empty
+                            if (ovMap[rowKey].every(val => val === undefined || val === null)) {
+                                delete ovMap[rowKey];
+                            }
                             saveOverrides(ovMap);
                         }
                     } catch { }
@@ -2038,106 +2040,104 @@ export const renderMyTimesheetPage = async () => {
         const submitBtn = document.getElementById('ts-submit');
         if (submitBtn) {
             submitBtn.onclick = async () => {
-                const s = startOfWeek(anchor);
-                const e = endOfWeek(anchor);
-                const weekKey = `ts_manual_${fmt(s)}_${fmt(e)}`;
-                const overridesKey = `${weekKey}_overrides`;
-                let overridesMap = {};
-                try { overridesMap = JSON.parse(sessionStorage.getItem(overridesKey) || '{}'); } catch { overridesMap = {}; }
+                await runWithSubmissionLoading(async () => {
+                    const s = startOfWeek(anchor);
+                    const e = endOfWeek(anchor);
+                    const weekKey = `ts_manual_${fmt(s)}_${fmt(e)}`;
+                    const overridesKey = `${weekKey}_overrides`;
+                    let overridesMap = {};
+                    try { overridesMap = JSON.parse(sessionStorage.getItem(overridesKey) || '{}'); } catch { overridesMap = {}; }
 
-                const today = new Date();
-                const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+                    const today = new Date();
+                    const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
 
-                const entries = [];
-                const ensureSeconds = (v) => {
-                    if (v === null || v === undefined) return 0;
-                    const n = Number(v);
-                    return Number.isFinite(n) ? n : 0;
-                };
+                    const entries = [];
+                    const ensureSeconds = (v) => {
+                        if (v === null || v === undefined) return 0;
+                        const n = Number(v);
+                        return Number.isFinite(n) ? n : 0;
+                    };
 
-                gridRows.forEach(row => {
-                    const key = rowKeyFor(row);
-                    const ov = overridesMap[key] || [];
-                    for (let i = 0; i < 7; i++) {
-                        const d = new Date(s); d.setDate(s.getDate() + i);
-                        const yyyy = d.getFullYear();
-                        const mm = String(d.getMonth() + 1).padStart(2, '0');
-                        const dd = String(d.getDate()).padStart(2, '0');
-                        const workDate = `${yyyy}-${mm}-${dd}`;
-                        if (workDate > todayStr) continue;
-                        const baseSecs = ensureSeconds(row.hours[i]);
-                        const overrideSecs = (ov[i] === null || ov[i] === undefined) ? null : ensureSeconds(ov[i]);
-                        const secs = overrideSecs !== null ? overrideSecs : baseSecs;
-                        if (!secs) continue;
+                    gridRows.forEach(row => {
+                        const key = rowKeyFor(row);
+                        const ov = overridesMap[key] || [];
+                        for (let i = 0; i < 7; i++) {
+                            const d = new Date(s); d.setDate(s.getDate() + i);
+                            const yyyy = d.getFullYear();
+                            const mm = String(d.getMonth() + 1).padStart(2, '0');
+                            const dd = String(d.getDate()).padStart(2, '0');
+                            const workDate = `${yyyy}-${mm}-${dd}`;
+                            if (workDate > todayStr) continue;
+                            const baseSecs = ensureSeconds(row.hours[i]);
+                            const overrideSecs = (ov[i] === null || ov[i] === undefined) ? null : ensureSeconds(ov[i]);
+                            const secs = overrideSecs !== null ? overrideSecs : baseSecs;
+                            if (!secs) continue;
 
-                        const project = projects.find(p => (p.crc6f_projectid || p.id) === row.project_id) || {};
-                        const projectId = row.project_id || project.crc6f_projectid || project.id || '';
-                        const projectName = project.crc6f_projectname || project.name || row.project_name || projectId;
+                            const project = projects.find(p => (p.crc6f_projectid || p.id) === row.project_id) || {};
+                            const projectId = row.project_id || project.crc6f_projectid || project.id || '';
+                            const projectName = project.crc6f_projectname || project.name || row.project_name || projectId;
 
-                        entries.push({
-                            date: workDate,
-                            project_id: projectId,
-                            project_name: projectName || '',
-                            task_id: row.task_id || '',
-                            task_guid: row.task_guid || '',
-                            task_name: row.task_name || '',
-                            seconds: secs,
-                            hours_worked: Math.round((secs / 3600) * 100) / 100,
-                            description: ''
-                        });
-                    }
-                });
-
-                if (!entries.length) {
-                    showToast('No time entries to submit for this week.');
-                    return;
-                }
-
-                const fullName = `${user.first_name || user.firstName || ''} ${user.last_name || user.lastName || ''}`.trim();
-                const employeeName = fullName || user.name || user.displayName || '';
-
-                const payload = {
-                    employee_id: empId,
-                    employee_name: employeeName,
-                    entries
-                };
-
-                try {
-                    const res = await fetch(`${API}/time-tracker/timesheet/submit`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(payload)
+                            entries.push({
+                                date: workDate,
+                                project_id: projectId,
+                                project_name: projectName || '',
+                                task_id: row.task_id || '',
+                                task_guid: row.task_guid || '',
+                                task_name: row.task_name || '',
+                                seconds: secs,
+                                hours_worked: Math.round((secs / 3600) * 100) / 100,
+                                description: ''
+                            });
+                        }
                     });
-                    const data = await res.json().catch(() => ({}));
-                    if (!res.ok || !data.success) {
-                        showToast(`Failed to submit timesheet: ${data.error || res.status}`);
+
+                    if (!entries.length) {
+                        showToast('No time entries to submit for this week.');
                         return;
                     }
-                    try { sessionStorage.removeItem(weekKey); } catch { }
-                    try { sessionStorage.removeItem(overridesKey); } catch { }
-                    if (submissionStatusTimer) {
-                        clearTimeout(submissionStatusTimer);
-                        submissionStatusTimer = null;
-                    }
-                    submissionStatusMsg = 'Timesheet submitted.';
-                    submissionStatusTimer = setTimeout(() => {
-                        submissionStatusMsg = '';
-                        if (window.location.hash === '#/time-my-timesheet') {
-                            try { render(); } catch { }
+
+                    const fullName = `${user.first_name || user.firstName || ''} ${user.last_name || user.lastName || ''}`.trim();
+                    const employeeName = fullName || user.name || user.displayName || '';
+
+                    const payload = {
+                        employee_id: empId,
+                        employee_name: employeeName,
+                        entries
+                    };
+
+                    try {
+                        const res = await fetch(`${API}/time-tracker/timesheet/submit`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(payload)
+                        });
+                        const data = await res.json().catch(() => ({}));
+                        if (!res.ok || !data.success) {
+                            showToast(`Failed to submit timesheet: ${data.error || res.status}`);
+                            return;
                         }
-                    }, 5000);
+                        try { sessionStorage.removeItem(weekKey); } catch { }
+                        try { sessionStorage.removeItem(overridesKey); } catch { }
+                        if (submissionStatusTimer) {
+                            clearTimeout(submissionStatusTimer);
+                            submissionStatusTimer = null;
+                        }
+                        submissionStatusMsg = 'Timesheet submitted.';
+                        submissionStatusTimer = setTimeout(() => {
+                            submissionStatusMsg = '';
+                            if (window.location.hash === '#/time-my-timesheet') {
+                                try { render(); } catch { }
+                            }
+                        }, 5000);
 
-                    // Show the submission summary popup
-                    showTimesheetSubmissionSummary(entries);
-
-                    // Notify admin/manager about the new timesheet submission
-                    try { await updateNotificationBadge(); } catch (e) { console.warn('Notification badge update failed', e); }
-
-                    await render();
-                } catch (err) {
-                    console.error('Timesheet submit failed', err);
-                    showToast('Failed to submit timesheet. Please try again.');
-                }
+                        showTimesheetSubmissionSummary(entries);
+                        try { await updateNotificationBadge(); } catch (e) { console.warn('Notification badge update failed', e); }
+                        await render();
+                    } catch (err) {
+                        console.error('Timesheet submit failed', err);
+                        showToast('Failed to submit timesheet. Please try again.');
+                    }
+                }, 'Submitting timesheet...');
             };
         }
 
@@ -2544,7 +2544,8 @@ export const renderTeamTimesheetPage = async () => {
               ${rows || `<div class="placeholder-text" style="padding:24px;">No employees found</div>`}
             </div>
             <div class="tt-footnote">Approved timesheet entries alone are recorded in My Team Timesheet.</div>
-          </div>`;
+          </div>
+        `;
         document.getElementById('app-content').innerHTML = getPageContentHTML('My Team Timesheet', content);
         setTimeout(() => attachTeamTsEvents(), 0);
     } catch (err) {
@@ -2764,22 +2765,24 @@ const showClientModal = async (recordId) => {
         if (!form) return;
         form.addEventListener('submit', async (e) => {
             e.preventDefault();
-            try {
-                const payload = collectClientForm();
-                validateClient(payload);
-                if (isEdit) {
-                    await updateClient(recordId, payload);
-                    showToast('Client updated successfully', 'success');
-                } else {
-                    await createClient(payload);
-                    showToast('Client created successfully', 'success');
+            await runWithSubmissionLoading(async () => {
+                try {
+                    const payload = collectClientForm();
+                    validateClient(payload);
+                    if (isEdit) {
+                        await updateClient(recordId, payload);
+                        showToast('Client updated successfully', 'success');
+                    } else {
+                        await createClient(payload);
+                        showToast('Client created successfully', 'success');
+                    }
+                    await renderTTClientsPage();
+                    closeModal();
+                } catch (err) {
+                    console.error(err);
+                    showToast(err?.message || 'Failed to save client', 'error');
                 }
-                await renderTTClientsPage();
-                closeModal();
-            } catch (err) {
-                console.error(err);
-                showToast(err?.message || 'Failed to save client', 'error');
-            }
+            }, isEdit ? 'Updating client...' : 'Creating client...');
         });
     }, 50);
 };

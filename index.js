@@ -27,6 +27,7 @@ import { updateNotificationBadge, handleNotificationBellClick, startNotification
 import { connectSocket } from './src/socket.js';
 import { initAiAssistant } from './components/AiAssistant.js';
 import { deriveRoleInfo } from './utils/accessHelpers.js';
+import { runWithSubmissionLoading } from './utils/submissionLoading.js';
 import { API_BASE_URL as CONFIG_API_BASE_URL } from './config.js';
 
 const normalizeApiBase = () => String(CONFIG_API_BASE_URL).replace(/\/$/, '');
@@ -1057,54 +1058,77 @@ const init = async () => {
     }
   });
 
-  document.body.addEventListener('submit', (e) => {
+  document.body.addEventListener('submit', async (e) => {
     if (e.target.id === 'modal-form') {
       const form = e.target;
+      let handler = null;
+      let message = 'Please wait while we process your request.';
       // Check for buttons WITHIN this form, not in the entire document
       if (form.querySelector("#save-employee-btn")) {
-        handleAddEmployee(e);
+        handler = () => handleAddEmployee(e);
+        message = 'Saving employee...';
       } else if (form.querySelector("#save-intern-btn")) {
-        handleAddIntern(e);
+        handler = () => handleAddIntern(e);
+        message = 'Saving intern...';
       } else if (form.querySelector("#update-employee-btn")) {
-        handleUpdateEmployee(e);
+        handler = () => handleUpdateEmployee(e);
+        message = 'Updating employee...';
       } else if (form.querySelector("#submit-leave-btn")) {
-        handleApplyLeave(e);
+        handler = () => handleApplyLeave(e);
+        message = 'Submitting leave request...';
       } else if (form.querySelector("#update-leave-btn")) {
-        handleEditLeave(e);
+        handler = () => handleEditLeave(e);
+        message = 'Updating leave...';
       } else if (form.querySelector("#inbox-submit-approve-btn")) {
-        handleInboxApproveLeave(e);
+        handler = () => handleInboxApproveLeave(e);
+        message = 'Approving leave...';
       } else if (form.querySelector("#inbox-submit-reject-btn")) {
-        handleInboxRejectLeave(e);
+        handler = () => handleInboxRejectLeave(e);
+        message = 'Rejecting leave...';
       } else if (form.querySelector("#compoff-submit-reject-btn")) {
-        handleCompOffReject(e);
+        handler = () => handleCompOffReject(e);
+        message = 'Rejecting comp off request...';
       } else if (form.querySelector("#timesheet-submit-reject-btn")) {
-        handleTimesheetReject(e);
+        handler = () => handleTimesheetReject(e);
+        message = 'Rejecting timesheet...';
       } else if (form.querySelector("#upload-csv-btn")) {
-        handleBulkUpload(e);
+        handler = () => handleBulkUpload(e);
+        message = 'Uploading records...';
       } else if (form.querySelector("#restore-confirm-btn")) {
-        // Check restore BEFORE bulk-delete to give it priority
-        handleRestoreConfirm(e);
+        handler = () => handleRestoreConfirm(e);
+        message = 'Restoring records...';
       } else if (form.querySelector("#bulk-delete-confirm-btn")) {
-        handleBulkDeleteConfirm(e);
+        handler = () => handleBulkDeleteConfirm(e);
+        message = 'Deleting records...';
       } else if (form.querySelector("#save-asset-btn")) {
-        // Asset Save
         e.preventDefault();
         const assetId =
           document.getElementById("assetName")?.dataset?.id || null;
-        handleSaveAsset(assetId);
+        handler = () => handleSaveAsset(assetId);
+        message = 'Saving asset...';
       } else if (document.getElementById("submit-compoff-btn")) {
-        handleRequestCompOff(e);
+        handler = () => handleRequestCompOff(e);
+        message = 'Submitting comp off request...';
       } else if (document.getElementById("update-compoff-balance-btn")) {
-        handleUpdateCompOffBalance(e);
+        handler = () => handleUpdateCompOffBalance(e);
+        message = 'Updating comp off balance...';
+      }
+
+      if (handler) {
+        await runWithSubmissionLoading(async () => {
+          await handler();
+        }, message);
       }
     }
-    // Full-page bulk upload form
     if (e.target.id === 'bulk-upload-form') {
-      handleBulkUpload(e);
+      await runWithSubmissionLoading(async () => {
+        await handleBulkUpload(e);
+      }, 'Uploading records...');
     }
-    // Full-page bulk delete form
     if (e.target.id === 'bulk-delete-form') {
-      handleBulkDeleteConfirm(e);
+      await runWithSubmissionLoading(async () => {
+        await handleBulkDeleteConfirm(e);
+      }, 'Deleting records...');
     }
   });
 

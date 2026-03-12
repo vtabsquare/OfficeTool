@@ -6,6 +6,7 @@ import { renderModal, closeModal } from '../components/modal.js';
 import { clearCacheByPrefix } from '../features/cache.js';
 import { isAdminUser, isManagerOrAdmin, isTeamLeadUser } from '../utils/accessControl.js';
 import { fetchLoginEvents } from '../features/loginSettingsApi.js';
+import { runWithSubmissionLoading } from '../utils/submissionLoading.js';
 
 const isManagerUserAttendance = () => {
     try {
@@ -1190,42 +1191,42 @@ async function handleSubmitAttendance() {
         return;
     }
 
-    try {
-        console.log(`📤 Submitting attendance for ${employeeId} - ${year}/${month}`);
+    await runWithSubmissionLoading(async () => {
+        try {
+            console.log(`📤 Submitting attendance for ${employeeId} - ${year}/${month}`);
 
-        const response = await fetch(`${API_BASE_URL}/api/attendance/submit`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                employee_id: employeeId,
-                year: year,
-                month: month
-            })
-        });
+            const response = await fetch(`${API_BASE_URL}/api/attendance/submit`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    employee_id: employeeId,
+                    year: year,
+                    month: month
+                })
+            });
 
-        const data = await response.json();
+            const data = await response.json();
 
-        if (!response.ok || !data.success) {
-            throw new Error(data.error || 'Failed to submit attendance');
+            if (!response.ok || !data.success) {
+                throw new Error(data.error || 'Failed to submit attendance');
+            }
+
+            alert('✅ Attendance submitted successfully! It has been sent to admin for review.');
+            console.log('✅ Attendance submitted to admin inbox');
+
+            const submitBtn = document.getElementById('submit-attendance-btn');
+            if (submitBtn) {
+                submitBtn.disabled = true;
+                submitBtn.innerHTML = '<i class="fa-solid fa-check"></i> Submitted';
+                submitBtn.classList.remove('btn-success');
+                submitBtn.classList.add('btn-secondary');
+                submitBtn.style.cursor = 'not-allowed';
+            }
+        } catch (error) {
+            console.error('❌ Failed to submit attendance:', error);
+            alert(`❌ Failed to submit attendance: ${error.message || error}`);
         }
-
-        alert('✅ Attendance submitted successfully! It has been sent to admin for review.');
-        console.log('✅ Attendance submitted to admin inbox');
-
-        // Disable the submit button
-        const submitBtn = document.getElementById('submit-attendance-btn');
-        if (submitBtn) {
-            submitBtn.disabled = true;
-            submitBtn.innerHTML = '<i class="fa-solid fa-check"></i> Submitted';
-            submitBtn.classList.remove('btn-success');
-            submitBtn.classList.add('btn-secondary');
-            submitBtn.style.cursor = 'not-allowed';
-        }
-
-    } catch (error) {
-        console.error('❌ Failed to submit attendance:', error);
-        alert(`❌ Failed to submit attendance: ${error.message || error}`);
-    }
+    }, 'Submitting attendance...');
 }
 
 export const handleAttendanceNav = async (direction) => {
