@@ -7229,10 +7229,16 @@ def get_upcoming_leaves():
         end_date = today_dt.replace(day=last_day).isoformat()
         days = max(0, (datetime.strptime(end_date, "%Y-%m-%d").date() - today_dt).days)
 
+        print(f"   [DATE] Today: {today_dt.isoformat()}")
+        print(f"   [DATE] Filter range: {start_date} to {end_date}")
+        print(f"   [DATE] Days remaining in month: {days}")
+
+        # Use date comparison with datetime format for Dataverse
         filter_query = (
             "?$select="
             "crc6f_employeeid,crc6f_leavetype,crc6f_startdate,crc6f_enddate,crc6f_totaldays,crc6f_status"
-            f"&$filter=crc6f_status eq 'Approved' and crc6f_startdate ge '{start_date}' and crc6f_startdate le '{end_date}'"
+            f"&$filter=crc6f_status eq 'Approved' and "
+            f"crc6f_startdate ge '{start_date}T00:00:00Z' and crc6f_startdate le '{end_date}T23:59:59Z'"
         )
         url = f"{RESOURCE}/api/data/v9.2/{LEAVE_ENTITY}{filter_query}"
         print(f"   [URL] Request URL: {url}")
@@ -7247,17 +7253,24 @@ def get_upcoming_leaves():
             }), 500
 
         records = response.json().get("value", [])
+        print(f"   [DATA] Found {len(records)} upcoming leave records from Dataverse")
+
         leaves = []
         for r in records:
             raw_start = r.get("crc6f_startdate") or ""
+            emp_id = r.get("crc6f_employeeid")
+            leave_type = r.get("crc6f_leavetype")
+
             try:
                 days_until = (datetime.strptime(raw_start, "%Y-%m-%d").date() - today_dt).days
             except Exception:
                 days_until = None
 
+            print(f"   [LEAVE] {emp_id} - {leave_type} - Start: {raw_start} - Days until: {days_until}")
+
             leaves.append({
-                "employee_id": r.get("crc6f_employeeid"),
-                "leave_type": r.get("crc6f_leavetype"),
+                "employee_id": emp_id,
+                "leave_type": leave_type,
                 "start_date": raw_start,
                 "end_date": r.get("crc6f_enddate") or raw_start,
                 "total_days": r.get("crc6f_totaldays"),
@@ -7289,6 +7302,36 @@ def get_upcoming_leaves():
             "error": str(e),
             "leaves": []
         }), 500
+
+
+@app.route('/api/debug/leaves/<employee_id>', methods=['GET'])
+def debug_employee_leaves(employee_id):
+    """Debug endpoint to see raw leave data for an employee"""
+    try:
+        token = get_access_token()
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json",
+            "OData-MaxVersion": "4.0",
+            "OData-Version": "4.0"
+        }
+        
+        safe_emp = employee_id.replace("'", "''").upper()
+        url = f"{RESOURCE}/api/data/v9.2/{LEAVE_ENTITY}?$filter=crc6f_employeeid eq '{safe_emp}'"
+        
+        response = requests.get(url, headers=headers)
+        if response.status_code != 200:
+            return jsonify({"success": False, "error": f"HTTP {response.status_code}"}), 500
+        
+        records = response.json().get("value", [])
+        return jsonify({
+            "success": True,
+            "employee_id": safe_emp,
+            "count": len(records),
+            "leaves": records
+        }), 200
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
 
 
 @app.route('/api/admin/attendance-monitoring/today', methods=['GET'])
