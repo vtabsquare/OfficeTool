@@ -3395,7 +3395,7 @@ function taskCardHtml(t, index, projectId) {
   const taskType = String(t.task_type || t.type || "").trim().toLowerCase();
   const isBug = taskType === "bug" || taskId.startsWith("BUG");
   const workItemIcon = isBug
-    ? '<i class="fa-solid fa-bug" title="Bug" style="color:#dc2626; margin-right:6px;"></i>'
+    ? '<span class="task-bug-pill" title="Bug">Bug</span>'
     : "";
 
   // 🔹 Assignee initials (max 2)

@@ -8770,6 +8770,22 @@ body.dark-theme .onboarding-main-stepper .stepper-item.completed .stepper-label-
   color: var(--text-primary);
 }
 
+.task-bug-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-right: 6px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #dc2626;
+  color: #ffffff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.2;
+  text-transform: uppercase;
+  vertical-align: middle;
+}
+
 .kan-card-menu {
   position: relative;
 }
