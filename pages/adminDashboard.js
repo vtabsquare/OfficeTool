@@ -1,7 +1,7 @@
 import { getPageContentHTML } from '../utils.js';
 import { API_BASE_URL } from '../config.js';
 import { timedFetch } from '../features/timedFetch.js';
-import { fetchOnLeaveToday, fetchUpcomingLeaves } from '../features/leaveApi.js';
+import { fetchOnLeaveToday } from '../features/leaveApi.js';
 import { listAllEmployees } from '../features/employeeApi.js';
 import { fetchLoginEvents } from '../features/loginSettingsApi.js';
 import { isAdminUser } from '../utils/accessControl.js';
@@ -245,11 +245,10 @@ const fetchActiveTaskSnapshot = async () => {
 };
 
 const loadAdminDashboardData = async () => {
-  const [attendanceResult, activeTasksResult, leavesResult, upcomingLeavesResult, employeesResult, loginEventsResult] = await Promise.allSettled([
+  const [attendanceResult, activeTasksResult, leavesResult, employeesResult, loginEventsResult] = await Promise.allSettled([
     fetchAttendanceMonitoring(),
     fetchActiveTaskSnapshot(),
-    fetchOnLeaveToday(),
-    fetchUpcomingLeaves(),
+    fetchOnLeaveToday([], { includeUpcoming: true }),
     listAllEmployees(),
     fetchLoginEvents(),
   ]);
@@ -264,8 +263,9 @@ const loadAdminDashboardData = async () => {
 
   const attendance = attendanceResult.value || {};
   const activeTasks = activeTasksResult.value || {};
-  const leaves = leavesResult.status === 'fulfilled' ? (leavesResult.value || []) : [];
-  const upcomingLeaves = upcomingLeavesResult.status === 'fulfilled' ? (upcomingLeavesResult.value || []) : [];
+  const leaveBundle = leavesResult.status === 'fulfilled' ? (leavesResult.value || {}) : {};
+  const leaves = leaveBundle.leaves || [];
+  const upcomingLeaves = leaveBundle.upcoming_leaves || [];
   const employees = employeesResult.status === 'fulfilled' ? (employeesResult.value || []) : [];
   const loginEvents = loginEventsResult.status === 'fulfilled' ? (loginEventsResult.value || {}) : {};
 
@@ -285,6 +285,7 @@ const loadAdminDashboardData = async () => {
       leave_type: leave.leave_type || 'Leave',
       start_date: leave.start_date || '',
       end_date: leave.end_date || leave.start_date || '',
+      row_kind: 'today',
     };
   });
 
@@ -314,6 +315,7 @@ const loadAdminDashboardData = async () => {
       end_date: leave.end_date || leave.start_date || '',
       total_days: leave.total_days || '',
       days_until: leave.days_until,
+      row_kind: 'upcoming',
     };
   });
 
@@ -340,8 +342,23 @@ const loadAdminDashboardData = async () => {
 };
 
 const buildDashboardLayout = (data) => {
-  const leaveTableRows = data.leaveRows.length
-    ? data.leaveRows.map((row) => `
+  const combinedLeaveRows = [
+    ...(data.leaveRows || []),
+    ...((data.upcomingLeaveRows || []).length ? [{ row_kind: 'separator' }] : []),
+    ...(data.upcomingLeaveRows || []),
+  ];
+
+  const leaveTableRows = combinedLeaveRows.length
+    ? combinedLeaveRows.map((row) => {
+      if (row.row_kind === 'separator') {
+        return `
+      <tr>
+        <td colspan="5" style="background: rgba(148, 163, 184, 0.08); color: var(--text-secondary); font-weight: 600;">Upcoming Approved Leaves This Month</td>
+      </tr>
+    `;
+      }
+      if (row.row_kind === 'upcoming') {
+        return `
       <tr>
         <td>${escapeHtml(row.employee_id)}</td>
         <td>${escapeHtml(row.employee_name)}</td>
@@ -349,20 +366,19 @@ const buildDashboardLayout = (data) => {
         <td>${escapeHtml(row.start_date)}</td>
         <td>${escapeHtml(row.end_date)}</td>
       </tr>
-    `).join('')
-    : '<tr><td colspan="5" style="color: var(--text-secondary);">No employees are on leave today.</td></tr>';
-
-  const upcomingLeaveTableRows = data.upcomingLeaveRows.length
-    ? data.upcomingLeaveRows.map((row) => `
+    `;
+      }
+      return `
       <tr>
+        <td>${escapeHtml(row.employee_id)}</td>
         <td>${escapeHtml(row.employee_name)}</td>
         <td>${escapeHtml(row.leave_type)}</td>
-        <td>${escapeHtml(formatDisplayDate(row.start_date))}</td>
-        <td>${escapeHtml(row.total_days || '--')}</td>
-        <td><span class="badge">${escapeHtml(formatUpcomingLabel(row.days_until))}</span></td>
+        <td>${escapeHtml(row.start_date)}</td>
+        <td>${escapeHtml(row.end_date)}</td>
       </tr>
-    `).join('')
-    : '<tr><td colspan="5" style="color: var(--text-secondary);">No upcoming leaves for this month.</td></tr>';
+    `;
+    }).join('')
+    : '<tr><td colspan="5" style="color: var(--text-secondary);">No employees are on leave today.</td></tr>';
 
   const loginActivityRows = data.loginActivityRows.length
     ? data.loginActivityRows.map((row) => `
@@ -445,9 +461,9 @@ const buildDashboardLayout = (data) => {
           <header class="card-heading">
             <div>
               <p class="eyebrow">Leave</p>
-              <h3>On Leave Today</h3>
+              <h3>On Leave Today & Upcoming This Month</h3>
             </div>
-            <span class="badge">Filter: Today</span>
+            <span class="badge">Today + This month</span>
           </header>
           <div class="leave-table-scroll admin-table-scroll">
             <table class="table leave-table">

@@ -7143,6 +7143,11 @@ def get_on_leave_today():
         # Get employee IDs from query parameter
         employee_ids = request.args.get('employee_ids', '')
         ids_list = [v.strip().upper() for v in employee_ids.split(',') if v.strip()]
+        include_upcoming = str(request.args.get('include_upcoming', '') or '').strip().lower() in ('1', 'true', 'yes')
+
+        today_dt = datetime.now().date()
+        month_last_day = monthrange(today_dt.year, today_dt.month)[1]
+        month_end = today_dt.replace(day=month_last_day).isoformat()
 
         # Build filter for approved leaves that include today
         date_filter = f"crc6f_startdate le '{today}' and crc6f_enddate ge '{today}' and crc6f_status eq 'Approved'"
@@ -7185,14 +7190,53 @@ def get_on_leave_today():
                 "reason": r.get("crc6f_reason", "")
             })
 
+        upcoming_leaves = []
+        if include_upcoming:
+            upcoming_filter = f"crc6f_startdate gt '{today}' and crc6f_startdate le '{month_end}' and crc6f_status eq 'Approved'"
+            if ids_list:
+                emp_filter_parts = [f"crc6f_employeeid eq '{emp_id}'" for emp_id in ids_list]
+                emp_filter = f" and ({' or '.join(emp_filter_parts)})"
+                upcoming_full_filter = f"?$filter={upcoming_filter}{emp_filter}"
+            else:
+                upcoming_full_filter = f"?$filter={upcoming_filter}"
+
+            upcoming_url = f"{RESOURCE}/api/data/v9.2/{LEAVE_ENTITY}{upcoming_full_filter}"
+            print(f"   [URL] Upcoming request URL: {upcoming_url}")
+            upcoming_response = requests.get(upcoming_url, headers=headers)
+
+            if upcoming_response.status_code != 200:
+                print(f"   [ERROR] Failed to fetch upcoming leaves: {upcoming_response.status_code}")
+                return jsonify({
+                    "success": False,
+                    "error": f"Failed to fetch upcoming leaves: {upcoming_response.status_code}",
+                    "leaves": []
+                }), 500
+
+            upcoming_records = upcoming_response.json().get("value", [])
+            print(f"   [DATA] Found {len(upcoming_records)} upcoming approved leaves for this month")
+
+            for r in upcoming_records:
+                upcoming_leaves.append({
+                    "employee_id": r.get("crc6f_employeeid"),
+                    "leave_type": r.get("crc6f_leavetype"),
+                    "start_date": r.get("crc6f_startdate"),
+                    "end_date": r.get("crc6f_enddate"),
+                    "status": r.get("crc6f_status"),
+                    "reason": r.get("crc6f_reason", "")
+                })
+
         print(f"   [SEND] Returning {len(leaves)} leave records")
         print(f"{'='*70}\n")
 
         return jsonify({
             "success": True,
             "leaves": leaves,
+            "upcoming_leaves": upcoming_leaves,
+            "upcoming_count": len(upcoming_leaves),
             "count": len(leaves),
-            "date": today
+            "date": today,
+            "include_upcoming": include_upcoming,
+            "month_end": month_end if include_upcoming else None
         }), 200
 
     except Exception as e:

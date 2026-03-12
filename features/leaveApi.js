@@ -77,14 +77,25 @@ export async function fetchTeamLeavesBatch(employeeIds = []) {
   return data.leaves || [];
 }
 
-export async function fetchOnLeaveToday(employeeIds = []) {
+export async function fetchOnLeaveToday(employeeIds = [], options = {}) {
   const ids = employeeIds.filter(Boolean).map(toKey);
   const qs = new URLSearchParams();
   if (ids.length) qs.set('employee_ids', ids.join(','));
+  if (options.includeUpcoming) qs.set('include_upcoming', 'true');
   const res = await timedFetch(`${BASE_URL}/api/leaves/on-leave-today?${qs.toString()}`, {}, 'fetchOnLeaveToday');
   const data = await res.json();
   if (!res.ok || !data.success) {
     throw new Error(data.error || 'Failed to fetch on-leave-today');
+  }
+  if (options.includeUpcoming) {
+    return {
+      leaves: data.leaves || [],
+      upcoming_leaves: data.upcoming_leaves || [],
+      count: data.count || 0,
+      upcoming_count: data.upcoming_count || 0,
+      date: data.date || '',
+      month_end: data.month_end || '',
+    };
   }
   return data.leaves || [];
 }
