@@ -467,32 +467,7 @@ const buildDashboardLayout = (data) => {
           </div>
         </section>
 
-        <section class="card admin-card">
-          <header class="card-heading">
-            <div>
-              <p class="eyebrow">Leave</p>
-              <h3>Upcoming Leaves</h3>
-            </div>
-            <span class="badge">This month</span>
-          </header>
-          <div class="leave-table-scroll admin-table-scroll">
-            <table class="table leave-table">
-              <thead>
-                <tr>
-                  <th>Name</th>
-                  <th>Leave Type</th>
-                  <th>Leave Date</th>
-                  <th>Days</th>
-                  <th>Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${upcomingLeaveTableRows}
-              </tbody>
-            </table>
-          </div>
-        </section>
-
+        
         <section class="card admin-card">
           <header class="card-heading">
             <div>
