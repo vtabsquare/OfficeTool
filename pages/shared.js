@@ -17,6 +17,8 @@ import { runWithSubmissionLoading } from '../utils/submissionLoading.js';
 
 let currentInboxTab = 'awaiting';
 let currentInboxCategory = 'leaves';
+let _resolvedEmpIdCache = '';
+let _resolvedEmpIdPromise = null;
 
 const canManageMyTimesheetRows = () => {
     return true;
