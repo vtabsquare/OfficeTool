@@ -40,8 +40,8 @@ def delete_test_leaves():
         try:
             print(f"Deleting leave {leave_id}...")
             
-            # Delete from Dataverse
-            result = delete_record("crc6f_table14s", leave_id, token)
+            # Delete from Dataverse (delete_record takes only entity and record_id)
+            result = delete_record("crc6f_table14s", leave_id)
             
             if result:
                 print(f"✓ Successfully deleted leave {leave_id}")
