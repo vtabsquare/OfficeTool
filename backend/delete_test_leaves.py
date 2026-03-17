@@ -6,7 +6,7 @@ This script directly deletes from Dataverse.
 import os
 import sys
 from dotenv import load_dotenv
-from dataverse_helper import get_access_token, delete_record
+from dataverse_helper import get_access_token, delete_record, fetch_record_by_id
 
 # Load environment variables
 load_dotenv()
@@ -24,24 +24,30 @@ def delete_test_leaves():
     """Delete the specified test leave records."""
     print("Starting deletion of test leave records for EMP014...")
     
-    # Get Dataverse access token
-    try:
-        token = get_access_token()
-        if not token:
-            print("ERROR: Failed to get Dataverse access token")
-            return False
-    except Exception as e:
-        print(f"ERROR: Exception getting access token: {e}")
-        return False
-    
     # Delete each test leave
     success_count = 0
     for leave_id in TEST_LEAVES:
         try:
             print(f"Deleting leave {leave_id}...")
             
-            # Delete from Dataverse (delete_record takes only entity and record_id)
-            result = delete_record("crc6f_table14s", leave_id)
+            # First fetch the record to get its GUID
+            record = fetch_record_by_id("crc6f_table14s", leave_id, "crc6f_leaveid")
+            
+            if not record:
+                print(f"✗ Leave {leave_id} not found in Dataverse")
+                continue
+            
+            # Get the GUID (primary key) of the record
+            record_guid = record.get("crc6f_leaveidguid") or record.get("crc6f_table14id")
+            
+            if not record_guid:
+                print(f"✗ Could not get GUID for leave {leave_id}")
+                continue
+            
+            print(f"  Found record with GUID: {record_guid}")
+            
+            # Delete from Dataverse using the GUID
+            result = delete_record("crc6f_table14s", record_guid)
             
             if result:
                 print(f"✓ Successfully deleted leave {leave_id}")
