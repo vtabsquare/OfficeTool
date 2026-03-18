@@ -2165,6 +2165,10 @@ def _fetch_employee_by_employee_id(token: str, employee_id: str, select_fields=N
 
     values = resp.json().get('value', [])
     return values[0] if values else None
+
+
+def _save_google_credentials(creds):
+    try:
         if not creds:
             return
         token_json = creds.to_json()
