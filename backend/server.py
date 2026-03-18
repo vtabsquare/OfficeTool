@@ -98,7 +98,7 @@ def _fetch_login_activity_record(token: str, employee_id: str, date_str: str):
         f"{BASE_URL}/{LOGIN_ACTIVITY_ENTITY}"
         f"?$top=1&$select={LOGIN_ACTIVITY_PRIMARY_FIELD}&$filter={LA_FIELD_EMPLOYEE_ID} eq '{_safe_odata_string(emp)}' and {LA_FIELD_DATE} eq '{_safe_odata_string(dt)}'"
     )
-    r = requests.get(url, headers=headers, timeout=20)
+    r = get_dataverse_session().get(url, headers=headers, timeout=20)
     if r.status_code == 200:
         vals = r.json().get("value", [])
         return vals[0] if vals else None
@@ -124,7 +124,7 @@ def _upsert_login_activity(employee_id: str, date_str: str, payload: dict):
     if existing and existing.get(LOGIN_ACTIVITY_PRIMARY_FIELD) and BASE_URL:
         rid = str(existing.get(LOGIN_ACTIVITY_PRIMARY_FIELD)).strip("{}")
         url = f"{BASE_URL}/{LOGIN_ACTIVITY_ENTITY}({rid})"
-        r = requests.patch(url, headers={**headers, "If-Match": "*"}, json=payload, timeout=20)
+        r = get_dataverse_session().patch(url, headers={**headers, "If-Match": "*"}, json=payload, timeout=20)
         if r.status_code in (204, 200):
             return rid
         raise Exception(f"Login activity update failed ({r.status_code}): {r.text}")
@@ -368,7 +368,7 @@ def get_monthly_attendance(employee_id, year, month):
         
         url = f"{RESOURCE}/api/data/v9.2/{ENTITY_NAME}{filter_query}"
         
-        response = requests.get(url, headers=headers)
+        response = get_dataverse_session().get(url, headers=headers)
         
         if response.status_code == 200:
             records = response.json().get("value", [])

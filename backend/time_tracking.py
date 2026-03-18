@@ -1,7 +1,7 @@
 from flask import Blueprint, request, jsonify
 from datetime import datetime, timezone, timedelta
 import os, json, traceback, re
-from dataverse_helper import get_access_token, update_record, create_record, get_employee_name
+from dataverse_helper import get_access_token, update_record, create_record, get_employee_name, get_dataverse_session
 import requests
 import urllib.parse
 
@@ -60,7 +60,7 @@ def _fetch_projects_index(project_ids, headers):
         filter_q = urllib.parse.quote(filter_expr, safe="()'= $")
         select = "crc6f_projectid,crc6f_projectstatus,statecode,statuscode"
         url = f"{RESOURCE}{DV_API}/{ENTITY_SET_PROJECTS}?$select={select}&$filter={filter_q}"
-        resp = requests.get(url, headers=headers, timeout=30)
+        resp = get_dataverse_session().get(url, headers=headers, timeout=30)
         if not resp.ok:
             # If project lookup fails, do not hide tasks (safer). Caller will treat as unknown.
             continue
@@ -420,7 +420,7 @@ def proxy_tasks():
             "Prefer": 'odata.include-annotations="*"',
         }
         url = f"{RESOURCE}{DV_API}/{ENTITY_SET_TASKS}?$select=crc6f_hr_taskdetailsid,crc6f_taskid,crc6f_taskname,crc6f_taskdescription,crc6f_taskpriority,crc6f_taskstatus,crc6f_assignedto,crc6f_assigneddate,crc6f_duedate,crc6f_projectid,crc6f_boardid,statecode,statuscode"
-        resp = requests.get(url, headers=headers, timeout=30)
+        resp = get_dataverse_session().get(url, headers=headers, timeout=30)
         if not resp.ok:
             return jsonify({"success": False, "error": resp.text}), resp.status_code
         values = resp.json().get("value", [])
@@ -517,7 +517,7 @@ def delete_logs_row():
             f"{RESOURCE}{DV_API}/crc6f_hr_timesheetlogs"
             f"?$filter={filter_q}&$select=crc6f_hr_timesheetlogid&$top=5000"
         )
-        list_resp = requests.get(list_url, headers=headers, timeout=30)
+        list_resp = get_dataverse_session().get(list_url, headers=headers, timeout=30)
         if list_resp.status_code == 200:
             rows = list_resp.json().get("value", [])
             for row in rows:
@@ -525,7 +525,7 @@ def delete_logs_row():
                 if not rid:
                     continue
                 del_url = f"{RESOURCE}{DV_API}/crc6f_hr_timesheetlogs({rid})"
-                del_resp = requests.delete(del_url, headers=headers, timeout=30)
+                del_resp = get_dataverse_session().delete(del_url, headers=headers, timeout=30)
                 if del_resp.status_code in (200, 204):
                     dataverse_deleted += 1
                 else:
@@ -634,7 +634,7 @@ def set_exact_log():
                 fq = f"crc6f_employeeid eq '{safe_emp}' and crc6f_workdate ge '{safe_date}' and crc6f_workdate le '{safe_date}'"
                 url = f"{RESOURCE}/api/data/v9.2/{ENTITY}?$filter={fq}&$top=50"
                 print(f"[TEAM_TS_EDIT] Searching: {url}")
-                resp = requests.get(url, headers=headers, timeout=30)
+                resp = get_dataverse_session().get(url, headers=headers, timeout=30)
                 print(f"[TEAM_TS_EDIT] Search status: {resp.status_code}")
                 rows = []
                 if resp.status_code == 200:
@@ -655,7 +655,7 @@ def set_exact_log():
                         )
                         url2 = f"{RESOURCE}/api/data/v9.2/{ENTITY}?$filter={fq2}&$top=50"
                         print(f"[TEAM_TS_EDIT] DateTime fallback search: {url2}")
-                        resp2 = requests.get(url2, headers=headers, timeout=30)
+                        resp2 = get_dataverse_session().get(url2, headers=headers, timeout=30)
                         if resp2.status_code == 200:
                             rows = resp2.json().get("value", [])
                             print(f"[TEAM_TS_EDIT] DateTime fallback found {len(rows)} records")
@@ -764,7 +764,7 @@ def set_exact_log():
                 safe_date = work_date.replace("'", "''")
                 fq = f"crc6f_employeeid eq '{safe_emp}' and crc6f_workdate ge '{safe_date}' and crc6f_workdate le '{safe_date}'"
                 url = f"{RESOURCE}/api/data/v9.2/{ENTITY}?$filter={fq}&$top=100"
-                resp = requests.get(url, headers=headers, timeout=30)
+                resp = get_dataverse_session().get(url, headers=headers, timeout=30)
                 rows = resp.json().get("value", []) if resp.status_code == 200 else []
 
                 keep_id = str(dv_id).strip("{}")
@@ -776,7 +776,7 @@ def set_exact_log():
                     if not _row_matches_exact_target(row):
                         continue
                     del_url = f"{RESOURCE}/api/data/v9.2/{ENTITY}({row_id})"
-                    del_resp = requests.delete(del_url, headers=headers, timeout=30)
+                    del_resp = get_dataverse_session().delete(del_url, headers=headers, timeout=30)
                     if del_resp.status_code in (200, 204):
                         deleted += 1
                 if deleted:
@@ -862,7 +862,7 @@ def list_my_tasks():
 
         # Fetch all tasks (could be optimized with paging if needed)
         url = f"{RESOURCE}{DV_API}/{ENTITY_SET_TASKS}?$select=crc6f_hr_taskdetailsid,crc6f_taskid,crc6f_taskname,crc6f_taskdescription,crc6f_taskpriority,crc6f_taskstatus,crc6f_assignedto,crc6f_assigneddate,crc6f_duedate,crc6f_projectid,crc6f_boardid"
-        resp = requests.get(url, headers=headers, timeout=30)
+        resp = get_dataverse_session().get(url, headers=headers, timeout=30)
         if not resp.ok:
             return jsonify({"success": False, "error": resp.text}), resp.status_code
         values = resp.json().get("value", [])
@@ -1019,7 +1019,7 @@ def admin_active_tasks_snapshot():
                         f"?$top=1&$select=crc6f_accesslevel"
                         f"&$filter={safe_filter}"
                     )
-                    resp = requests.get(url, headers=headers, timeout=20)
+                    resp = get_dataverse_session().get(url, headers=headers, timeout=20)
                     if resp.status_code == 404:
                         continue
                     if resp.status_code != 200:
@@ -1097,7 +1097,7 @@ def admin_active_tasks_snapshot():
                 f"?$select=crc6f_hr_taskdetailsid,crc6f_taskid,crc6f_taskname,crc6f_projectid"
                 f"&$filter=crc6f_hr_taskdetailsid eq '{safe_guid}'&$top=1"
             )
-            resp = requests.get(url, headers=headers, timeout=20)
+            resp = get_dataverse_session().get(url, headers=headers, timeout=20)
             if not resp.ok:
                 continue
             values = resp.json().get("value", [])
@@ -1125,7 +1125,7 @@ def admin_active_tasks_snapshot():
                 f"?$select=crc6f_projectid,crc6f_projectname"
                 f"&$filter=crc6f_projectid eq '{safe_pid}'&$top=1"
             )
-            p_resp = requests.get(p_url, headers=headers, timeout=20)
+            p_resp = get_dataverse_session().get(p_url, headers=headers, timeout=20)
             if not p_resp.ok:
                 continue
             p_vals = p_resp.json().get("value", [])
@@ -1346,7 +1346,7 @@ def create_task_log():
                     f"{RESOURCE}{DV_API}/crc6f_hr_timesheetlogs"
                     f"?$filter={lookup_q}&$select=crc6f_hr_timesheetlogid,crc6f_hoursworked&$top=1"
                 )
-                lookup_resp = requests.get(lookup_url, headers=headers, timeout=30)
+                lookup_resp = get_dataverse_session().get(lookup_url, headers=headers, timeout=30)
                 existing_rows = []
                 if lookup_resp.status_code == 200:
                     existing_rows = lookup_resp.json().get("value", [])
@@ -1368,7 +1368,7 @@ def create_task_log():
                         "crc6f_workdescription": work_desc,
                     }
                     patch_url = f"{RESOURCE}{DV_API}/crc6f_hr_timesheetlogs({dv_id})"
-                    patch_resp = requests.patch(patch_url, headers=headers, json=update_payload, timeout=30)
+                    patch_resp = get_dataverse_session().patch(patch_url, headers=headers, json=update_payload, timeout=30)
                     print(f"[TIME_TRACKER] Dataverse PATCH status: {patch_resp.status_code}")
                     if patch_resp.status_code not in (200, 204):
                         raise Exception(f"Dataverse PATCH failed ({patch_resp.status_code}): {patch_resp.text[:250]}")
@@ -1378,7 +1378,7 @@ def create_task_log():
                     create_candidate = dict(payload)
                     create_error = "Dataverse POST failed"
                     for idx in range(1, 9):
-                        resp = requests.post(post_url, headers=headers, json=create_candidate, timeout=30)
+                        resp = get_dataverse_session().post(post_url, headers=headers, json=create_candidate, timeout=30)
                         print(f"[TIME_TRACKER] Dataverse POST attempt {idx} status: {resp.status_code}")
                         if resp.status_code in (200, 201, 204):
                             dataverse_saved = True
@@ -1558,7 +1558,7 @@ def list_logs():
         print(f"[TIME_TRACKER] Fetching from Dataverse URL: {url}")
         print(f"[TIME_TRACKER] Filter query: {filter_query}")
         
-        resp = requests.get(url, headers=headers, timeout=30)
+        resp = get_dataverse_session().get(url, headers=headers, timeout=30)
         print(f"[TIME_TRACKER] Dataverse response status: {resp.status_code}")
         
         if resp.status_code == 200:
@@ -1729,7 +1729,7 @@ def delete_logs():
         if log_id:
             # Direct delete by ID
             url = f"{RESOURCE}{DV_API}/crc6f_hr_timesheetlogs({log_id})"
-            resp = requests.delete(url, headers=headers, timeout=30)
+            resp = get_dataverse_session().delete(url, headers=headers, timeout=30)
             
             if resp.status_code in (200, 204):
                 # Also delete from local cache

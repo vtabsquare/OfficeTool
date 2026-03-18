@@ -17,7 +17,7 @@ try:
 except ImportError:
     from pytz import timezone as ZoneInfo
 
-from dataverse_helper import create_record, update_record, get_access_token
+from dataverse_helper import create_record, update_record, get_access_token, get_dataverse_session
 from time_tracking import stop_active_task_entries_for_user
 
 # Blueprint for v2 attendance routes
@@ -196,12 +196,13 @@ def fetch_attendance_record(employee_id, date_str):
     try:
         token = get_access_token()
         headers = _get_headers(token)
+        s = get_dataverse_session()
         
         emp = employee_id.strip().upper()
         filter_q = f"$filter={FIELD_EMPLOYEE_ID} eq '{emp}' and {FIELD_DATE} eq '{date_str}'"
         url = f"{_get_base_url()}/{ATTENDANCE_ENTITY}?{filter_q}"
         
-        resp = requests.get(url, headers=headers, timeout=20)
+        resp = s.get(url, headers=headers, timeout=15)
         if resp.status_code == 200:
             records = resp.json().get("value", [])
             if records:
@@ -223,12 +224,13 @@ def fetch_login_activity(employee_id, date_str):
     try:
         token = get_access_token()
         headers = _get_headers(token)
+        s = get_dataverse_session()
         
         emp = employee_id.strip().upper()
         filter_q = f"$filter={LA_FIELD_EMPLOYEE_ID} eq '{emp}' and {LA_FIELD_DATE} eq '{date_str}'"
         url = f"{_get_base_url()}/{LOGIN_ACTIVITY_ENTITY}?{filter_q}&$top=1"
         
-        resp = requests.get(url, headers=headers, timeout=20)
+        resp = s.get(url, headers=headers, timeout=15)
         if resp.status_code == 200:
             records = resp.json().get("value", [])
             if records:
@@ -250,6 +252,7 @@ def upsert_login_activity(employee_id, date_str, payload):
     try:
         token = get_access_token()
         headers = _get_headers(token)
+        s = get_dataverse_session()
         emp = employee_id.strip().upper()
         
         existing = fetch_login_activity(emp, date_str)
@@ -266,7 +269,7 @@ def upsert_login_activity(employee_id, date_str, payload):
             record_id = existing.get(LA_PRIMARY_FIELD)
             url = f"{_get_base_url()}/{LOGIN_ACTIVITY_ENTITY}({record_id})"
             print(f"[ATTENDANCE-V2] upsert PATCH {record_id} for {date_str}")
-            resp = requests.patch(url, headers=headers, json=payload, timeout=20)
+            resp = s.patch(url, headers=headers, json=payload, timeout=15)
             return resp.status_code < 400
         else:
             # Create new record for today
@@ -277,7 +280,7 @@ def upsert_login_activity(employee_id, date_str, payload):
             }
             url = f"{_get_base_url()}/{LOGIN_ACTIVITY_ENTITY}"
             print(f"[ATTENDANCE-V2] upsert POST new for {date_str}")
-            resp = requests.post(url, headers=headers, json=create_payload, timeout=20)
+            resp = s.post(url, headers=headers, json=create_payload, timeout=15)
             return resp.status_code < 400
     except Exception as e:
         print(f"[ATTENDANCE-V2] upsert_login_activity error: {e}")
@@ -308,6 +311,7 @@ def _auto_close_stale_sessions(employee_id, tz_name="Asia/Calcutta"):
         local_today = now_utc.astimezone(tz).date().isoformat()
         token = get_access_token()
         headers = _get_headers(token)
+        s = get_dataverse_session()
 
         safe_emp = emp.replace("'", "''")
         # Primary query: date stored as plain string (YYYY-MM-DD)
@@ -319,7 +323,7 @@ def _auto_close_stale_sessions(employee_id, tz_name="Asia/Calcutta"):
         )
         url = f"{_get_base_url()}/{LOGIN_ACTIVITY_ENTITY}?{filter_q}&$orderby={LA_FIELD_DATE} asc"
         print(f"[ATTENDANCE-V2] Auto-close query: {url}")
-        resp = requests.get(url, headers=headers, timeout=20)
+        resp = s.get(url, headers=headers, timeout=15)
         
         stale_rows = []
         if resp.status_code == 200:
@@ -336,7 +340,7 @@ def _auto_close_stale_sessions(employee_id, tz_name="Asia/Calcutta"):
                 )
                 url2 = f"{_get_base_url()}/{LOGIN_ACTIVITY_ENTITY}?{filter_q2}&$orderby={LA_FIELD_DATE} asc"
                 print(f"[ATTENDANCE-V2] Auto-close fallback query: {url2}")
-                resp2 = requests.get(url2, headers=headers, timeout=20)
+                resp2 = s.get(url2, headers=headers, timeout=15)
                 if resp2.status_code == 200:
                     stale_rows = resp2.json().get("value", [])
             except Exception as fb_err:
@@ -353,7 +357,7 @@ def _auto_close_stale_sessions(employee_id, tz_name="Asia/Calcutta"):
                 )
                 url3 = f"{_get_base_url()}/{LOGIN_ACTIVITY_ENTITY}?{filter_q3}&$orderby={LA_FIELD_DATE} asc"
                 print(f"[ATTENDANCE-V2] Auto-close broad query (no date filter): {url3}")
-                resp3 = requests.get(url3, headers=headers, timeout=20)
+                resp3 = s.get(url3, headers=headers, timeout=15)
                 if resp3.status_code == 200:
                     all_open = resp3.json().get("value", [])
                     for row in all_open:
@@ -396,7 +400,7 @@ def _auto_close_stale_sessions(employee_id, tz_name="Asia/Calcutta"):
                     LA_FIELD_TOTAL_SECONDS: total_seconds,
                 }
                 la_url = f"{_get_base_url()}/{LOGIN_ACTIVITY_ENTITY}({la_id})"
-                la_resp = requests.patch(la_url, headers=headers, json=la_patch, timeout=20)
+                la_resp = s.patch(la_url, headers=headers, json=la_patch, timeout=15)
                 if la_resp.status_code >= 400:
                     continue
 
@@ -865,7 +869,8 @@ def get_monthly_attendance_v2(employee_id, year, month):
         )
         url = f"{_get_base_url()}/{ATTENDANCE_ENTITY}?{filter_q}"
         
-        resp = requests.get(url, headers=headers, timeout=30)
+        s = get_dataverse_session()
+        resp = s.get(url, headers=headers, timeout=20)
         records = []
         summary = {"total_present": 0, "total_half_day": 0, "total_absent": 0, "total_hours_worked": 0}
         

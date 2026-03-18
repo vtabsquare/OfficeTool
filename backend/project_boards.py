@@ -214,12 +214,11 @@
 #     except Exception as e:
 #         current_app.logger.exception("Error deleting board")
 #         return jsonify({"success": False, "error": str(e)}), 500
-
 # boards_bp.py
 from flask import Blueprint, request, jsonify, current_app
 import requests, os, re, traceback
 from dotenv import load_dotenv
-from dataverse_helper import get_access_token
+from dataverse_helper import get_access_token, get_dataverse_session
 import urllib.parse
 
 bp = Blueprint("project_boards",  __name__, url_prefix="/api")
@@ -267,7 +266,7 @@ def generate_board_id():
         token = get_access_token()
         hdr = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
         url = f"{DATAVERSE_BASE}{DATAVERSE_API}/{ENTITY_SET_BOARDS}?$select={F_BOARD_ID}&$orderby=createdon desc&$top=1"
-        res = requests.get(url, headers=hdr, timeout=20)
+        res = get_dataverse_session().get(url, headers=hdr, timeout=15)
 
         last_id = None
         if res.ok:
@@ -298,12 +297,13 @@ def board_exists(project_code, board_name):
             f"{F_BOARD_NAME} eq '{board_name}'"
             f"&$select={F_GUID}"
         )
-        res = requests.get(url, headers=hdr, timeout=20)
+        res = get_dataverse_session().get(url, headers=hdr, timeout=15)
 
         items = res.json().get("value", [])
         return len(items) > 0
     except:
         return False
+
 # ============================================================
 # 1️⃣ GET ALL BOARDS FOR A PROJECT
 # ============================================================
@@ -320,7 +320,7 @@ def get_boards(project_code):
             f"?$filter={F_PROJECT_ID} eq '{project_code}'"
             f"&$select={F_GUID},{F_BOARD_ID},{F_BOARD_NAME},{F_DESC},{F_PROJECT_ID}"
         )
-        res = requests.get(url, headers=hdr, timeout=20)
+        res = get_dataverse_session().get(url, headers=hdr, timeout=15)
         if not res.ok:
             return jsonify({"success": False, "error": res.text}), 500
 
@@ -333,7 +333,7 @@ def get_boards(project_code):
         
         # Fetch all tasks for the project to count per board
         tasks_url = f"{DATAVERSE_BASE}{DATAVERSE_API}/crc6f_hr_taskdetailses?$select=crc6f_boardid,crc6f_assignedto&$filter=crc6f_projectid eq '{project_code}'"
-        tasks_res = requests.get(tasks_url, headers=hdr, timeout=20)
+        tasks_res = get_dataverse_session().get(tasks_url, headers=hdr, timeout=15)
         
         # Initialize task and member counts for each board
         task_counts = {}
@@ -426,7 +426,7 @@ def add_board(project_code):
         payload = {k: v for k, v in payload.items() if v not in ("", None)}
 
         url = f"{DATAVERSE_BASE}{DATAVERSE_API}/{ENTITY_SET_BOARDS}"
-        res = requests.post(url, headers=hdr, json=payload)
+        res = get_dataverse_session().post(url, headers=hdr, json=payload, timeout=15)
 
         if res.status_code in (200, 201, 204):
             return jsonify({"success": True, "message": "Board added"}), 201
@@ -463,7 +463,7 @@ def update_board(guid):
             data[F_NO_MEMBERS] = str(body["no_of_members"])
 
         url = f"{DATAVERSE_BASE}{DATAVERSE_API}/{ENTITY_SET_BOARDS}({guid})"
-        res = requests.patch(url, headers=hdr, json=data, timeout=20)
+        res = get_dataverse_session().patch(url, headers=hdr, json=data, timeout=15)
 
         if res.status_code in (200, 204):
             return jsonify({"success": True, "message": "Board updated"}), 200
@@ -491,7 +491,7 @@ def delete_board(guid):
         try:
             sel = f"$select={F_BOARD_ID},{F_PROJECT_ID}"
             get_url = f"{DATAVERSE_BASE}{DATAVERSE_API}/{ENTITY_SET_BOARDS}({guid})?{sel}"
-            g = requests.get(get_url, headers=hdr, timeout=20)
+            g = get_dataverse_session().get(get_url, headers=hdr, timeout=15)
             if g.ok:
                 payload = g.json() or {}
                 board_id = payload.get(F_BOARD_ID)
@@ -519,7 +519,7 @@ def delete_board(guid):
                 filter_expr = " and ".join(filters)
                 filter_q = urllib.parse.quote(filter_expr, safe="()'= $")
                 turl = f"{DATAVERSE_BASE}{DATAVERSE_API}/crc6f_hr_taskdetailses?$select=crc6f_hr_taskdetailsid&$filter={filter_q}"
-                t_res = requests.get(turl, headers=hdr, timeout=30)
+                t_res = get_dataverse_session().get(turl, headers=hdr, timeout=20)
                 if t_res.ok:
                     tasks = t_res.json().get("value", [])
                     for t in tasks:
@@ -527,7 +527,7 @@ def delete_board(guid):
                         if not tid:
                             continue
                         del_url = f"{DATAVERSE_BASE}{DATAVERSE_API}/crc6f_hr_taskdetailses({tid})"
-                        d = requests.delete(del_url, headers=hdr, timeout=20)
+                        d = get_dataverse_session().delete(del_url, headers=hdr, timeout=15)
                         if d.status_code in (200, 204):
                             deleted_tasks += 1
                         else:
@@ -537,7 +537,7 @@ def delete_board(guid):
 
         # 3) Delete the board record
         url = f"{DATAVERSE_BASE}{DATAVERSE_API}/{ENTITY_SET_BOARDS}({guid})"
-        res = requests.delete(url, headers=hdr, timeout=20)
+        res = get_dataverse_session().delete(url, headers=hdr, timeout=15)
 
         if res.status_code in (200, 204):
             return jsonify({

@@ -23,7 +23,7 @@ from google_auth_oauthlib.flow import Flow
 from google_token_store import load_google_token, save_google_token
 from googleapiclient.discovery import build
 from google.auth.transport.requests import Request
-from dataverse_helper import create_record, update_record, delete_record, get_access_token, get_employee_name, get_employee_email, get_record
+from dataverse_helper import create_record, update_record, delete_record, get_access_token, get_employee_name, get_employee_email, get_record, get_dataverse_session
 from flask_mail import Mail, Message
 from mail_app import send_email
 from project_contributors import bp as contributors_bp
@@ -50,6 +50,22 @@ def add_cors_headers(response):
     response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, PATCH, OPTIONS'
     response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Requested-With, Cache-Control, Pragma'
     response.headers['Access-Control-Max-Age'] = '3600'
+    return response
+
+# ── Performance logging middleware ──────────────────────────────────
+import time as _time
+
+@app.before_request
+def _perf_start():
+    request._perf_start = _time.monotonic()
+
+@app.after_request
+def _perf_log(response):
+    start = getattr(request, '_perf_start', None)
+    if start is not None:
+        elapsed_ms = (_time.monotonic() - start) * 1000
+        if elapsed_ms > 500:
+            print(f"[PERF] {request.method} {request.path} -> {response.status_code} in {elapsed_ms:.0f}ms")
     return response
 
 FIELD_MAPS = {}
@@ -111,7 +127,7 @@ def admin_required(f):
                 return jsonify({'error': 'Invalid configuration'}), 500
                 
             url = f"{BASE_URL}/{entity_set}?$select={email_field},{desig_field}"
-            resp = requests.get(url, headers=headers)
+            resp = get_dataverse_session().get(url, headers=headers, timeout=15)
             
             if resp.status_code != 200:
                 return jsonify({'error': 'Invalid token'}), 401
@@ -168,7 +184,7 @@ def admin_query():
         query_string = '&'.join(query_parts)
         url = f"{BASE_URL}/{entity_name}?{query_string}"
         
-        response = requests.get(url, headers=headers)
+        response = get_dataverse_session().get(url, headers=headers, timeout=15)
         if response.status_code == 200:
             return jsonify(response.json()), 200
         else:
@@ -224,7 +240,7 @@ def get_employee_entity_set(token):
     
     # Try the default first
     url = f"{BASE_URL}/{EMPLOYEE_ENTITY}?$top=1"
-    response = requests.get(url, headers=headers)
+    response = get_dataverse_session().get(url, headers=headers, timeout=15)
     
     if response.status_code == 200:
         return EMPLOYEE_ENTITY
@@ -239,7 +255,7 @@ def get_employee_entity_set(token):
     
     for alt in alternatives:
         url = f"{BASE_URL}/{alt}?$top=1"
-        response = requests.get(url, headers=headers)
+        response = get_dataverse_session().get(url, headers=headers, timeout=15)
         if response.status_code == 200:
             EMPLOYEE_ENTITY = alt
             return alt
@@ -1096,7 +1112,7 @@ def _live_session_progress_hours(emp_id: str, target_date: str) -> float:
         filter_q = f"?$filter={LA_FIELD_EMPLOYEE_ID} eq '{safe_emp}' and {LA_FIELD_DATE} eq '{safe_date}'"
         url = f"{RESOURCE}/api/data/v9.2/{LOGIN_ACTIVITY_ENTITY}{filter_q}&$top=1"
         
-        resp = requests.get(url, headers=headers, timeout=10)
+        resp = get_dataverse_session().get(url, headers=headers, timeout=10)
         if resp.status_code == 200:
             records = resp.json().get("value", [])
             if records:
@@ -1198,7 +1214,7 @@ def _fetch_login_activity_record(token: str, employee_id: str, date_str: str):
         f"{BASE_URL}/{LOGIN_ACTIVITY_ENTITY}"
         f"?$select={select_fields}&$top=1&$filter={LA_FIELD_EMPLOYEE_ID} eq '{safe_emp}' and {LA_FIELD_DATE} eq '{safe_dt}'"
     )
-    resp = requests.get(url, headers=headers, timeout=20)
+    resp = get_dataverse_session().get(url, headers=headers, timeout=15)
     if resp.status_code == 200:
         vals = resp.json().get("value", [])
         return vals[0] if vals else None
@@ -1216,7 +1232,7 @@ def _fetch_login_activity_record(token: str, employee_id: str, date_str: str):
             f"{BASE_URL}/{LOGIN_ACTIVITY_ENTITY}"
             f"?$select={select_fields}&$top=1&$filter={LA_FIELD_EMPLOYEE_ID} eq '{safe_emp}' and {LA_FIELD_DATE} ge '{safe_start}' and {LA_FIELD_DATE} lt '{safe_end}'"
         )
-        resp2 = requests.get(url2, headers=headers, timeout=20)
+        resp2 = get_dataverse_session().get(url2, headers=headers, timeout=15)
         if resp2.status_code == 200:
             vals2 = resp2.json().get("value", [])
             return vals2[0] if vals2 else None
@@ -1292,7 +1308,7 @@ def _upsert_login_activity(token: str, employee_id: str, date_str: str, payload:
         url = f"{BASE_URL}/{LOGIN_ACTIVITY_ENTITY}({record_id})"
         patch_headers = {**headers, "If-Match": "*"}
         print(f"[LOGIN-ACTIVITY-UPSERT] PATCH url={url} payload={patch_payload}")
-        r = requests.patch(url, headers=patch_headers, json=patch_payload, timeout=20)
+        r = get_dataverse_session().patch(url, headers=patch_headers, json=patch_payload, timeout=15)
         print(f"[LOGIN-ACTIVITY-UPSERT] PATCH response: {r.status_code} {r.text[:500] if r.text else ''}")
         if r.status_code in (204, 200):
             return record_id
@@ -1305,7 +1321,7 @@ def _upsert_login_activity(token: str, employee_id: str, date_str: str, payload:
     }
     create_headers = {**headers, "Prefer": "return=representation"}
     print(f"[LOGIN-ACTIVITY-UPSERT] POST url={BASE_URL}/{LOGIN_ACTIVITY_ENTITY} payload={create_payload}")
-    r = requests.post(f"{BASE_URL}/{LOGIN_ACTIVITY_ENTITY}", headers=create_headers, json=create_payload, timeout=20)
+    r = get_dataverse_session().post(f"{BASE_URL}/{LOGIN_ACTIVITY_ENTITY}", headers=create_headers, json=create_payload, timeout=15)
     print(f"[LOGIN-ACTIVITY-UPSERT] POST response: {r.status_code} {r.text[:500] if r.text else ''}")
     if r.status_code in (200, 201):
         body = r.json() if r.content else {}
@@ -1347,7 +1363,7 @@ def _fetch_login_activity_records_range(token: str, from_date: str, to_date: str
     merged = []
     seen = set()
 
-    resp = requests.get(url, headers=headers, timeout=25)
+    resp = get_dataverse_session().get(url, headers=headers, timeout=20)
     if resp.status_code == 200:
         for r in resp.json().get("value", []):
             rid = r.get(LOGIN_ACTIVITY_PRIMARY_FIELD) or id(r)
@@ -1370,7 +1386,7 @@ def _fetch_login_activity_records_range(token: str, from_date: str, to_date: str
             filter_parts2.append(f"{LA_FIELD_EMPLOYEE_ID} eq '{_safe_odata_string(employee_id.strip().upper())}'")
         filter_query2 = " and ".join(filter_parts2)
         url2 = f"{BASE_URL}/{LOGIN_ACTIVITY_ENTITY}?$select={select_fields}&$top=5000&$filter={filter_query2}"
-        resp2 = requests.get(url2, headers=headers, timeout=25)
+        resp2 = get_dataverse_session().get(url2, headers=headers, timeout=20)
         if resp2.status_code == 200:
             for r in resp2.json().get("value", []):
                 rid = r.get(LOGIN_ACTIVITY_PRIMARY_FIELD) or id(r)
@@ -1401,7 +1417,7 @@ def _fetch_all_employee_ids(token: str):
         "OData-Version": "4.0",
     }
     url = f"{RESOURCE}/api/data/v9.2/{entity_set}?$select={id_field}&$top=5000&$orderby=createdon desc"
-    resp = requests.get(url, headers=headers, timeout=25)
+    resp = get_dataverse_session().get(url, headers=headers, timeout=20)
     if resp.status_code != 200:
         return []
     ids = []
@@ -1438,7 +1454,7 @@ def _auto_close_stale_login_sessions(employee_id: str):
             f"and {LA_FIELD_DATE} lt '{local_today}'"
         )
         url = f"{BASE_URL}/{LOGIN_ACTIVITY_ENTITY}{filter_q}&$orderby={LA_FIELD_DATE} asc"
-        resp = requests.get(url, headers=headers, timeout=20)
+        resp = get_dataverse_session().get(url, headers=headers, timeout=15)
         if resp.status_code != 200:
             return 0
 
@@ -1466,7 +1482,7 @@ def _auto_close_stale_login_sessions(employee_id: str):
                     LA_FIELD_TOTAL_SECONDS: total_seconds,
                 }
                 la_url = f"{BASE_URL}/{LOGIN_ACTIVITY_ENTITY}({str(la_id).strip('{}')})"
-                la_resp = requests.patch(la_url, headers=headers, json=la_patch, timeout=20)
+                la_resp = get_dataverse_session().patch(la_url, headers=headers, json=la_patch, timeout=15)
                 if la_resp.status_code >= 400:
                     continue
 
@@ -1641,7 +1657,7 @@ def _probe_entity_set(token: str, entity_set: str) -> bool:
             }
         # Minimal safe query - just get one record without selecting specific fields
         url = f"{RESOURCE}/api/data/v9.2/{entity_set}?$top=1"
-        r = requests.get(url, headers=headers, timeout=15)
+        r = get_dataverse_session().get(url, headers=headers, timeout=15)
         if r.status_code == 404:
             return False
         # 200 means readable; 401/403 still indicates the entity set exists.
@@ -1708,7 +1724,7 @@ def _discover_compoff_entity_candidates(token: str) -> list:
     }
     try:
         url = f"{RESOURCE}/api/data/v9.2/EntityDefinitions?$select=EntitySetName,LogicalName&$top=5000"
-        resp = requests.get(url, headers=headers, timeout=30)
+        resp = get_dataverse_session().get(url, headers=headers, timeout=30)
         if resp.status_code != 200:
             print(f"[WARN] Could not read Dataverse metadata for comp-off entity discovery: {resp.status_code}")
             return []
@@ -1819,7 +1835,7 @@ def generate_project_id():
         # [OK] Fetch latest project record (ordered descending)
         url = f"{RESOURCE}/api/data/v9.2/{entity_set}?$select=crc6f_projectid&$orderby=createdon desc&$top=1"
 
-        res = requests.get(url, headers=headers, timeout=20)
+        res = get_dataverse_session().get(url, headers=headers, timeout=15)
 
         last_id = None
         if res.ok:
@@ -1937,7 +1953,7 @@ def _resolve_employee_identifier(raw_identifier: str, token: str = None) -> str:
                 f"?$top=1&$select={id_field}"
                 f"&$filter={email_field} eq '{safe_email}'"
             )
-            resp = requests.get(url, headers=headers, timeout=20)
+            resp = get_dataverse_session().get(url, headers=headers, timeout=20)
             if resp.status_code == 200:
                 vals = resp.json().get("value", [])
                 if vals:
@@ -2099,7 +2115,7 @@ def _fetch_intern_record_by_id(token: str, intern_id: str, include_system: bool 
         "OData-Version": "4.0",
     }
 
-    resp = requests.get(url, headers=headers, timeout=30)
+    resp = get_dataverse_session().get(url, headers=headers, timeout=30)
     if resp.status_code != 200:
         raise Exception(f"Dataverse returned {resp.status_code}: {resp.text}")
 
@@ -2142,17 +2158,13 @@ def _fetch_employee_by_employee_id(token: str, employee_id: str, select_fields=N
     operator = '&' if select_clause else '?'
     url = f"{RESOURCE}/api/data/v9.2/{entity_set}{select_clause}{operator}{filter_clause}&$top=1"
 
-    resp = requests.get(url, headers=headers)
+    resp = get_dataverse_session().get(url, headers=headers, timeout=15)
     if resp.status_code != 200:
         print(f"[WARN] Failed to fetch employee {employee_id}: {resp.status_code} {resp.text}")
         return None
 
     values = resp.json().get('value', [])
     return values[0] if values else None
-
-
-def _save_google_credentials(creds: Credentials):
-    try:
         if not creds:
             return
         token_json = creds.to_json()
@@ -2203,7 +2215,7 @@ def _get_project_member_employee_ids(token: str, project_id: str):
     }
     url = f"{RESOURCE}/api/data/v9.2/crc6f_hr_projectcontributorses?$select=crc6f_employeeid&$filter=crc6f_projectid eq '{safe_pid}'"
     try:
-        resp = requests.get(url, headers=headers, timeout=30)
+        resp = get_dataverse_session().get(url, headers=headers, timeout=15)
         if resp.status_code != 200:
             print(f"[WARN] Failed to fetch project members for {project_id}: {resp.status_code} {resp.text}")
             return []
@@ -2404,7 +2416,7 @@ def _fetch_leave_balance(token: str, employee_id: str) -> dict:
         try:
             # Try primary FK field name
             url1 = f"{BASE_URL}/{entity_set}?$filter=crc6f_empid eq '{safe_emp}'&$top=1"
-            resp = requests.get(url1, headers=headers)
+            resp = get_dataverse_session().get(url1, headers=headers, timeout=15)
             if resp.status_code == 200:
                 values = resp.json().get("value", [])
                 if values:
@@ -2413,7 +2425,7 @@ def _fetch_leave_balance(token: str, employee_id: str) -> dict:
                     return values[0]
             # Try alternative FK field name if first returned empty
             url2 = f"{BASE_URL}/{entity_set}?$filter=crc6f_employeeid eq '{safe_emp}'&$top=1"
-            resp2 = requests.get(url2, headers=headers)
+            resp2 = get_dataverse_session().get(url2, headers=headers, timeout=15)
             if resp2.status_code == 200:
                 values2 = resp2.json().get("value", [])
                 if values2:
@@ -2527,7 +2539,7 @@ def _decrement_leave_balance(token: str, balance_row: dict, leave_type: str, day
             for fk in ['crc6f_empid', 'crc6f_employeeid']:
                 safe_emp = str(emp_val).replace("'", "''")
                 url = f"{BASE_URL}/{entity_set_probe}?$filter={fk} eq '{safe_emp}'&$top=1"
-                resp = requests.get(url, headers=headers)
+                resp = get_dataverse_session().get(url, headers=headers, timeout=15)
                 if resp.status_code == 200:
                     vals = resp.json().get("value", [])
                     if vals:
@@ -2593,7 +2605,7 @@ def _decrement_leave_balance(token: str, balance_row: dict, leave_type: str, day
         # Read back row via filter using employee id to avoid primary key quoting issues
         safe_emp = str(emp_val).replace("'", "''")
         url_chk = f"{BASE_URL}/{entity_set}?$filter=crc6f_employeeid eq '{safe_emp}' or crc6f_empid eq '{safe_emp}'&$top=1"
-        resp_chk = requests.get(url_chk, headers=headers_chk)
+        resp_chk = get_dataverse_session().get(url_chk, headers=headers_chk, timeout=15)
         if resp_chk.status_code == 200 and resp_chk.json().get('value'):
             row_back = resp_chk.json()['value'][0]
             current_after = float(row_back.get(field, 0) or 0)
@@ -2609,7 +2621,7 @@ def _decrement_leave_balance(token: str, balance_row: dict, leave_type: str, day
                         "Accept": "application/json",
                     }
                     url_upd = f"{BASE_URL}/{entity_set}({record_id})"
-                    resp_upd = requests.patch(url_upd, headers=headers_patch, json=payload)
+                    resp_upd = get_dataverse_session().patch(url_upd, headers=headers_patch, json=payload, timeout=15)
                     print(f"🔁 Direct PATCH fallback status: {resp_upd.status_code}")
                 except Exception as patch_err:
                     print(f"[WARN] Direct PATCH fallback failed: {patch_err}")
@@ -2648,7 +2660,7 @@ def _ensure_leave_balance_row(token: str, employee_id: str, defaults: dict = Non
     for entity_set in (LEAVE_BALANCE_ENTITY_RESOLVED and [LEAVE_BALANCE_ENTITY_RESOLVED] or LEAVE_BALANCE_ENTITY_CANDIDATES):
         try:
             url = f"{BASE_URL}/{entity_set}"
-            resp = requests.post(url, headers=headers, json=payload)
+            resp = get_dataverse_session().post(url, headers=headers, json=payload, timeout=15)
             if resp.status_code in (200, 201, 204):
                 print(f"[OK] Created default leave balance row in {entity_set} for {employee_id}")
                 # Read back the row to return consistent structure
@@ -2672,7 +2684,7 @@ def get_all_assets():
     token = get_access_token()
     url = f"{API_BASE}/{ENTITY_NAME}"
     headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
-    res = requests.get(url, headers=headers)
+    res = get_dataverse_session().get(url, headers=headers, timeout=15)
     if res.status_code == 200:
         return res.json().get("value", [])
     raise Exception(f"Error fetching assets: {res.status_code} - {res.text}")
@@ -2681,7 +2693,7 @@ def get_asset_by_empid(emp_id):
     token = get_access_token()
     url = f"{API_BASE}/{ENTITY_NAME}?$filter=crc6f_employeeid eq '{emp_id}'"
     headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
-    res = requests.get(url, headers=headers)
+    res = get_dataverse_session().get(url, headers=headers, timeout=15)
     if res.status_code == 200:
         data = res.json().get("value", [])
         return data[0] if data else None
@@ -2691,7 +2703,7 @@ def get_asset_by_assetid(asset_id):
     token = get_access_token()
     url = f"{API_BASE}/{ENTITY_NAME}?$filter=crc6f_assetid eq '{asset_id}'"
     headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
-    res = requests.get(url, headers=headers)
+    res = get_dataverse_session().get(url, headers=headers, timeout=15)
     if res.status_code == 200:
         data = res.json().get("value", [])
         return data[0] if data else None
@@ -2722,12 +2734,11 @@ def create_asset(data):
         "Prefer": "return=representation"
     }
     base_payload = dict(data or {})
-    
     # Try with RPT fields first
     try:
         payload_with_rpt = dict(base_payload)
         _apply_asset_rpt(payload_with_rpt)
-        res = requests.post(url, headers=headers, json=payload_with_rpt)
+        res = get_dataverse_session().post(url, headers=headers, json=payload_with_rpt, timeout=15)
         if res.status_code in (200, 201):
             return res.json()
         # If we get a 400 error, it might be due to RPT fields
@@ -2739,7 +2750,7 @@ def create_asset(data):
         # If RPT fields caused the error, try without them
         if 'RPT' in str(e) or res.status_code == 400:
             print(f"[ASSET] Retrying asset creation without RPT fields")
-            res = requests.post(url, headers=headers, json=base_payload)
+            res = get_dataverse_session().post(url, headers=headers, json=base_payload, timeout=15)
             if res.status_code in (200, 201):
                 return res.json()
             raise Exception(f"Error creating asset (without RPT): {res.status_code} - {res.text}")
@@ -2761,12 +2772,11 @@ def update_asset_by_assetid(asset_id, data):
         "If-Match": "*"
     }
     base_payload = dict(data or {})
-    
     # Try with RPT fields first
     try:
         payload_with_rpt = dict(base_payload)
         _apply_asset_rpt(payload_with_rpt)
-        res = requests.patch(url, headers=headers, json=payload_with_rpt)
+        res = get_dataverse_session().patch(url, headers=headers, json=payload_with_rpt, timeout=15)
         if res.status_code in (204, 1223):
             return {"message": "Asset updated successfully"}
         # If we get a 400 error, it might be due to RPT fields
@@ -2778,7 +2788,7 @@ def update_asset_by_assetid(asset_id, data):
         # If RPT fields caused the error, try without them
         if 'RPT' in str(e) or (hasattr(res, 'status_code') and res.status_code == 400):
             print(f"[ASSET] Retrying asset update without RPT fields")
-            res = requests.patch(url, headers=headers, json=base_payload)
+            res = get_dataverse_session().patch(url, headers=headers, json=base_payload, timeout=15)
             if res.status_code in (204, 1223):
                 return {"message": "Asset updated successfully"}
             raise Exception(f"Error updating asset (without RPT): {res.status_code} - {res.text}")
@@ -2794,7 +2804,7 @@ def delete_asset_by_assetid(asset_id):
     token = get_access_token()
     url = f"{API_BASE}/{ENTITY_NAME}({record_id})"
     headers = {"Authorization": f"Bearer {token}", "If-Match": "*"}
-    res = requests.delete(url, headers=headers)
+    res = get_dataverse_session().delete(url, headers=headers, timeout=15)
     if res.status_code == 204:
         return {"message": "Asset deleted successfully"}
     raise Exception(f"Error deleting asset: {res.status_code} - {res.text}")
@@ -2809,7 +2819,7 @@ def _fetch_login_by_username(username: str, token: str, headers: dict):
     safe_user = (username or '').strip().replace("'", "''")
     # Try case-sensitive match first (tolower not supported on some Dataverse instances)
     url = f"{BASE_URL}/{login_table}?$top=1&$filter=crc6f_username eq '{safe_user}'"
-    resp = requests.get(url, headers=headers)
+    resp = get_dataverse_session().get(url, headers=headers, timeout=15)
     resp.raise_for_status()
     records = resp.json().get("value", [])
     return records[0] if records else None
@@ -2819,23 +2829,21 @@ def _update_login_record(record_id: str, payload: dict, headers: dict, token: st
     record_id = (record_id or '').strip("{}")
     base_payload = dict(payload or {})
     url = f"{BASE_URL}/{login_table}({record_id})"
-    
     # Try with RPT fields first, fallback to base payload if RPT fields cause error
     try:
         full_payload = _apply_login_rpt(dict(base_payload))
-        r = requests.patch(url, headers=headers, json=full_payload)
+        r = get_dataverse_session().patch(url, headers=headers, json=full_payload, timeout=15)
         r.raise_for_status()
         return True
     except Exception as rpt_err:
         print(f"[LOGIN] RPT update failed, trying without RPT fields: {rpt_err}")
         try:
-            r = requests.patch(url, headers=headers, json=base_payload)
+            r = get_dataverse_session().patch(url, headers=headers, json=base_payload, timeout=15)
             r.raise_for_status()
             return True
         except Exception as base_err:
             print(f"[LOGIN] Base update also failed: {base_err}")
             raise base_err
-
 
 # ================== ATTENDANCE ROUTES ==================
 @app.route('/api/checkin', methods=['POST'])
@@ -2943,7 +2951,7 @@ def checkin():
                 f"and {FIELD_DATE} eq '{formatted_date}'"
             )
             url = f"{RESOURCE}/api/data/v9.2/{ATTENDANCE_ENTITY}{filter_query}"
-            resp = requests.get(url, headers=headers, timeout=20)
+            resp = get_dataverse_session().get(url, headers=headers, timeout=15)
             if resp.status_code == 200:
                 vals = resp.json().get("value", [])
                 if vals:
@@ -3293,7 +3301,7 @@ def login():
                         f"&$filter={email_field} eq '{safe_email}'"
                     )
 
-                    resp = requests.get(url_emp, headers=headers)
+                    resp = get_dataverse_session().get(url_emp, headers=headers, timeout=15)
                     if resp.status_code == 200:
                         vals = resp.json().get("value", [])
                         if vals:
@@ -3407,7 +3415,7 @@ def forgot_password():
             "Accept": "application/json"
         }
 
-        res = requests.get(url, headers=headers, timeout=10)
+        res = get_dataverse_session().get(url, headers=headers, timeout=10)
         res.raise_for_status()
         result = res.json()
         print(f"[FORGOT-PWD] Dataverse lookup complete, found {len(result.get('value', []))} records", flush=True)
@@ -3548,7 +3556,7 @@ def reset_password():
             f"?$filter=crc6f_username eq '{lookup_email}'"
         )
 
-        res = requests.get(lookup_url, headers=headers, timeout=15)
+        res = get_dataverse_session().get(lookup_url, headers=headers, timeout=15)
         res.raise_for_status()
         result = res.json()
 
@@ -3584,7 +3592,7 @@ def reset_password():
         patch_headers = dict(headers)
         patch_headers["If-Match"] = "*"
 
-        patch_res = requests.patch(
+        patch_res = get_dataverse_session().patch(
             patch_url,
             headers=patch_headers,
             json=patch_body,
@@ -3670,7 +3678,7 @@ def list_login_accounts():
             "crc6f_accesslevel,crc6f_last_login,crc6f_loginattempts,crc6f_user_status,crc6f_userid"
         )
         url = f"{BASE_URL}/{login_table}?{select}&$top=5000"
-        resp = requests.get(url, headers=headers)
+        resp = get_dataverse_session().get(url, headers=headers, timeout=15)
         if resp.status_code != 200:
             return jsonify({
                 "success": False,
@@ -4138,7 +4146,7 @@ def checkout():
                     f"and {FIELD_DATE} eq '{formatted_date}'"
                 )
                 url = f"{RESOURCE}/api/data/v9.2/{ATTENDANCE_ENTITY}{filter_query}"
-                resp = requests.get(url, headers=headers, timeout=20)
+                resp = get_dataverse_session().get(url, headers=headers, timeout=20)
                 if resp.status_code == 200:
                     vals = resp.json().get("value", [])
                     if vals:
@@ -4266,7 +4274,7 @@ def checkout():
             if record_id:
                 # First try direct lookup by record id
                 url = f"{RESOURCE}/api/data/v9.2/{ATTENDANCE_ENTITY}({record_id})"
-                resp = requests.get(url, headers=headers, timeout=20)
+                resp = get_dataverse_session().get(url, headers=headers, timeout=15)
                 if resp.status_code == 200:
                     attendance_record = resp.json()
             if not attendance_record:
@@ -4277,7 +4285,7 @@ def checkout():
                     f"and {FIELD_DATE} eq '{formatted_date}'"
                 )
                 url = f"{RESOURCE}/api/data/v9.2/{ATTENDANCE_ENTITY}{filter_query}"
-                resp2 = requests.get(url, headers=headers, timeout=20)
+                resp2 = get_dataverse_session().get(url, headers=headers, timeout=15)
                 if resp2.status_code == 200:
                     vals = resp2.json().get("value", [])
                     if vals:
@@ -4433,7 +4441,7 @@ def auto_status_update():
             f"and {FIELD_DATE} eq '{formatted_date}'"
         )
         url = f"{RESOURCE}/api/data/v9.2/{ATTENDANCE_ENTITY}{filter_query}"
-        resp = requests.get(url, headers=headers, timeout=20)
+        resp = get_dataverse_session().get(url, headers=headers, timeout=15)
         
         if resp.status_code != 200:
             return jsonify({"success": False, "error": "Failed to fetch attendance record"}), 500
@@ -4525,7 +4533,7 @@ def get_status(employee_id):
                 f"and {FIELD_DATE} eq '{formatted_date}'"
             )
             url = f"{RESOURCE}/api/data/v9.2/{ATTENDANCE_ENTITY}{filter_query}"
-            resp = requests.get(url, headers=headers, timeout=20)
+            resp = get_dataverse_session().get(url, headers=headers, timeout=20)
             if resp.status_code == 200:
                 vals = resp.json().get("value", [])
                 if vals:
@@ -4644,7 +4652,7 @@ def get_status(employee_id):
                     f"and {FIELD_DATE} eq '{formatted_date}'"
                 )
                 url = f"{RESOURCE}/api/data/v9.2/{ATTENDANCE_ENTITY}{filter_query}"
-                resp = requests.get(url, headers=headers, timeout=20)
+                resp = get_dataverse_session().get(url, headers=headers, timeout=15)
                 if resp.status_code == 200:
                     vals = resp.json().get("value", [])
                     if vals:
@@ -4860,7 +4868,7 @@ def get_status(employee_id):
                 f"and {FIELD_DATE} eq '{formatted_date}'"
             )
             url = f"{RESOURCE}/api/data/v9.2/{ATTENDANCE_ENTITY}{filter_query}"
-            resp = requests.get(url, headers=headers, timeout=20)
+            resp = get_dataverse_session().get(url, headers=headers, timeout=15)
             if resp.status_code == 200:
                 vals = resp.json().get("value", [])
                 if vals:
@@ -4965,7 +4973,7 @@ def get_monthly_attendance(employee_id, year, month):
         url = f"{RESOURCE}/api/data/v9.2/{ATTENDANCE_ENTITY}{filter_query}"
         
         print(f"   [URL] Sending request to Dataverse: {url}")
-        response = requests.get(url, headers=headers)
+        response = get_dataverse_session().get(url, headers=headers, timeout=15)
         
         if response.status_code != 200:
             print(f"[ERROR] Dataverse fetch failed: {response.status_code} {response.text}")
@@ -4991,7 +4999,7 @@ def get_monthly_attendance(employee_id, year, month):
                                        f"and {FIELD_DATE} ge '{start_date}' "
                                        f"and {FIELD_DATE} le '{end_date}'")
                         url = f"{RESOURCE}/api/data/v9.2/{ATTENDANCE_ENTITY}{filter_query}"
-                        response = requests.get(url, headers=headers)
+                        response = get_dataverse_session().get(url, headers=headers, timeout=15)
                         
                         if response.status_code == 200:
                             records = response.json().get("value", [])
@@ -5008,7 +5016,7 @@ def get_monthly_attendance(employee_id, year, month):
         try:
             login_filter = f"?$filter={LA_FIELD_EMPLOYEE_ID} eq '{normalized_emp_id}' and {LA_FIELD_DATE} ge '{start_date}' and {LA_FIELD_DATE} le '{end_date}'&$orderby={LA_FIELD_DATE},{LA_FIELD_CHECKIN_TIME}"
             login_url = f"{RESOURCE}/api/data/v9.2/{LOGIN_ACTIVITY_ENTITY}{login_filter}"
-            login_resp = requests.get(login_url, headers=headers)
+            login_resp = get_dataverse_session().get(login_url, headers=headers, timeout=15)
             
             if login_resp.status_code == 200:
                 login_records = login_resp.json().get("value", [])
@@ -5084,7 +5092,7 @@ def get_monthly_attendance(employee_id, year, month):
             persisted_status = (r.get(FIELD_STATUS) or "").strip().upper() if FIELD_STATUS else ""
             if persisted_status == "H":
                 persisted_status = "HL"
-            if persisted_status in ("P", "HL", "A", "CL", "SL", "CO", "INL"):
+            if persisted_status in ("P", "HL", "H", "A"):
                 status = persisted_status
             else:
                 if effective_hours >= FULL_DAY_HOURS:
@@ -5125,7 +5133,7 @@ def get_monthly_attendance(employee_id, year, month):
                 f"{RESOURCE}/api/data/v9.2/{LEAVE_ENTITY}"
                 f"?$filter=crc6f_employeeid eq '{normalized_emp_id}'"
             )
-            leaves_resp = requests.get(leaves_url, headers=headers)
+            leaves_resp = get_dataverse_session().get(leaves_url, headers=headers, timeout=15)
             if leaves_resp.status_code == 200:
                 leaves = leaves_resp.json().get("value", [])
                 # Build day -> record map for quick overlay
@@ -5282,7 +5290,7 @@ def manual_edit_attendance():
         )
         url = f"{RESOURCE}/api/data/v9.2/{ATTENDANCE_ENTITY}{filter_q}"
         print(f"[ATT_EDIT] Searching for existing record: {url}")
-        resp = requests.get(url, headers=headers)
+        resp = get_dataverse_session().get(url, headers=headers, timeout=15)
         record_id = None
         values = []
         if resp.status_code == 200:
@@ -5304,7 +5312,7 @@ def manual_edit_attendance():
                 )
                 url2 = f"{RESOURCE}/api/data/v9.2/{ATTENDANCE_ENTITY}{filter_q2}"
                 print(f"[ATT_EDIT] DateTime fallback search: {url2}")
-                resp2 = requests.get(url2, headers=headers)
+                resp2 = get_dataverse_session().get(url2, headers=headers, timeout=15)
                 if resp2.status_code == 200:
                     values = resp2.json().get("value", [])
                     print(f"[ATT_EDIT] DateTime fallback found {len(values)} records")
@@ -5387,7 +5395,7 @@ def get_all_attendance(employee_id):
         
         print(f"[URL] Fetching from: {url}")
         
-        response = requests.get(url, headers=headers)
+        response = get_dataverse_session().get(url, headers=headers, timeout=15)
         
         if response.status_code == 200:
             records = response.json().get("value", [])
@@ -5748,7 +5756,7 @@ def get_employee_leaves(employee_id):
         url = f"{RESOURCE}/api/data/v9.2/{LEAVE_ENTITY}{filter_query}"
         
         print(f"   [URL] Sending request to Dataverse: {url}")
-        response = requests.get(url, headers=headers)
+        response = get_dataverse_session().get(url, headers=headers, timeout=15)
         
         if response.status_code != 200:
             print(f"[ERROR] Failed to fetch leaves: {response.status_code} {response.text}")
@@ -5772,7 +5780,7 @@ def get_employee_leaves(employee_id):
                     if variation != normalized_emp_id:
                         filter_query = f"?{leave_select}&$filter=crc6f_employeeid eq '{variation}'"
                         url = f"{RESOURCE}/api/data/v9.2/{LEAVE_ENTITY}{filter_query}"
-                        response = requests.get(url, headers=headers)
+                        response = get_dataverse_session().get(url, headers=headers, timeout=15)
                         
                         if response.status_code == 200:
                             records = response.json().get("value", [])
@@ -5795,7 +5803,7 @@ def get_employee_leaves(employee_id):
                 if email_field and id_field:
                     safe_email = employee_id.replace("'", "''")
                     emp_url = f"{RESOURCE}/api/data/v9.2/{entity_set}?$filter={email_field} eq '{safe_email}'&$select={id_field}"
-                    emp_response = requests.get(emp_url, headers=headers)
+                    emp_response = get_dataverse_session().get(emp_url, headers=headers, timeout=15)
                     
                     if emp_response.status_code == 200:
                         emp_records = emp_response.json().get("value", [])
@@ -5806,7 +5814,7 @@ def get_employee_leaves(employee_id):
                                 # Retry fetching leaves with actual employee_id
                                 filter_query = f"?{leave_select}&$filter=crc6f_employeeid eq '{actual_emp_id}'"
                                 url = f"{RESOURCE}/api/data/v9.2/{LEAVE_ENTITY}{filter_query}"
-                                response = requests.get(url, headers=headers)
+                                response = get_dataverse_session().get(url, headers=headers, timeout=15)
                                 if response.status_code == 200:
                                     records = response.json().get("value", [])
                                     print(f"[DATA] Found {len(records)} records after email resolution")
@@ -5870,7 +5878,7 @@ def list_projects():
             "crc6f_hr_projectheaderid,createdon"
         )
         url = f"{RESOURCE}/api/data/v9.2/{entity_set}?{select}&$top=5000"
-        resp = requests.get(url, headers=headers)
+        resp = get_dataverse_session().get(url, headers=headers, timeout=15)
         if resp.status_code != 200:
             return jsonify({"success": False, "error": resp.text}), resp.status_code
 
@@ -5951,7 +5959,7 @@ def create_project():
         def project_id_exists(project_id: str) -> bool:
             safe = str(project_id or "").replace("'", "''")
             url = f"{RESOURCE}/api/data/v9.2/{entity_set}?$select=crc6f_projectid&$filter=crc6f_projectid eq '{safe}'&$top=1"
-            chk = requests.get(url, headers=headers, timeout=20)
+            chk = get_dataverse_session().get(url, headers=headers, timeout=15)
             return chk.status_code == 200 and bool(chk.json().get("value"))
 
         if project_id_exists(pid):
@@ -6075,7 +6083,7 @@ def bulk_create_projects():
                 # Ensure unique project id
                 safe_pid = pid.replace("'", "''")
                 check_url = f"{RESOURCE}/api/data/v9.2/{entity_set}?$select=crc6f_projectid&$filter=crc6f_projectid eq '{safe_pid}'&$top=1"
-                chk = requests.get(check_url, headers=headers)
+                chk = get_dataverse_session().get(check_url, headers=headers, timeout=15)
                 if chk.status_code == 200 and chk.json().get("value"):
                     raise ValueError("Project ID already exists")
 
@@ -6133,7 +6141,7 @@ def bulk_delete_projects():
                     raise ValueError("Empty project id")
                 safe_pid = pid_norm.replace("'", "''")
                 url = f"{RESOURCE}/api/data/v9.2/{entity_set}?$select=crc6f_hr_projectheaderid&$filter=crc6f_projectid eq '{safe_pid}'&$top=1"
-                resp = requests.get(url, headers=headers, timeout=15)
+                resp = get_dataverse_session().get(url, headers=headers, timeout=15)
                 if resp.status_code != 200:
                     raise ValueError(f"Lookup failed: {resp.text}")
                 vals = resp.json().get("value", [])
@@ -6160,7 +6168,6 @@ def get_leave_balance(employee_id, leave_type):
     """Return available leave balance for an employee and leave type.
     Supported leave_type values: 'Casual Leave', 'Sick Leave', 'Comp Off' (case-insensitive).
     """
-    import requests
     from dataverse_helper import get_access_token
     try:
         # Normalize employee id (support EMP### or numeric)
@@ -6219,7 +6226,7 @@ def get_leave_balance(employee_id, leave_type):
                 for val in id_variants:
                     safe_val = str(val).replace("'", "''")
                     url = f"{BASE_URL}/{entity}?$filter={fk} eq '{safe_val}'&$top=1"
-                    resp = requests.get(url, headers=headers)
+                    resp = get_dataverse_session().get(url, headers=headers, timeout=15)
                     last_status, last_text = resp.status_code, resp.text
                     if resp.status_code == 200:
                         vals = resp.json().get("value", [])
@@ -6236,7 +6243,7 @@ def get_leave_balance(employee_id, leave_type):
                 try:
                     lower_val = (emp or '').lower().replace("'", "''")
                     url_lower = f"{BASE_URL}/{entity}?$filter=tolower({fk}) eq '{lower_val}'&$top=1"
-                    resp2 = requests.get(url_lower, headers=headers)
+                    resp2 = get_dataverse_session().get(url_lower, headers=headers, timeout=15)
                     last_status, last_text = resp2.status_code, resp2.text
                     if resp2.status_code == 200:
                         vals2 = resp2.json().get("value", [])
@@ -6341,7 +6348,7 @@ def get_all_leave_balances(employee_id):
         safe_emp = emp.replace("'", "''")
         emp_filter = f"?$filter={field_map['id']} eq '{safe_emp}'"
         emp_url = f"{RESOURCE}/api/data/v9.2/{entity_set}{emp_filter}"
-        emp_response = requests.get(emp_url, headers=headers)
+        emp_response = get_dataverse_session().get(emp_url, headers=headers, timeout=15)
         
         # Default quotas for Type 3 (0-1 years experience)
         cl_annual = 3
@@ -6416,7 +6423,7 @@ def get_all_leave_balances(employee_id):
         filter_query = f"?$filter=crc6f_employeeid eq '{safe_emp}' and crc6f_status eq 'Approved'"
         leave_url = f"{RESOURCE}/api/data/v9.2/{LEAVE_ENTITY}{filter_query}&$select=crc6f_leavetype,crc6f_totaldays,crc6f_paidunpaid,crc6f_status"
         
-        leave_response = requests.get(leave_url, headers=headers)
+        leave_response = get_dataverse_session().get(leave_url, headers=headers, timeout=15)
         
         cl_consumed = 0.0
         sl_consumed = 0.0
@@ -6658,13 +6665,13 @@ def backfill_leave_balances():
         }
         
         emp_url = f"{BASE_URL}/{entity_set}"
-        emp_resp = requests.get(emp_url, headers=headers)
+        emp_resp = get_dataverse_session().get(emp_url, headers=headers, timeout=15)
         emp_resp.raise_for_status()
         employees = emp_resp.json().get("value", [])
         
         # Get existing leave balance records
         leave_url = f"{BASE_URL}/{LEAVE_BALANCE_ENTITY}"
-        leave_resp = requests.get(leave_url, headers=headers)
+        leave_resp = get_dataverse_session().get(leave_url, headers=headers, timeout=15)
         leave_resp.raise_for_status()
         existing_balances = leave_resp.json().get("value", [])
         existing_emp_ids = {lb.get("crc6f_employeeid") for lb in existing_balances}
@@ -6679,7 +6686,7 @@ def backfill_leave_balances():
                 continue
                 
             if emp_id in existing_emp_ids:
-                print(f"   ⏭️ Skipping {emp_id} - already has leave balance")
+                print(f"   Skipping {emp_id} - already has leave balance")
                 skipped_count += 1
                 continue
             
@@ -6741,7 +6748,7 @@ def test_login_leave_tables():
                 "OData-Version": "4.0"
             }
             url = f"{BASE_URL}/{login_table}?$top=1"
-            resp = requests.get(url, headers=headers)
+            resp = get_dataverse_session().get(url, headers=headers, timeout=15)
             results["login_table"] = {
                 "table_name": login_table,
                 "status": resp.status_code,
@@ -6760,7 +6767,7 @@ def test_login_leave_tables():
                 "OData-Version": "4.0"
             }
             url = f"{BASE_URL}/{LEAVE_BALANCE_ENTITY}?$top=1"
-            resp = requests.get(url, headers=headers)
+            resp = get_dataverse_session().get(url, headers=headers, timeout=15)
             results["leave_balance_table"] = {
                 "table_name": LEAVE_BALANCE_ENTITY,
                 "status": resp.status_code,
@@ -6854,7 +6861,7 @@ def approve_leave(leave_id):
         url = f"{RESOURCE}/api/data/v9.2/{LEAVE_ENTITY}{filter_query}"
         
         print(f"   [SEARCH] Searching for leave: {url}")
-        response = requests.get(url, headers=headers)
+        response = get_dataverse_session().get(url, headers=headers, timeout=15)
         
         if response.status_code != 200:
             print(f"   [ERROR] Failed to find leave record: {response.status_code}")
@@ -6953,7 +6960,7 @@ def reject_leave(leave_id):
         url = f"{RESOURCE}/api/data/v9.2/{LEAVE_ENTITY}{filter_query}"
         
         print(f"   [SEARCH] Searching for leave: {url}")
-        response = requests.get(url, headers=headers)
+        response = get_dataverse_session().get(url, headers=headers, timeout=15)
         
         if response.status_code != 200:
             print(f"   [ERROR] Failed to find leave record: {response.status_code}")
@@ -6986,7 +6993,7 @@ def reject_leave(leave_id):
         # Add rejection reason if provided
         if rejection_reason:
             update_data["crc6f_rejectionreason"] = rejection_reason
-            print(f"   💬 Rejection reason stored: {rejection_reason}")
+            print(f"   Rejection reason stored: {rejection_reason}")
         
         print(f"   [LOG] Updating leave record {record_id} with status: Rejected")
         
@@ -7069,7 +7076,7 @@ def get_pending_leaves():
         url = f"{RESOURCE}/api/data/v9.2/{LEAVE_ENTITY}{filter_query}"
         
         print(f"   [URL] Request URL: {url}")
-        response = requests.get(url, headers=headers)
+        response = get_dataverse_session().get(url, headers=headers, timeout=15)
         
         if response.status_code != 200:
             print(f"   [ERROR] Failed to fetch pending leaves: {response.status_code}")
@@ -7165,7 +7172,7 @@ def get_on_leave_today():
         print(f"   [URL] Request URL: {url}")
 
         # Make the request
-        response = requests.get(url, headers=headers)
+        response = get_dataverse_session().get(url, headers=headers, timeout=15)
 
         if response.status_code != 200:
             print(f"   [ERROR] Failed to fetch leaves: {response.status_code}")
@@ -7202,7 +7209,7 @@ def get_on_leave_today():
 
             upcoming_url = f"{RESOURCE}/api/data/v9.2/{LEAVE_ENTITY}{upcoming_full_filter}"
             print(f"   [URL] Upcoming request URL: {upcoming_url}")
-            upcoming_response = requests.get(upcoming_url, headers=headers)
+            upcoming_response = get_dataverse_session().get(upcoming_url, headers=headers, timeout=15)
 
             if upcoming_response.status_code != 200:
                 print(f"   [ERROR] Failed to fetch upcoming leaves: {upcoming_response.status_code}")
@@ -7291,7 +7298,7 @@ def get_upcoming_leaves():
         url = f"{RESOURCE}/api/data/v9.2/{LEAVE_ENTITY}{filter_query}"
         print(f"   [URL] Request URL: {url}")
 
-        response = requests.get(url, headers=headers)
+        response = get_dataverse_session().get(url, headers=headers, timeout=15)
         if response.status_code != 200:
             print(f"   [ERROR] Failed to fetch upcoming leaves: {response.status_code}")
             return jsonify({
@@ -7401,7 +7408,7 @@ def get_admin_attendance_monitoring_today():
                         f"?$top=1&$select=crc6f_accesslevel"
                         f"&$filter=crc6f_username eq '{safe_email}'"
                     )
-                    resp = requests.get(url, headers=headers, timeout=20)
+                    resp = get_dataverse_session().get(url, headers=headers, timeout=20)
                     if resp.status_code == 200:
                         vals = resp.json().get('value', [])
                         if vals:
@@ -7414,7 +7421,7 @@ def get_admin_attendance_monitoring_today():
                         f"?$top=1&$select=crc6f_accesslevel"
                         f"&$filter=crc6f_userid eq '{safe_emp}'"
                     )
-                    resp = requests.get(url, headers=headers, timeout=20)
+                    resp = get_dataverse_session().get(url, headers=headers, timeout=20)
                     if resp.status_code == 200:
                         vals = resp.json().get('value', [])
                         if vals:
@@ -7458,7 +7465,7 @@ def get_admin_attendance_monitoring_today():
                 employee_select.append(logical)
 
         emp_url = f"{BASE_URL}/{employee_entity}?$select={','.join(employee_select)}&$top=5000"
-        emp_resp = requests.get(emp_url, headers=headers, timeout=30)
+        emp_resp = get_dataverse_session().get(emp_url, headers=headers, timeout=30)
         if emp_resp.status_code != 200:
             return jsonify({
                 "success": False,
@@ -7498,7 +7505,7 @@ def get_admin_attendance_monitoring_today():
         ])
         login_filter = f"?$select={select_login}&$filter={LA_FIELD_DATE} eq '{today}'&$top=5000"
         login_url = f"{BASE_URL}/{LOGIN_ACTIVITY_ENTITY}{login_filter}"
-        login_resp = requests.get(login_url, headers=headers, timeout=30)
+        login_resp = get_dataverse_session().get(login_url, headers=headers, timeout=30)
         if login_resp.status_code != 200:
             return jsonify({
                 "success": False,
@@ -7667,7 +7674,7 @@ def list_employees():
         orderby = f"$orderby=createdon desc"
         url = f"{RESOURCE}/api/data/v9.2/{entity_set}?{select_fields}&{top}&{orderby}"
         print(f"   [URL] Requesting: {url}")
-        resp = requests.get(url, headers=headers)
+        resp = get_dataverse_session().get(url, headers=headers, timeout=15)
         print(f"   [DATA] Response Status: {resp.status_code}")
         if resp.status_code != 200:
             # If 400, try a simpler request without $count/$orderby which can fail on some orgs
@@ -7679,7 +7686,7 @@ def list_employees():
                     "OData-MaxVersion": "4.0",
                     "OData-Version": "4.0"
                 }
-                simple_resp = requests.get(simple_url, headers=simple_headers)
+                simple_resp = get_dataverse_session().get(simple_url, headers=simple_headers, timeout=15)
                 print(f"   [PROC] Fallback response status: {simple_resp.status_code}")
                 if simple_resp.status_code == 200:
                     body = simple_resp.json()
@@ -7986,7 +7993,7 @@ def get_all_employees():
         url = f"{RESOURCE}/api/data/v9.2/{entity_set}?{select_fields}&$top={fetch_count}&$orderby=createdon desc"
 
         print(f"[URL] Fetching from Dataverse: {url}")
-        resp = requests.get(url, headers=headers)
+        resp = get_dataverse_session().get(url, headers=headers, timeout=15)
         print(f"[DATA] Dataverse status: {resp.status_code}")
 
         if resp.status_code != 200:
@@ -8090,7 +8097,7 @@ def create_employee():
         if email:
             safe_email = email.strip().replace("'", "''")
             check_url = f"{BASE_URL}/{entity_set}?$filter=crc6f_email eq '{safe_email}'"
-            check_response = requests.get(check_url, headers={"Authorization": f"Bearer {token}"})
+            check_response = get_dataverse_session().get(check_url, headers={"Authorization": f"Bearer {token}"}, timeout=15)
             if check_response.status_code == 200:
                 existing = check_response.json().get('value', [])
                 if existing:
@@ -8100,7 +8107,7 @@ def create_employee():
         if contact_number:
             safe_contact = contact_number.strip().replace("'", "''")
             check_url = f"{BASE_URL}/{entity_set}?$filter=crc6f_contactnumber eq '{safe_contact}'"
-            check_response = requests.get(check_url, headers={"Authorization": f"Bearer {token}"})
+            check_response = get_dataverse_session().get(check_url, headers={"Authorization": f"Bearer {token}"}, timeout=15)
             if check_response.status_code == 200:
                 existing = check_response.json().get('value', [])
                 if existing:
@@ -8184,7 +8191,7 @@ def create_employee():
                 }
                 safe_email = email.strip().replace("'", "''")
                 check_url = f"{BASE_URL}/{login_table}?$top=1&$filter=crc6f_username eq '{safe_email}'"
-                resp_check = requests.get(check_url, headers=headers_check)
+                resp_check = get_dataverse_session().get(check_url, headers=headers_check, timeout=15)
                 
                 login_exists = False
                 if resp_check.status_code == 200:
@@ -8334,7 +8341,7 @@ def list_interns():
             emp_filter = "$filter=crc6f_employeeflag eq 'Intern'"
             emp_url = f"{RESOURCE}/api/data/v9.2/{emp_entity}?{emp_select}&$top=5000&{emp_filter}"
 
-            emp_resp = requests.get(emp_url, headers=emp_headers, timeout=30)
+            emp_resp = get_dataverse_session().get(emp_url, headers=emp_headers, timeout=30)
             if emp_resp.status_code == 200:
                 intern_employee_ids = set()
                 for er in emp_resp.json().get("value", []):
@@ -8361,7 +8368,7 @@ def list_interns():
         fetch_count = 5000
         url = f"{RESOURCE}/api/data/v9.2/{INTERN_ENTITY}?$select={select_clause}&$top={fetch_count}&$orderby=createdon desc"
 
-        resp = requests.get(url, headers=headers, timeout=30)
+        resp = get_dataverse_session().get(url, headers=headers, timeout=30)
         if resp.status_code != 200:
             return jsonify({
                 "success": False,
@@ -8447,7 +8454,7 @@ def get_intern_detail(intern_id):
                 emp_filter = f"$filter={emp_id_field} eq '{safe_id}' and crc6f_employeeflag eq 'Intern'"
                 emp_url = f"{RESOURCE}/api/data/v9.2/{entity_set}?{emp_filter}&$top=1"
                 
-                emp_resp = requests.get(emp_url, headers=emp_headers, timeout=30)
+                emp_resp = get_dataverse_session().get(emp_url, headers=emp_headers, timeout=30)
                 if emp_resp.status_code == 200:
                     emp_records = emp_resp.json().get("value", [])
                     if emp_records:
@@ -8546,7 +8553,7 @@ def update_intern(intern_id):
                 emp_filter = f"$filter={emp_id_field} eq '{safe_id}' and crc6f_employeeflag eq 'Intern'"
                 emp_url = f"{RESOURCE}/api/data/v9.2/{entity_set}?{emp_filter}&$top=1"
                 
-                emp_resp = requests.get(emp_url, headers=emp_headers, timeout=30)
+                emp_resp = get_dataverse_session().get(emp_url, headers=emp_headers, timeout=30)
                 if emp_resp.status_code == 200:
                     emp_records = emp_resp.json().get("value", [])
                     if emp_records:
@@ -8561,7 +8568,7 @@ def update_intern(intern_id):
                             "Accept": "application/json",
                             "Prefer": "return=representation"
                         }
-                        create_resp = requests.post(create_url, headers=create_headers, json=create_payload, timeout=30)
+                        create_resp = get_dataverse_session().post(create_url, headers=create_headers, json=create_payload, timeout=30)
                         if create_resp.status_code in (200, 201, 204):
                             record = _fetch_intern_record_by_id(token, intern_id, include_system=True)
                             print(f"[INFO] Auto-created intern record for flagged employee {intern_id}")
@@ -8656,7 +8663,7 @@ def create_intern():
             "Prefer": "return=representation"
         }
 
-        resp = requests.post(url, headers=headers, json=payload, timeout=30)
+        resp = get_dataverse_session().post(url, headers=headers, json=payload, timeout=30)
         if resp.status_code not in (200, 201, 204):
             return jsonify({
                 "success": False,
@@ -8727,7 +8734,7 @@ def get_employee_by_name(name):
 
         # Fetch all names
         url = f"{RESOURCE}/api/data/v9.2/{entity_set}?$select={id_field},{name_field}&$top=5000"
-        res = requests.get(url, headers=headers, timeout=20)
+        res = get_dataverse_session().get(url, headers=headers, timeout=20)
 
         if res.status_code != 200:
             return jsonify({
@@ -8796,7 +8803,7 @@ def get_all_managers():
         url = f"{RESOURCE}/api/data/v9.2/{entity_set}?{select_fields}&{filter_clause}&$top={fetch_count}"
 
         print(f"🌐 Fetching from Dataverse: {url}")
-        resp = requests.get(url, headers=headers)
+        resp = get_dataverse_session().get(url, headers=headers, timeout=15)
         print(f"📊 Dataverse status: {resp.status_code}")
 
         if resp.status_code != 200:
@@ -8871,7 +8878,7 @@ def update_employee_api(employee_id):
         select_clause = ','.join(select_fields)
         filter_q = f"?$select={select_clause}&$filter={id_field} eq '{employee_id}'&$top=1"
         url = f"{RESOURCE}/api/data/v9.2/{entity_set}{filter_q}"
-        resp = requests.get(url, headers=headers)
+        resp = get_dataverse_session().get(url, headers=headers, timeout=15)
         if resp.status_code != 200:
             return jsonify({"success": False, "error": "Failed to find employee for update", "details": resp.text}), 500
         values = resp.json().get('value', [])
@@ -8973,7 +8980,7 @@ def delete_employee_api(employee_id):
         # Find record by business id
         filter_q = f"?$filter={field_map['id']} eq '{employee_id}'&$top=1"
         url = f"{RESOURCE}/api/data/v9.2/{entity_set}{filter_q}"
-        resp = requests.get(url, headers=headers)
+        resp = get_dataverse_session().get(url, headers=headers, timeout=15)
         if resp.status_code != 200:
             return jsonify({"success": False, "error": "Failed to find employee for deletion", "details": resp.text}), 500
         values = resp.json().get('value', [])
@@ -9014,7 +9021,7 @@ def get_last_employee_id():
         # Get all employee IDs ordered by creation date (newest first)
         select_fields = f"$select={field_map['id']}"
         url = f"{BASE_URL}/{entity_set}?{select_fields}&$orderby=createdon desc&$top=100"
-        response = requests.get(url, headers=headers)
+        response = get_dataverse_session().get(url, headers=headers, timeout=15)
         
         if response.status_code != 200:
             print(f"[WARN] Could not fetch last employee ID: {response.status_code}")
@@ -9092,7 +9099,7 @@ def bulk_create_employees():
         start_number = 1
         select_fields = f"$select={field_map['id']}"
         url = f"{BASE_URL}/{entity_set}?{select_fields}&$orderby=createdon desc&$top=100"
-        response = requests.get(url, headers=headers)
+        response = get_dataverse_session().get(url, headers=headers, timeout=15)
         
         if response.status_code == 200:
             records = response.json().get('value', [])
@@ -9129,7 +9136,7 @@ def bulk_create_employees():
             
             # Get all existing employee IDs
             url = f"{BASE_URL}/{entity_set}?$select={field_map['id']}"
-            response = requests.get(url, headers=headers)
+            response = get_dataverse_session().get(url, headers=headers, timeout=15)
             
             if response.status_code == 200:
                 existing_records = response.json().get('value', [])
@@ -9166,7 +9173,7 @@ def bulk_create_employees():
         # Get the last employee ID for auto-generation
         last_emp_id = None
         try:
-            last_id_response = requests.get(f"{RESOURCE}/api/data/v9.2/{entity_set}?$select={field_map['id']}&$orderby={field_map['id']} desc&$top=1", headers=headers)
+            last_id_response = get_dataverse_session().get(f"{RESOURCE}/api/data/v9.2/{entity_set}?$select={field_map['id']}&$orderby={field_map['id']} desc&$top=1", headers=headers, timeout=15)
             if last_id_response.status_code == 200:
                 last_records = last_id_response.json().get('value', [])
                 if last_records:
@@ -9269,7 +9276,7 @@ def bulk_create_employees():
                         login_table = get_login_table(token)
                         safe_email = email_val.strip().replace("'", "''")
                         check_url = f"{BASE_URL}/{login_table}?$top=1&$filter=crc6f_username eq '{safe_email}'"
-                        resp_check = requests.get(check_url, headers=headers_login)
+                        resp_check = get_dataverse_session().get(check_url, headers=headers_login, timeout=15)
                         exists = False
                         if resp_check.status_code == 200:
                             recs = resp_check.json().get("value", [])
@@ -9382,7 +9389,7 @@ def _build_employee_lookup(token: str, employee_ids: set) -> dict:
         filters = [f"{id_field} eq '{str(e).replace("'", "''")}'" for e in chunk]
         filter_clause = ' or '.join(filters)
         url = f"{RESOURCE}/api/data/v9.2/{entity_set}?$select={select_clause}&$filter={filter_clause}"
-        resp = requests.get(url, headers=headers)
+        resp = get_dataverse_session().get(url, headers=headers, timeout=15)
         if resp.status_code != 200:
             print(f"[WARN] Failed to fetch employee chunk: {resp.status_code} {resp.text}")
             continue
@@ -9470,8 +9477,8 @@ def list_hierarchy():
         rows = []
         if token:
             try:
-                resp = requests.get(url, headers=headers)
-                print(f"   ↩︎ Dataverse status: {resp.status_code}")
+                resp = get_dataverse_session().get(url, headers=headers, timeout=15)
+                print(f"   \u21a9\ufe0e Dataverse status: {resp.status_code}")
                 if resp.status_code == 200:
                     rows = resp.json().get('value', [])
                 else:
@@ -9484,7 +9491,7 @@ def list_hierarchy():
         if not rows:
             local_rows = _load_team_hierarchy_local()
             if local_rows:
-                print(f"🔁 Using local hierarchy cache with {len(local_rows)} rows")
+                print(f"\u21a9\ufe0e Using local hierarchy cache with {len(local_rows)} rows")
                 # Local rows are already in display format; adapt to serialization path
                 # Convert to row dicts compatible with _serialize_hierarchy_row
                 rows = [
@@ -9499,7 +9506,7 @@ def list_hierarchy():
                 used_fallback = True
             else:
                 # No data anywhere
-                print("ℹ️ No hierarchy data available from Dataverse or local cache")
+                print("\u2139 No hierarchy data available from Dataverse or local cache")
                 rows = []
 
         employee_ids = set()
@@ -9541,6 +9548,7 @@ def list_hierarchy():
             start = (page - 1) * page_size
             end = start + page_size
             page_groups = groups[start:end]
+
             return jsonify({
                 "success": True,
                 "items": page_groups,
@@ -9732,7 +9740,7 @@ def list_clients():
         )
         entity_set = get_clients_entity(token)
         url = f"{RESOURCE}/api/data/v9.2/{entity_set}?{select}&$top=5000"
-        resp = requests.get(url, headers=headers)
+        resp = get_dataverse_session().get(url, headers=headers, timeout=15)
         if resp.status_code != 200:
             return jsonify({"success": False, "error": resp.text}), resp.status_code
 
@@ -9786,7 +9794,7 @@ def list_clients():
             items.sort(key=lambda x: str(x.get("createdon") or ""), reverse=True)
 
         total = len(items)
-        start = max(0, (page - 1) * page_size)
+        start = (page - 1) * page_size
         end = start + page_size
         page_items = items[start:end]
 
@@ -9820,7 +9828,7 @@ def create_client():
         safe = client_id.replace("'", "''")
         entity_set = get_clients_entity(token)
         url = f"{RESOURCE}/api/data/v9.2/{entity_set}?$select=crc6f_clientid&$filter=crc6f_clientid eq '{safe}'&$top=1"
-        chk = requests.get(url, headers=headers)
+        chk = get_dataverse_session().get(url, headers=headers, timeout=15)
         if chk.status_code == 200 and chk.json().get("value"):
             return jsonify({"success": False, "error": "Client ID already exists"}), 409
 
@@ -9888,7 +9896,7 @@ def get_next_client_id():
         }
         entity_set = get_clients_entity(token)
         url = f"{RESOURCE}/api/data/v9.2/{entity_set}?$select=crc6f_clientid&$orderby=createdon desc&$top=200"
-        resp = requests.get(url, headers=headers)
+        resp = get_dataverse_session().get(url, headers=headers, timeout=15)
         if resp.status_code != 200:
             return jsonify({"success": False, "error": "Failed to fetch clients"}), 500
         values = resp.json().get("value", [])
@@ -9910,8 +9918,7 @@ def get_next_client_id():
 # ================== SIMPLE CLIENT NAME FETCH (for dropdowns) ==================
 @app.route("/api/clients/names", methods=["GET"])
 def get_all_clients():
-    """
-    Lightweight endpoint to fetch only client names and IDs
+    """Lightweight endpoint to fetch only client names and IDs
     for dropdown selection in project creation/edit forms.
     """
     try:
@@ -9927,7 +9934,7 @@ def get_all_clients():
         # Only fetching necessary fields
         select = "$select=crc6f_clientname,crc6f_hr_clientsid"
         url = f"{RESOURCE}/api/data/v9.2/{entity_set}?{select}&$top=5000"
-        resp = requests.get(url, headers=headers)
+        resp = get_dataverse_session().get(url, headers=headers, timeout=15)
         if resp.status_code != 200:
             return jsonify({"success": False, "error": resp.text}), resp.status_code
 
@@ -9966,9 +9973,9 @@ def get_holidays():
 
         # Fetch all records with ordering by date
         url = f"{RESOURCE}/api/data/v9.2/{HOLIDAY_ENTITY}?$select=crc6f_date,crc6f_holidayname,crc6f_hr_holidaysid&$orderby=crc6f_date asc"
-        print(f"🔗 Request URL: {url}")
+        print(f"\u2705 Request URL: {url}")
         
-        response = requests.get(url, headers=headers, timeout=10)
+        response = get_dataverse_session().get(url, headers=headers, timeout=10)
         print(f"[DATA] Response status: {response.status_code}")
 
         if response.status_code != 200:
@@ -10322,34 +10329,34 @@ def cancel_leave(leave_id):
         safe_leave_id = leave_id.replace("'", "''")
         filter_query = f"?$filter=crc6f_leaveid eq '{safe_leave_id}'"
         url = f"{RESOURCE}/api/data/v9.2/{LEAVE_ENTITY}{filter_query}"
-        
-        response = requests.get(url, headers=headers)
-        
+
+        response = get_dataverse_session().get(url, headers=headers, timeout=15)
+
         if response.status_code != 200:
             return jsonify({"success": False, "error": "Leave record not found"}), 404
-        
+
         records = response.json().get("value", [])
         if not records:
             return jsonify({"success": False, "error": "Leave record not found"}), 404
-        
+
         record = records[0]
         record_id = record.get("crc6f_table14id")
         current_status = record.get("crc6f_status", "").lower()
-        
+
         # Only allow canceling pending leaves
         if current_status != "pending":
             return jsonify({"success": False, "error": f"Cannot cancel {current_status} leave. Only pending leaves can be canceled."}), 400
-        
+
         # Update status to Canceled
         update_data = {"crc6f_status": "Canceled"}
         update_record(LEAVE_ENTITY, record_id, update_data)
-        
+
         # Restore leave balance if it was a paid leave
         employee_id = record.get("crc6f_employeeid")
         leave_type = record.get("crc6f_leavetype")
         total_days = float(record.get("crc6f_totaldays", 0))
         paid_unpaid = record.get("crc6f_paidunpaid", "Unpaid")
-        
+
         if paid_unpaid.lower() == "paid" and total_days > 0 and employee_id:
             try:
                 balance_row = _fetch_leave_balance(token, employee_id)
@@ -10358,12 +10365,12 @@ def cancel_leave(leave_id):
                     if balance_record_id:
                         leave_type_lower = leave_type.lower()
                         balance_update = {}
-                        
+
                         # Get current balances for all leave types
                         current_cl = float(balance_row.get("crc6f_cl", 0) or 0)
                         current_sl = float(balance_row.get("crc6f_sl", 0) or 0)
                         current_co = float(balance_row.get("crc6f_compoff", 0) or 0)
-                        
+
                         # Update the specific leave type balance
                         if "casual" in leave_type_lower:
                             current_cl = current_cl + total_days
@@ -10374,11 +10381,11 @@ def cancel_leave(leave_id):
                         elif "comp" in leave_type_lower:
                             current_co = current_co + total_days
                             balance_update["crc6f_compoff"] = str(current_co)
-                        
+
                         # Recalculate total balance
                         new_total = current_cl + current_sl + current_co
                         balance_update["crc6f_total"] = str(new_total)
-                        
+
                         if balance_update:
                             entity_set = LEAVE_BALANCE_ENTITY_RESOLVED or LEAVE_BALANCE_ENTITY
                             update_record(entity_set, balance_record_id, balance_update)
@@ -10386,16 +10393,16 @@ def cancel_leave(leave_id):
                             print(f"   [DATA] New total balance: {new_total}")
             except Exception as restore_err:
                 print(f"   [WARN] Failed to restore balance: {restore_err}")
-        
+
         print(f"[OK] Leave {leave_id} canceled successfully")
         print(f"{'='*70}\n")
-        
+
         # Fetch updated balances to return in response
         response_data = {
             "success": True,
             "message": f"Leave {leave_id} canceled successfully"
         }
-        
+
         # If balance was restored, fetch and include updated balances
         if paid_unpaid.lower() == "paid" and total_days > 0 and employee_id:
             try:
@@ -10410,9 +10417,9 @@ def cancel_leave(leave_id):
                     print(f"   [DATA] Updated balances included in response: {response_data['updated_balances']}")
             except Exception as fetch_err:
                 print(f"   [WARN] Could not fetch updated balances for response: {fetch_err}")
-        
+
         return jsonify(response_data), 200
-        
+
     except Exception as e:
         print(f"[ERROR] Error canceling leave: {str(e)}")
         traceback.print_exc()
@@ -10426,14 +10433,14 @@ def update_leave(leave_id):
         print(f"\n{'='*70}")
         print(f"✏️ UPDATING LEAVE REQUEST: {leave_id}")
         print(f"{'='*70}")
-        
+
         data = request.json
         leave_type = data.get('leave_type')
         start_date = data.get('start_date')
         end_date = data.get('end_date')
         total_days = data.get('total_days')
         paid_unpaid = data.get('paid_unpaid')
-        
+
         token = get_access_token()
         headers = {
             "Authorization": f"Bearer {token}",
@@ -10441,29 +10448,29 @@ def update_leave(leave_id):
             "OData-MaxVersion": "4.0",
             "OData-Version": "4.0"
         }
-        
+
         # Find the leave record
         safe_leave_id = leave_id.replace("'", "''")
         filter_query = f"?$filter=crc6f_leaveid eq '{safe_leave_id}'"
         url = f"{RESOURCE}/api/data/v9.2/{LEAVE_ENTITY}{filter_query}"
-        
-        response = requests.get(url, headers=headers)
-        
+
+        response = get_dataverse_session().get(url, headers=headers, timeout=15)
+
         if response.status_code != 200:
             return jsonify({"success": False, "error": "Leave record not found"}), 404
-        
+
         records = response.json().get("value", [])
         if not records:
             return jsonify({"success": False, "error": "Leave record not found"}), 404
-        
+
         record = records[0]
         record_id = record.get("crc6f_table14id")
         current_status = record.get("crc6f_status", "").lower()
-        
+
         # Only allow updating pending leaves
         if current_status != "pending":
             return jsonify({"success": False, "error": f"Cannot update {current_status} leave. Only pending leaves can be updated."}), 400
-        
+
         # Build update data
         update_data = {}
         if leave_type:
@@ -10476,20 +10483,20 @@ def update_leave(leave_id):
             update_data["crc6f_totaldays"] = total_days
         if paid_unpaid:
             update_data["crc6f_paidunpaid"] = paid_unpaid
-        
+
         # Update the record
         update_record(LEAVE_ENTITY, record_id, update_data)
-        
+
         print(f"[OK] Leave {leave_id} updated successfully")
         print(f"   Updated fields: {list(update_data.keys())}")
         print(f"{'='*70}\n")
-        
+
         return jsonify({
             "success": True,
             "message": f"Leave {leave_id} updated successfully",
             "updated_fields": list(update_data.keys())
         }), 200
-        
+
     except Exception as e:
         print(f"[ERROR] Error updating leave: {str(e)}")
         traceback.print_exc()
@@ -10506,15 +10513,15 @@ def update_employee_leave_allocation(employee_id):
         print(f"\n{'='*70}")
         print(f"✏️ UPDATING LEAVE ALLOCATION FOR EMPLOYEE: {employee_id}")
         print(f"{'='*70}")
-        
+
         # Get request data
         data = request.get_json()
         casual_leave = data.get('casualLeave')
         sick_leave = data.get('sickLeave')
-        
+
         if casual_leave is None or sick_leave is None:
             return jsonify({"success": False, "error": "casualLeave and sickLeave are required"}), 400
-        
+
         # Validate values
         try:
             casual_leave = float(casual_leave)
@@ -10523,9 +10530,9 @@ def update_employee_leave_allocation(employee_id):
                 return jsonify({"success": False, "error": "Leave values must be non-negative"}), 400
         except ValueError:
             return jsonify({"success": False, "error": "Invalid leave values"}), 400
-        
+
         total_quota = casual_leave + sick_leave
-        
+
         token = get_access_token()
         headers = {
             "Authorization": f"Bearer {token}",
@@ -10534,37 +10541,37 @@ def update_employee_leave_allocation(employee_id):
             "OData-MaxVersion": "4.0",
             "OData-Version": "4.0"
         }
-        
+
         # Normalize employee ID
         emp_id = (employee_id or '').strip().upper()
         if emp_id.isdigit():
             emp_id = f"EMP{int(emp_id):03d}"
-        
+
         print(f"[DATA] New allocation: CL={casual_leave}, SL={sick_leave}, Total={total_quota}")
-        
+
         # Check if record exists in leave management table
         safe_emp = emp_id.replace("'", "''")
         balance_filter = f"?$filter=crc6f_employeeid eq '{safe_emp}'"
         balance_url = f"{RESOURCE}/api/data/v9.2/crc6f_hr_leavemangements{balance_filter}"
-        balance_response = requests.get(balance_url, headers=headers)
-        
+        balance_response = get_dataverse_session().get(balance_url, headers=headers, timeout=15)
+
         balance_data = {
             "crc6f_employeeid": emp_id,
             "crc6f_cl": str(casual_leave),
             "crc6f_sl": str(sick_leave),
             "crc6f_total": str(total_quota)
         }
-        
+
         if balance_response.status_code == 200:
             existing_records = balance_response.json().get("value", [])
-            
+
             if existing_records:
                 # Update existing record
                 record_id = existing_records[0].get("crc6f_hr_leavemangementid")
                 if record_id:
                     update_url = f"{RESOURCE}/api/data/v9.2/crc6f_hr_leavemangements({record_id})"
-                    update_response = requests.patch(update_url, headers=headers, json=balance_data)
-                    
+                    update_response = get_dataverse_session().patch(update_url, headers=headers, json=balance_data, timeout=15)
+
                     if update_response.status_code in [200, 204]:
                         print(f"[OK] Successfully updated leave allocation for {emp_id}")
                         print(f"{'='*70}\n")
@@ -10583,8 +10590,8 @@ def update_employee_leave_allocation(employee_id):
             else:
                 # Create new record
                 create_url = f"{RESOURCE}/api/data/v9.2/crc6f_hr_leavemangements"
-                create_response = requests.post(create_url, headers=headers, json=balance_data)
-                
+                create_response = get_dataverse_session().post(create_url, headers=headers, json=balance_data, timeout=15)
+
                 if create_response.status_code in [200, 201, 204]:
                     print(f"[OK] Successfully created leave allocation for {emp_id}")
                     print(f"{'='*70}\n")
@@ -10603,7 +10610,7 @@ def update_employee_leave_allocation(employee_id):
         else:
             print(f"[ERROR] Failed to check existing record: {balance_response.status_code}")
             return jsonify({"success": False, "error": "Failed to check existing record"}), 500
-            
+
     except Exception as e:
         print(f"[ERROR] Error updating leave allocation: {str(e)}")
         traceback.print_exc()
@@ -10620,7 +10627,7 @@ def get_all_employee_leave_allocations():
         print(f"\n{'='*70}")
         print(f"[FETCH] GETTING ALL EMPLOYEE LEAVE ALLOCATIONS FROM DATABASE")
         print(f"{'='*70}")
-        
+
         token = get_access_token()
         headers = {
             "Authorization": f"Bearer {token}",
@@ -10628,27 +10635,27 @@ def get_all_employee_leave_allocations():
             "OData-MaxVersion": "4.0",
             "OData-Version": "4.0"
         }
-        
+
         # Fetch all records from leave management table
         url = f"{RESOURCE}/api/data/v9.2/crc6f_hr_leavemangements?$top=5000"
         print(f"[URL] Fetching from: {url}")
-        response = requests.get(url, headers=headers)
-        
+        response = get_dataverse_session().get(url, headers=headers, timeout=15)
+
         if response.status_code != 200:
             print(f"[ERROR] Failed to fetch allocations: {response.status_code}")
             print(f"[ERROR] Response: {response.text}")
             return jsonify({"success": False, "error": "Failed to fetch leave allocations"}), 500
-        
+
         records = response.json().get("value", [])
         print(f"[DATA] Found {len(records)} leave allocation records in database")
-        
+
         # Log first few records for debugging
         if records:
             print(f"[DEBUG] Sample record keys: {list(records[0].keys())}")
             print(f"[DEBUG] First record: {records[0]}")
         else:
             print(f"[WARN] No records found in crc6f_hr_leavemangements table!")
-        
+
         # Format the response
         allocations = {}
         for record in records:
@@ -10664,16 +10671,16 @@ def get_all_employee_leave_allocations():
                 print(f"[DEBUG] Added allocation for {emp_id}: CL={allocations[emp_id]['casual_leave']}, SL={allocations[emp_id]['sick_leave']}")
             else:
                 print(f"[WARN] Record without employee_id: {record}")
-        
+
         print(f"[OK] Returning {len(allocations)} employee allocations")
         print(f"{'='*70}\n")
-        
+
         return jsonify({
             "success": True,
             "allocations": allocations,
             "count": len(allocations)
         }), 200
-        
+
     except Exception as e:
         print(f"[ERROR] Error fetching leave allocations: {str(e)}")
         traceback.print_exc()
@@ -10690,7 +10697,7 @@ def sync_leave_allocations():
         print(f"\n{'='*70}")
         print(f"[PROC] SYNCING LEAVE ALLOCATIONS TO DATAVERSE")
         print(f"{'='*70}")
-        
+
         token = get_access_token()
         headers = {
             "Authorization": f"Bearer {token}",
@@ -10699,35 +10706,35 @@ def sync_leave_allocations():
             "OData-MaxVersion": "4.0",
             "OData-Version": "4.0"
         }
-        
+
         # Fetch all employees
         entity_set = get_employee_entity_set(token)
         field_map = get_field_map(entity_set)
         emp_url = f"{RESOURCE}/api/data/v9.2/{entity_set}"
-        emp_response = requests.get(emp_url, headers=headers)
-        
+        emp_response = get_dataverse_session().get(emp_url, headers=headers, timeout=15)
+
         if emp_response.status_code != 200:
             return jsonify({"success": False, "error": "Failed to fetch employees"}), 500
-        
+
         employees = emp_response.json().get("value", [])
         print(f"[DATA] Found {len(employees)} employees to process")
-        
+
         synced_count = 0
         errors = []
-        
+
         for emp_record in employees:
             try:
                 emp_id = emp_record.get(field_map['id'])
                 if not emp_id:
                     continue
-                
+
                 doj_value = emp_record.get(field_map['doj'])
-                
+
                 # Calculate experience and allocation
                 cl_annual = 3  # Default Type 3
                 sl_annual = 3
                 allocation_type = "Type 3"
-                
+
                 if doj_value:
                     try:
                         from datetime import datetime
@@ -10739,11 +10746,11 @@ def sync_leave_allocations():
                                     doj_date = datetime(int(parts[2]), int(parts[0]), int(parts[1]))
                             elif '-' in doj_value:
                                 doj_date = datetime.fromisoformat(doj_value.split('T')[0])
-                        
+
                         if doj_date:
                             current_date = datetime.now()
                             experience_years = int((current_date - doj_date).days / 365.25)
-                            
+
                             if experience_years >= 3:
                                 cl_annual = 6
                                 sl_annual = 6
@@ -10754,35 +10761,34 @@ def sync_leave_allocations():
                                 allocation_type = "Type 2"
                     except Exception as e:
                         print(f"   [WARN] Error calculating experience for {emp_id}: {e}")
-                
+
                 total_quota = cl_annual + sl_annual
-                
+
                 print(f"\n[USER] Processing {emp_id}: {allocation_type} (CL={cl_annual}, SL={sl_annual}, Total={total_quota})")
-                
+
                 # Check if record exists in leave management table
                 safe_emp = emp_id.replace("'", "''")
                 balance_filter = f"?$filter=crc6f_employeeid eq '{safe_emp}'"
                 balance_url = f"{RESOURCE}/api/data/v9.2/crc6f_hr_leavemangements{balance_filter}"
-                balance_response = requests.get(balance_url, headers=headers)
-                
+                balance_response = get_dataverse_session().get(balance_url, headers=headers, timeout=15)
+
                 balance_data = {
                     "crc6f_employeeid": emp_id,
                     "crc6f_cl": str(cl_annual),
                     "crc6f_sl": str(sl_annual),
                     "crc6f_total": str(total_quota)
-                    # Note: crc6f_compoff is omitted as it may have different type or not be required
                 }
-                
+
                 if balance_response.status_code == 200:
                     existing_records = balance_response.json().get("value", [])
-                    
+
                     if existing_records:
                         # Update existing record
                         record_id = existing_records[0].get("crc6f_hr_leavemangementid")
                         if record_id:
                             update_url = f"{RESOURCE}/api/data/v9.2/crc6f_hr_leavemangements({record_id})"
-                            update_response = requests.patch(update_url, headers=headers, json=balance_data)
-                            
+                            update_response = get_dataverse_session().patch(update_url, headers=headers, json=balance_data, timeout=15)
+
                             if update_response.status_code in [200, 204]:
                                 print(f"   [OK] Updated existing record for {emp_id}")
                                 synced_count += 1
@@ -10794,8 +10800,8 @@ def sync_leave_allocations():
                     else:
                         # Create new record
                         create_url = f"{RESOURCE}/api/data/v9.2/crc6f_hr_leavemangements"
-                        create_response = requests.post(create_url, headers=headers, json=balance_data)
-                        
+                        create_response = get_dataverse_session().post(create_url, headers=headers, json=balance_data, timeout=15)
+
                         if create_response.status_code in [200, 201, 204]:
                             print(f"   [OK] Created new record for {emp_id}")
                             synced_count += 1
@@ -10808,33 +10814,33 @@ def sync_leave_allocations():
                     error_msg = f"Failed to check existing record for {emp_id}"
                     print(f"   [ERROR] {error_msg}")
                     errors.append(error_msg)
-                    
+
             except Exception as e:
                 error_msg = f"Error processing {emp_id}: {str(e)}"
                 print(f"   [ERROR] {error_msg}")
                 errors.append(error_msg)
-        
+
         print(f"\n{'='*70}")
         print(f"[OK] SYNC COMPLETE: {synced_count}/{len(employees)} employees synced")
         if errors:
             print(f"[WARN] Errors: {len(errors)}")
         print(f"{'='*70}\n")
-        
+
         return jsonify({
             "success": True,
             "synced_count": synced_count,
             "total_employees": len(employees),
             "errors": errors if errors else None
         }), 200
-        
+
     except Exception as e:
         print(f"[ERROR] Error syncing leave allocations: {str(e)}")
         traceback.print_exc()
         return jsonify({"success": False, "error": str(e)}), 500
 
-# -----------------------------------------
-# [FETCH] Attendance Submission to Inbox API
-# -----------------------------------------
+
+# ... (rest of the code remains the same)
+
 @app.route('/api/attendance/submit', methods=['POST'])
 @app.route('/api/attendance/submit-to-inbox', methods=['POST'])
 def submit_attendance_to_inbox():
@@ -10873,7 +10879,7 @@ def submit_attendance_to_inbox():
         filter_q = (f"?$filter={FIELD_EMPLOYEE_ID} eq '{emp_id}' "
                     f"and {FIELD_ATTENDANCE_ID_CUSTOM} eq '{marker_id}'")
         url_check = f"{RESOURCE}/api/data/v9.2/{ATTENDANCE_ENTITY}{filter_q}"
-        resp_check = requests.get(url_check, headers=headers)
+        resp_check = get_dataverse_session().get(url_check, headers=headers, timeout=15)
         if resp_check.status_code == 200 and resp_check.json().get('value'):
             return jsonify({"success": False, "error": "Attendance report already submitted for this month"}), 400
 
@@ -10923,7 +10929,7 @@ def get_attendance_submission_status(employee_id, year, month):
         filter_q = (f"?$filter={FIELD_EMPLOYEE_ID} eq '{emp_id}' "
                     f"and {FIELD_ATTENDANCE_ID_CUSTOM} eq '{marker_id}'")
         url = f"{RESOURCE}/api/data/v9.2/{ATTENDANCE_ENTITY}{filter_q}"
-        r = requests.get(url, headers=headers)
+        r = get_dataverse_session().get(url, headers=headers, timeout=15)
         if r.status_code == 200:
             vals = r.json().get('value', [])
             if vals:
@@ -10942,9 +10948,8 @@ def get_attendance_submission_status(employee_id, year, month):
         return jsonify({"success": False, "error": str(e)}), 500
 
 
-# -----------------------------------------
-# [FETCH] Attendance Submission Admin API (using attendance table markers)
-# -----------------------------------------
+# ... (rest of the code remains the same)
+
 @app.route('/api/attendance/submissions', methods=['GET'])
 def list_attendance_submissions():
     try:
@@ -10966,7 +10971,7 @@ def list_attendance_submissions():
         if emp_id:
             base_filter += f" and {FIELD_EMPLOYEE_ID} eq '{emp_id}'"
         url = f"{RESOURCE}/api/data/v9.2/{ATTENDANCE_ENTITY}?$filter={base_filter}&$orderby={FIELD_DATE} desc"
-        resp = requests.get(url, headers=headers)
+        resp = get_dataverse_session().get(url, headers=headers, timeout=15)
         if resp.status_code != 200:
             return jsonify({"success": False, "error": f"Failed to fetch markers: {resp.status_code}"}), 500
         values = resp.json().get('value', [])
@@ -11040,7 +11045,7 @@ def list_attendance_submissions():
                             if leave_type:
                                 leave_types[leave_type] = leave_types.get(leave_type, 0.0) + 1.0
                     else:
-                        print(f"[WARN] Could not load monthly attendance records for inbox aggregation: emp={emp_for_q}, year={y}, month={m}, status={monthly_status}")
+                        print(f"[WARN] Could not load monthly attendance records for inbox aggregation: emp={emp_for_q}, year={y}, month={m}")
 
                     # Attach
                     item_obj["days_checked_in"] = days_checked_in
@@ -11057,6 +11062,7 @@ def list_attendance_submissions():
             items.append(item_obj)
 
         return jsonify({"success": True, "items": items, "count": len(items)})
+
     except Exception as e:
         print("[ERROR] Error listing attendance submissions:", e)
         traceback.print_exc()
@@ -11075,7 +11081,7 @@ def approve_attendance_submission(marker_id):
         }
         safe_marker = marker_id.replace("'", "''")
         url = f"{RESOURCE}/api/data/v9.2/{ATTENDANCE_ENTITY}?$top=1&$filter={FIELD_ATTENDANCE_ID_CUSTOM} eq '{safe_marker}'"
-        r = requests.get(url, headers=headers)
+        r = get_dataverse_session().get(url, headers=headers, timeout=15)
         vals = r.json().get('value', []) if r.status_code == 200 else []
         if not vals:
             return jsonify({"success": False, "error": "Submission marker not found"}), 404
@@ -11089,6 +11095,7 @@ def approve_attendance_submission(marker_id):
         record_id = row.get(FIELD_RECORD_ID) or row.get('id')
         update_record(ATTENDANCE_ENTITY, record_id, payload)
         return jsonify({"success": True, "message": "Attendance submission approved"})
+
     except Exception as e:
         print("[ERROR] Error approving attendance submission:", e)
         traceback.print_exc()
@@ -11109,7 +11116,7 @@ def reject_attendance_submission(marker_id):
         }
         safe_marker = marker_id.replace("'", "''")
         url = f"{RESOURCE}/api/data/v9.2/{ATTENDANCE_ENTITY}?$top=1&$filter={FIELD_ATTENDANCE_ID_CUSTOM} eq '{safe_marker}'"
-        r = requests.get(url, headers=headers)
+        r = get_dataverse_session().get(url, headers=headers, timeout=15)
         vals = r.json().get('value', []) if r.status_code == 200 else []
         if not vals:
             return jsonify({"success": False, "error": "Submission marker not found"}), 404
@@ -11154,7 +11161,7 @@ def get_onboarding_entity_set(token):
     for candidate in ONBOARDING_ENTITY_CANDIDATES:
         try:
             test_url = f"{BASE_URL}/{candidate}?$top=1"
-            response = requests.get(test_url, headers={"Authorization": f"Bearer {token}"})
+            response = get_dataverse_session().get(test_url, headers={"Authorization": f"Bearer {token}"}, timeout=15)
             if response.status_code == 200:
                 ONBOARDING_ENTITY_RESOLVED = candidate
                 print(f"[OK] Resolved onboarding entity: {candidate}")
@@ -11170,7 +11177,7 @@ def get_progress_log_entity_set(token):
     for candidate in PROGRESS_LOG_ENTITY_CANDIDATES:
         try:
             test_url = f"{BASE_URL}/{candidate}?$top=1"
-            response = requests.get(test_url, headers={"Authorization": f"Bearer {token}"})
+            response = get_dataverse_session().get(test_url, headers={"Authorization": f"Bearer {token}"}, timeout=15)
             if response.status_code == 200:
                 PROGRESS_LOG_ENTITY_RESOLVED = candidate
                 return candidate
@@ -11207,7 +11214,7 @@ def create_progress_log_row(token, onboarding_id, stage_name, stage_number=None,
             onboarding_entity = get_onboarding_entity_set(token)
             bind_payload = dict(payload)
             bind_payload[f"crc6f_onboardingid@odata.bind"] = f"/{onboarding_entity}({onboarding_id})"
-            resp = requests.post(url, headers=headers, json=bind_payload, timeout=15)
+            resp = get_dataverse_session().post(url, headers=headers, json=bind_payload, timeout=15)
             if resp.status_code in (200, 201, 204):
                 return
         except Exception:
@@ -11216,7 +11223,7 @@ def create_progress_log_row(token, onboarding_id, stage_name, stage_number=None,
         try:
             payload_fallback = dict(payload)
             payload_fallback["crc6f_onboardingid"] = onboarding_id
-            requests.post(url, headers=headers, json=payload_fallback, timeout=15)
+            get_dataverse_session().post(url, headers=headers, json=payload_fallback, timeout=15)
         except Exception:
             pass
     except Exception:
@@ -11240,7 +11247,7 @@ def fetch_latest_progress_timestamps(token, onboarding_id):
         ]
         for url in urls:
             try:
-                resp = requests.get(url, headers=headers, timeout=20)
+                resp = get_dataverse_session().get(url, headers=headers, timeout=20)
                 if resp.status_code == 200:
                     rows = resp.json().get("value", [])
                     if rows:
@@ -11353,7 +11360,7 @@ def generate_employee_id():
         }
 
         url = f"{RESOURCE}/api/data/v9.2/{entity_set}?$select={id_field}&$orderby=createdon desc&$top=200"
-        response = requests.get(url, headers=headers, timeout=15)
+        response = get_dataverse_session().get(url, headers=headers, timeout=15)
 
         max_num = 0
         if response.status_code == 200:
@@ -11581,7 +11588,7 @@ def list_onboarding_records():
             # Search by firstname, lastname, or email
             url += f"&$filter=contains(crc6f_firstname, '{search_query}') or contains(crc6f_lastname, '{search_query}') or contains(crc6f_email, '{search_query}')"
         
-        response = requests.get(url, headers={"Authorization": f"Bearer {token}"})
+        response = get_dataverse_session().get(url, headers={"Authorization": f"Bearer {token}"}, timeout=15)
         
         if response.status_code == 200:
             records = response.json().get('value', [])
@@ -11639,7 +11646,7 @@ def get_onboarding_record(record_id):
         entity_set = get_onboarding_entity_set(token)
 
         url = f"{BASE_URL}/{entity_set}({record_id})"
-        response = requests.get(url, headers={"Authorization": f"Bearer {token}"})
+        response = get_dataverse_session().get(url, headers={"Authorization": f"Bearer {token}"}, timeout=15)
 
         if response.status_code == 200:
             record = response.json()
@@ -11724,7 +11731,7 @@ def delete_onboarding_record(record_id):
             values = []
             for u in urls:
                 try:
-                    resp = requests.get(u, headers=headers, timeout=20)
+                    resp = get_dataverse_session().get(u, headers=headers, timeout=20)
                     if resp.status_code == 200:
                         values = resp.json().get('value', [])
                         if values:
@@ -11776,7 +11783,7 @@ def update_onboarding_record(record_id):
 
         # Fetch updated record and return in formatted structure
         url = f"{BASE_URL}/{entity_set}({record_id})?$select=crc6f_hr_onboardingid,crc6f_firstname,crc6f_lastname,crc6f_email,crc6f_contactno,crc6f_address,crc6f_department,crc6f_designation,crc6f_doj,crc6f_progresssteps,crc6f_interviewstatus,crc6f_interviewdate,crc6f_offerpmail,crc6f_offerpmailreply,crc6f_documentsstatus,crc6f_documentsuploaded,crc6f_onboardingid,crc6f_convertedtoemployee,createdon,modifiedon"
-        response = requests.get(url, headers={"Authorization": f"Bearer {token}"})
+        response = get_dataverse_session().get(url, headers={"Authorization": f"Bearer {token}"}, timeout=15)
         if response.status_code != 200:
             return jsonify({'success': True, 'message': 'Updated successfully'}), 200
         record = response.json()
@@ -11923,7 +11930,7 @@ def update_interview_status(record_id):
         # Fetch candidate details for email context and previous status comparison
         candidate = None
         url = f"{BASE_URL}/{entity_set}({record_id})"
-        response = requests.get(url, headers={"Authorization": f"Bearer {token}"})
+        response = get_dataverse_session().get(url, headers={"Authorization": f"Bearer {token}"}, timeout=15)
         if response.status_code == 200:
             candidate = response.json()
         else:
@@ -11978,7 +11985,7 @@ def schedule_interview_email(record_id):
 
         # Fetch candidate details
         url = f"{BASE_URL}/{entity_set}({record_id})"
-        response = requests.get(url, headers={"Authorization": f"Bearer {token}"})
+        response = get_dataverse_session().get(url, headers={"Authorization": f"Bearer {token}"}, timeout=15)
         if response.status_code != 200:
             return jsonify({'success': False, 'message': 'Onboarding record not found'}), 404
         candidate = response.json()
@@ -12043,7 +12050,7 @@ def send_offer_letter(record_id):
 
         # Fetch candidate details
         url = f"{BASE_URL}/{entity_set}({record_id})"
-        response = requests.get(url, headers={"Authorization": f"Bearer {token}"})
+        response = get_dataverse_session().get(url, headers={"Authorization": f"Bearer {token}"}, timeout=15)
         if response.status_code != 200:
             return jsonify({'success': False, 'message': 'Onboarding record not found'}), 404
         candidate = response.json()
@@ -12091,7 +12098,7 @@ def update_result_and_send_mail(record_id):
 
         # Fetch candidate details
         url = f"{BASE_URL}/{entity_set}({record_id})"
-        response = requests.get(url, headers={"Authorization": f"Bearer {token}"})
+        response = get_dataverse_session().get(url, headers={"Authorization": f"Bearer {token}"}, timeout=15)
         if response.status_code != 200:
             return jsonify({'success': False, 'message': 'Onboarding record not found'}), 404
         candidate = response.json()
@@ -12201,7 +12208,7 @@ def check_email_reply(record_id):
         
         # 1) Fetch onboarding record to get candidate email
         url = f"{BASE_URL}/{onboarding_entity}({record_id})"
-        response = requests.get(url, headers={"Authorization": f"Bearer {token}"})
+        response = get_dataverse_session().get(url, headers={"Authorization": f"Bearer {token}"}, timeout=15)
         if response.status_code != 200:
             return jsonify({'success': False, 'message': 'Onboarding record not found'}), 404
         
@@ -12312,7 +12319,7 @@ def send_documents_mail(record_id):
 
         # Fetch candidate details
         url = f"{BASE_URL}/{entity_set}({record_id})"
-        response = requests.get(url, headers={"Authorization": f"Bearer {token}"})
+        response = get_dataverse_session().get(url, headers={"Authorization": f"Bearer {token}"}, timeout=15)
         if response.status_code != 200:
             return jsonify({'success': False, 'message': 'Onboarding record not found'}), 404
         candidate = response.json()
@@ -12363,7 +12370,7 @@ def check_documents_email(record_id):
 
         # Fetch onboarding record to get candidate email
         url = f"{BASE_URL}/{onboarding_entity}({record_id})"
-        response = requests.get(url, headers={"Authorization": f"Bearer {token}"})
+        response = get_dataverse_session().get(url, headers={"Authorization": f"Bearer {token}"}, timeout=15)
         if response.status_code != 200:
             return jsonify({'success': False, 'message': 'Onboarding record not found'}), 404
 
@@ -12476,7 +12483,7 @@ def update_document_status_only(record_id):
             # Send acknowledgement email that documents were received
             try:
                 url = f"{BASE_URL}/{entity_set}({record_id})"
-                resp = requests.get(url, headers={"Authorization": f"Bearer {token}"})
+                resp = get_dataverse_session().get(url, headers={"Authorization": f"Bearer {token}"}, timeout=15)
                 if resp.status_code == 200:
                     rec = resp.json()
                     recipient = (rec.get('crc6f_email') or '').strip()
@@ -12530,7 +12537,7 @@ def send_policy_letter(record_id):
 
         # Fetch candidate details
         url = f"{BASE_URL}/{entity_set}({record_id})"
-        response = requests.get(url, headers={"Authorization": f"Bearer {token}"})
+        response = get_dataverse_session().get(url, headers={"Authorization": f"Bearer {token}"}, timeout=15)
         if response.status_code != 200:
             return jsonify({'success': False, 'message': 'Onboarding record not found'}), 404
         candidate = response.json()
@@ -12829,7 +12836,7 @@ def send_policy_letter_with_upload(record_id):
 
         # Fetch candidate record
         url = f"{BASE_URL}/{entity_set}({record_id})"
-        response = requests.get(url, headers={"Authorization": f"Bearer {token}"})
+        response = get_dataverse_session().get(url, headers={"Authorization": f"Bearer {token}"}, timeout=15)
         if response.status_code != 200:
             return jsonify({'success': False, 'message': 'Onboarding record not found'}), 404
         candidate = response.json()
@@ -12948,7 +12955,7 @@ def send_onboarding_mail(record_id):
 
         # Fetch candidate details
         url = f"{BASE_URL}/{entity_set}({record_id})"
-        response = requests.get(url, headers={"Authorization": f"Bearer {token}"})
+        response = get_dataverse_session().get(url, headers={"Authorization": f"Bearer {token}"}, timeout=15)
         if response.status_code != 200:
             return jsonify({'success': False, 'message': 'Onboarding record not found'}), 404
         candidate = response.json()
@@ -12996,7 +13003,7 @@ def verify_documents_and_complete(record_id):
 
         # 1) Fetch onboarding record
         url = f"{BASE_URL}/{onboarding_entity}({record_id})"
-        response = requests.get(url, headers={"Authorization": f"Bearer {token}"})
+        response = get_dataverse_session().get(url, headers={"Authorization": f"Bearer {token}"}, timeout=15)
         if response.status_code != 200:
             return jsonify({'success': False, 'message': 'Onboarding record not found'}), 404
         onboarding_record = response.json()
@@ -13097,7 +13104,7 @@ def verify_documents_and_complete(record_id):
             id_field = field_map.get('id') or 'crc6f_employeeid'
             safe_email = (email or '').strip().replace("'", "''")
             find_emp_url = f"{BASE_URL}/{employee_entity}?$top=1&$select={id_field}&$filter=crc6f_email eq '{safe_email}'"
-            emp_find = requests.get(find_emp_url, headers=headers_check, timeout=20)
+            emp_find = get_dataverse_session().get(find_emp_url, headers=headers_check, timeout=20)
             if emp_find.status_code == 200:
                 vals = emp_find.json().get('value', [])
                 if vals:
@@ -13198,13 +13205,13 @@ def upload_onboarding_documents(record_id):
                 file_headers["x-ms-file-name"] = name
                 
                 # Try upload without If-Match first (for new uploads)
-                upload_resp = requests.patch(file_upload_url, headers=file_headers, data=file_content)
+                upload_resp = get_dataverse_session().patch(file_upload_url, headers=file_headers, data=file_content, timeout=30)
                 
                 # If it fails with 412 Precondition Failed, retry with If-Match: * (for re-upload)
                 if upload_resp.status_code == 412:
                     print(f"[INFO] File exists, retrying with If-Match for {name}")
                     file_headers["If-Match"] = "*"
-                    upload_resp = requests.patch(file_upload_url, headers=file_headers, data=file_content)
+                    upload_resp = get_dataverse_session().patch(file_upload_url, headers=file_headers, data=file_content, timeout=30)
                 
                 if upload_resp.status_code in [200, 204]:
                     uploaded_files.append(name)
@@ -13227,7 +13234,7 @@ def upload_onboarding_documents(record_id):
                 "Accept": "application/json"
             }
             detail_url = f"{BASE_URL}/{onboarding_entity}({record_id})?$select=crc6f_offerpmailreply"
-            detail_resp = requests.get(detail_url, headers=detail_headers, timeout=20)
+            detail_resp = get_dataverse_session().get(detail_url, headers=detail_headers, timeout=20)
             if detail_resp.status_code == 200:
                 detail_json = detail_resp.json()
                 mail_reply_value = (detail_json.get('crc6f_offerpmailreply') or '').strip().lower()
@@ -13285,7 +13292,7 @@ def delete_onboarding_documents(record_id):
                 "Accept": "application/json",
             }
             detail_url = f"{BASE_URL}/{onboarding_entity}({record_id})?$select=crc6f_documentsuploaded"
-            detail_resp = requests.get(detail_url, headers=detail_headers, timeout=20)
+            detail_resp = get_dataverse_session().get(detail_url, headers=detail_headers, timeout=20)
             if detail_resp.status_code == 200:
                 record = detail_resp.json()
                 meta = record.get("crc6f_documentsuploaded")
@@ -13301,13 +13308,13 @@ def delete_onboarding_documents(record_id):
             delete_action_url = f"{BASE_URL}/DeleteFile"
             action_headers = headers.copy()
             action_headers["Content-Type"] = "application/json"
-            resp = requests.post(delete_action_url, headers=action_headers, json={"FileId": file_id})
+            resp = get_dataverse_session().post(delete_action_url, headers=action_headers, json={"FileId": file_id}, timeout=15)
         else:
             # Fallback: delete the file column directly using DELETE on the property
             delete_headers = headers.copy()
             delete_headers["If-None-Match"] = "null"
             delete_url = f"{BASE_URL}/{onboarding_entity}({record_id})/crc6f_documentsuploaded"
-            resp = requests.delete(delete_url, headers=delete_headers)
+            resp = get_dataverse_session().delete(delete_url, headers=delete_headers, timeout=15)
 
         if resp.status_code not in (200, 204):
             try:
@@ -13343,7 +13350,7 @@ def get_onboarding_progress_log(record_id):
             f"crc6f_hr_onboardingprogresslogid,crc6f_onboardingid,crc6f_progresssteps,crc6f_refid,crc6f_timestamps,createdby"
             f"&$filter=crc6f_onboardingid eq '{safe_id}'&$orderby=crc6f_timestamps desc"
         )
-        resp = requests.get(url, headers=headers, timeout=20)
+        resp = get_dataverse_session().get(url, headers=headers, timeout=20)
         if resp.status_code != 200:
             return jsonify({"success": False, "message": "Failed to fetch progress log"}), 500
         rows = resp.json().get("value", [])
@@ -13684,7 +13691,7 @@ def list_comp_off_requests():
         query_parts.append("$orderby=createdon desc")
         url = f"{BASE_URL}/{compoff_entity}?{'&'.join(query_parts)}"
 
-        response = requests.get(url, headers=headers, timeout=30)
+        response = get_dataverse_session().get(url, headers=headers, timeout=30)
         if response.status_code != 200:
             return jsonify({
                 "success": False,
@@ -13817,7 +13824,7 @@ def create_comp_off_request():
             elif safe_date:
                 filters.append(f"crc6f_dateworked eq '{safe_date}'")
             lookup_url = f"{BASE_URL}/{compoff_entity}?$filter={' and '.join(filters)}&$orderby=createdon desc&$top=1"
-            lookup = requests.get(lookup_url, headers=headers, timeout=30)
+            lookup = get_dataverse_session().get(lookup_url, headers=headers, timeout=30)
             if lookup.status_code == 200 and lookup.json().get('value'):
                 latest = lookup.json().get('value', [])[0]
                 normalized = _normalize_compoff_request_row(latest)
@@ -13976,9 +13983,10 @@ def get_comp_off():
         # 1️⃣ Fetch employee basic info
         employee_url = f"{BASE_URL}/crc6f_table12s"
         token = get_access_token()
-        employee_response = requests.get(
+        employee_response = get_dataverse_session().get(
             employee_url,
-            headers={"Authorization": f"Bearer {token}"}
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=15
         )
         employees = employee_response.json().get('value', [])
 
@@ -13998,7 +14006,7 @@ def get_comp_off():
         normalized_requests = []
         try:
             comp_req_url = f"{BASE_URL}/{compoff_entity}"
-            comp_req_resp = requests.get(comp_req_url, headers={"Authorization": f"Bearer {token}"})
+            comp_req_resp = get_dataverse_session().get(comp_req_url, headers={"Authorization": f"Bearer {token}"}, timeout=15)
             if comp_req_resp.status_code == 200:
                 normalized_requests = []
                 for r in comp_req_resp.json().get("value", []):
@@ -14074,7 +14082,7 @@ def update_comp_off(employee_id):
             "Content-Type": "application/json",
         }
 
-        get_response = requests.get(get_url, headers=headers)
+        get_response = get_dataverse_session().get(get_url, headers=headers, timeout=15)
         get_response.raise_for_status()
         records = get_response.json().get("value", [])
 
@@ -14087,7 +14095,7 @@ def update_comp_off(employee_id):
         update_url = f"{BASE_URL}/{leave_entity}({record_id})"
         update_data = {"crc6f_compoff": str(new_balance)}
 
-        patch_response = requests.patch(update_url, headers=headers, json=update_data)
+        patch_response = get_dataverse_session().patch(update_url, headers=headers, json=update_data, timeout=15)
         if patch_response.status_code in [204, 200]:
             return jsonify({"status": "success", "message": "Comp Off balance updated successfully."})
         else:
@@ -14180,7 +14188,7 @@ def ai_query():
                     f"{BASE_URL}/{employee_entity}"
                     f"?$top=1&$select={id_field}&$filter=crc6f_email eq '{safe_email}'"
                 )
-                emp_resp = requests.get(find_emp_url, headers=headers, timeout=20)
+                emp_resp = get_dataverse_session().get(find_emp_url, headers=headers, timeout=20)
                 if emp_resp.status_code == 200:
                     vals = emp_resp.json().get("value", [])
                     if vals:

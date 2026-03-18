@@ -1,0 +1,1357 @@
+HR TOOL END-TO-END ANALYSIS AND MYSQL MIGRATION PLANNER
+=====================================================
+
+Project analyzed: OfficeTool
+Current hosting guidance found in repo: DigitalOcean App Platform deployment guide
+Current live data architecture: Primarily Microsoft Dataverse via REST/OData, plus some local file-based storage, plus one small SQLAlchemy token store.
+
+====================================================================
+1. EXECUTIVE SUMMARY
+====================================================================
+
+This application is not currently a normal Flask app backed by one relational database.
+It is a hybrid system with these active storage patterns:
+
+1) Main business data is stored in Microsoft Dataverse
+2) Some auxiliary/workflow data is stored in local JSON/CSV files in backend/_data and backend/storage
+3) Google OAuth token persistence uses SQLAlchemy and currently defaults to SQLite unless DATABASE_URL is provided
+4) The app is deployed as a multi-service web app architecture:
+   - Frontend: Vite static site
+   - Backend: Flask API
+   - Socket server: Node.js / Socket.IO
+
+Because of this, migrating “the DB” to MySQL is not a single-step database export/import task.
+It is a platform migration and application refactor project.
+
+The biggest reality to understand:
+- The application logic is tightly coupled to Dataverse table names, Dataverse field names, Dataverse record GUIDs, and OData query behavior.
+- To move to MySQL, you must migrate both:
+  a) the data
+  b) the application code that reads/writes that data
+
+Recommended approach:
+- Do NOT perform a big-bang production switch directly from Dataverse to MySQL.
+- Build a compatibility data-access layer first.
+- Migrate module by module.
+- Run dual-read/dual-write or staged cutover where practical.
+- Keep rollback ready until the new MySQL path is validated in production.
+
+====================================================================
+2. CURRENT APPLICATION ARCHITECTURE
+====================================================================
+
+2.1 Frontend
+------------
+Main routing found in router.ts and index.js.
+Primary user-facing modules include:
+- Home
+- Employees
+- Leave Tracker
+- Attendance (my/team)
+- Time Tracker / Timesheet
+- Projects
+- Inbox / notifications
+- Chat
+- Meet integration
+- Assets
+- Leave settings / comp off
+- Admin-related flows
+
+Frontend talks to:
+- Flask backend for REST APIs
+- Node socket server for real-time features
+
+2.2 Backend
+-----------
+Primary backend entry point appears to be:
+- backend/unified_server.py
+
+This file registers the main production blueprints:
+- project_contributors
+- project_boards
+- project_tasks
+- project_column
+- time_tracking
+- chats
+- attendance_service_v2
+
+Other backend files exist but some appear legacy, standalone, or alternate implementations:
+- server.py (older attendance backend style)
+- Leave_tracker_backend.py (legacy standalone leave service)
+- backend_asset.py (standalone asset service)
+
+Production-relevant logic is centered in unified_server.py and imported modules.
+
+2.3 Realtime / Socket Layer
+---------------------------
+Separate Node.js socket server is used for:
+- Real-time chat events
+- Real-time attendance events
+- Possibly other notification/emit flows
+
+Backend sends HTTP POST events to socket server via SOCKET_SERVER_URL.
+
+2.4 Deployment Model
+--------------------
+Repo contains a DigitalOcean deployment guide that assumes:
+- 1 frontend component
+- 1 backend component
+- 1 socket server component
+
+This means DB migration must be planned along with app configuration and secret management.
+
+====================================================================
+3. CURRENT DATA STORAGE LANDSCAPE
+====================================================================
+
+3.1 PRIMARY DATA STORE: MICROSOFT DATAVERSE
+-------------------------------------------
+The backend uses direct Dataverse REST/OData calls across most core modules.
+Main helper:
+- backend/dataverse_helper.py
+
+It handles:
+- OAuth token acquisition via Azure AD / MSAL
+- create_record
+- get_record
+- fetch_record_by_id
+- update_record
+- update_record_by_alt_key
+- delete_record
+
+This confirms the current system is Dataverse-first, not SQL-first.
+
+3.2 SECONDARY LOCAL FILE STORAGE
+--------------------------------
+The system also uses local files for some operational data:
+
+A) backend/_data/timesheet_entries.json
+B) backend/_data/timesheet_logs.json
+C) backend/_data/timesheet_submissions.json
+D) backend/storage/team_hierarchy.json
+E) backend/Deleted_employees.csv
+F) other storage/index files inside unified_server.py for documents and local cache patterns
+G) leave allocation types are stored in a file in unified_server.py logic
+
+These file-based stores must also be migrated if they are used in production.
+
+3.3 SMALL SQL DATABASE USAGE ALREADY PRESENT
+--------------------------------------------
+backend/google_token_store.py uses SQLAlchemy and supports DATABASE_URL.
+Default fallback is SQLite:
+- sqlite:///./google_tokens.db
+
+This part can be moved to MySQL relatively easily.
+
+====================================================================
+4. CURRENT BUSINESS MODULES AND THEIR DATA LOGIC
+====================================================================
+
+4.1 Employee Management
+-----------------------
+Observed in unified_server.py.
+Employee entity is auto-resolved between possible Dataverse tables such as:
+- crc6f_table12s
+- crc6f_employees
+- related alternatives
+
+Employee-related logic includes:
+- employee listing
+- employee add/update/delete/restore flows
+- role/designation usage for admin checks
+- photo/profile handling
+- active/inactive flag logic
+- deleted employee archival in CSV
+- leave balance / leave quota relationships
+- team hierarchy/cache interactions
+
+Migration impact:
+- Employee table will become one of the anchor MySQL tables.
+- All field mapping assumptions in code must be normalized.
+- Deleted_employees.csv should become a proper archive or soft-delete strategy in MySQL.
+
+4.2 Attendance
+--------------
+Main live attendance logic appears in:
+- backend/attendance_service_v2.py
+- backend/attendance_scheduler.py
+
+Current design:
+- Backend-authoritative attendance
+- Dataverse attendance table used
+- Dataverse login activity table used
+- Server-side check-in / check-out calculation
+- Auto-close stale sessions at midnight
+- Absent marking job
+- Attendance events emitted to socket server
+- Attendance logic also force-stops active task timers
+
+Dataverse entities seen:
+- crc6f_table13s (attendance)
+- crc6f_hr_loginactivitytbs (session tracking)
+- employee master table references
+
+Key business rules identified:
+- Attendance status derived from total seconds worked
+- >= 9 hours => Present
+- >= 4 hours => Half Day
+- otherwise Absent
+- Timezone-aware date determination
+- Auto-close older open sessions at local midnight
+- Scheduler marks absent employees if no attendance exists
+
+Migration impact:
+- Attendance is one of the highest-risk modules.
+- It contains date/time, timezone, scheduling, session, and reconciliation logic.
+- Must be one of the first properly modeled MySQL modules.
+
+4.3 Leave Management
+--------------------
+Observed in unified_server.py and legacy Leave_tracker_backend.py.
+Logic includes:
+- apply leave
+- cancel leave
+- employee leave history
+- leave balance lookup
+- leave allocation / leave types
+- approval flows and inbox-related logic
+- comp off related logic
+
+Dataverse entities observed:
+- crc6f_table14s for leave records
+- leave management / leave balance entities under multiple candidate names
+
+Migration impact:
+- Must normalize leave requests, leave balances, leave types, comp off, approvers, comments, and status history.
+- Need to identify whether status changes should be audited separately.
+
+4.4 Projects / Boards / Columns / Tasks
+---------------------------------------
+Modules:
+- backend/project_boards.py
+- backend/project_column.py
+- backend/project_tasks.py
+- backend/project_contributors.py
+
+Current design:
+- Projects stored in Dataverse project headers
+- Boards stored in a Dataverse board table
+- Columns/statuses stored in another Dataverse table
+- Tasks stored in Dataverse task details table
+- Contributors stored in Dataverse contributor table
+- Some counts are denormalized or recomputed dynamically
+- Board delete cascades manually to tasks
+- Column rename updates tasks with old status to new status
+- Contributor recount updates project header contributor count
+- IDs like BRD001, TASK001, BUG001, REC001 are generated in code
+
+Migration impact:
+- This area maps well to relational tables.
+- Manual cascade behavior can be formalized with foreign keys and transaction boundaries.
+- Generated business IDs need unique constraints and sequence-safe generation.
+- Existing duplicate checks should move to DB constraints where possible.
+
+4.5 Time Tracking / Timesheets
+------------------------------
+Modules:
+- backend/time_tracking.py
+- backend/timesheet_routes.py
+- local JSON files in backend/_data
+
+Current design is hybrid:
+- Some time tracking is stored in Dataverse task-related entities
+- Some timesheet logs / entries are stored in JSON files
+- Task timers are force-stopped by attendance checkout / midnight auto-close
+- Approval workflow exists for timesheets
+
+Migration impact:
+- This module must be carefully untangled.
+- Need to decide a single source of truth in MySQL for:
+  - raw task timer entries
+  - rolled-up daily logs
+  - submissions
+  - approvals/rejections
+
+4.6 Chat
+--------
+Module:
+- backend/chats.py
+
+Current design:
+- Conversations, members, messages, statuses, attachments stored in Dataverse
+- Employee lookup for sender/member names via employee table
+- Real-time notifications emitted to socket server
+- File attachment support through Dataverse file columns / annotations patterns
+
+Migration impact:
+- Chat schema should move cleanly to MySQL for metadata.
+- Large files/attachments should preferably move to object storage, not MySQL BLOBs unless small.
+- Socket event model can remain unchanged while persistence changes under the hood.
+
+4.7 Assets
+----------
+Module:
+- backend/backend_asset.py
+
+Current design:
+- Asset CRUD in Dataverse
+- Duplicate asset ID prevention
+- Employee relationship stored by employee id fields
+
+Migration impact:
+- Straightforward relational migration.
+
+4.8 Holidays / Leave Allocation / Team Hierarchy / Docs / Misc Admin Data
+--------------------------------------------------------------------------
+Observed mainly in unified_server.py.
+Current design includes:
+- Holiday records in Dataverse
+- leave allocation type file storage
+- local team hierarchy JSON cache/storage
+- document index local file storage
+- deleted employee CSV archive
+
+Migration impact:
+- These should be normalized into MySQL tables where persistent business data is needed.
+- Pure cache data should either remain cache or be regenerated, not blindly migrated.
+
+4.9 Google OAuth Tokens
+-----------------------
+Module:
+- backend/google_token_store.py
+
+Current design:
+- SQLAlchemy model
+- DATABASE_URL configurable
+- default SQLite fallback
+
+Migration impact:
+- Easy to migrate to MySQL immediately.
+
+====================================================================
+5. WHAT IS ACTUALLY LIVE VS WHAT LOOKS LEGACY
+====================================================================
+
+Likely primary live backend:
+- unified_server.py
+- attendance_service_v2.py
+- attendance_scheduler.py
+- project_* modules
+- time_tracking.py
+- chats.py
+
+Likely older / duplicate / standalone modules to review before migration:
+- server.py
+- Leave_tracker_backend.py
+- backend_asset.py
+
+Migration recommendation:
+- Confirm with logs / production entrypoint which files are actually used in live deployment.
+- Do not migrate dead code paths first.
+- Prioritize only the modules actually mounted by unified_server.py and referenced by frontend production flows.
+
+====================================================================
+6. DOES DIGITALOCEAN PROVIDE MYSQL CLOUD DATABASE?
+====================================================================
+
+Yes. DigitalOcean does provide managed cloud databases, including MySQL.
+
+You generally have two options on DigitalOcean:
+
+OPTION A: Managed Database (Recommended)
+- DigitalOcean Managed MySQL
+- Automatic backups
+- Automated patching
+- Connection pooling options depending on plan/features
+- High availability options depending on plan/tier
+- SSL/TLS support
+- Better for production than self-managed MySQL on a droplet
+
+OPTION B: Self-managed MySQL on a Droplet
+- Cheaper at low scale
+- More operational burden
+- You handle backups, upgrades, failover, security, tuning
+- Not recommended for critical production HR data unless you have ops maturity
+
+Recommendation for this app:
+- Use DigitalOcean Managed MySQL for production.
+- Keep app services on App Platform or Droplets, but store business data in managed MySQL.
+
+====================================================================
+7. HIGH-LEVEL MYSQL TARGET ARCHITECTURE
+====================================================================
+
+Recommended target:
+
+1) Frontend
+   - Keep as is
+
+2) Backend Flask API
+   - Refactor to use SQLAlchemy or a well-structured repository/data-access layer
+   - Stop calling Dataverse directly for migrated modules
+
+3) Socket server
+   - Keep as is initially
+   - Continue emitting real-time events
+
+4) Managed MySQL
+   - Single source of truth for operational HR data
+
+5) Object/File storage (optional but recommended)
+   - Use DigitalOcean Spaces or another object store for large files/attachments/documents
+   - Store metadata and object keys in MySQL
+
+6) Redis (optional)
+   - Good for ephemeral sessions, queues, caching, timers, locks
+   - Useful later, not mandatory for first migration
+
+====================================================================
+8. RECOMMENDED MIGRATION STRATEGY
+====================================================================
+
+Do this in phases, not in one production switch.
+
+PHASE 0 - DISCOVERY AND FREEZE
+------------------------------
+Goal:
+- Fully inventory data model, production traffic, and active modules.
+
+Tasks:
+- Identify exact live backend entrypoint in production
+- Confirm which modules are actually used
+- Export a complete list of Dataverse entities in use
+- Export record counts for each entity
+- Identify all local file stores used in production
+- Identify all scheduled/background jobs
+- Identify all external integrations:
+  - Azure AD / MSAL / Dataverse
+  - Google Calendar OAuth
+  - SMTP mail
+  - Socket server
+- Freeze schema-changing feature work during migration planning window
+
+Deliverables:
+- Source-to-target entity mapping spreadsheet
+- Production data inventory
+- Critical-path module list
+
+PHASE 1 - DESIGN TARGET MYSQL SCHEMA
+------------------------------------
+Goal:
+- Design normalized MySQL schema that supports the current business logic.
+
+Suggested table groups:
+- employees
+- employee_documents or employee_files
+- deleted_employee_archive or employee_status_history
+- leave_requests
+- leave_balances
+- leave_types
+- comp_off_requests
+- holidays
+- attendance_days
+- attendance_sessions
+- projects
+- project_boards
+- project_columns
+- project_tasks
+- project_contributors
+- time_entries
+- timesheet_logs
+- timesheet_submissions
+- timesheet_approvals
+- conversations
+- conversation_members
+- messages
+- message_statuses
+- attachments
+- assets
+- team_hierarchy
+- google_tokens
+- audit_logs
+
+Important design principles:
+- Keep internal numeric or UUID primary keys
+- Preserve business IDs like EMP001, TASK001, BRD001, REC001 with unique constraints
+- Add created_at and updated_at consistently
+- Add indexes for commonly queried fields
+- Add foreign keys where relationships are certain
+- Add status history/audit tables for sensitive HR flows where needed
+- Avoid storing derived counts unless required for performance
+
+PHASE 2 - BUILD DATA ACCESS ABSTRACTION IN CODE
+-----------------------------------------------
+Goal:
+- Stop business logic from depending directly on Dataverse/OData.
+
+This is the most important engineering step.
+
+What to do:
+- Introduce a repository/service layer, for example:
+  - EmployeeRepository
+  - AttendanceRepository
+  - LeaveRepository
+  - ProjectRepository
+  - TimesheetRepository
+  - ChatRepository
+  - AssetRepository
+
+Then business code calls repository methods instead of Dataverse directly.
+
+Example direction:
+- Existing code: requests.get(RESOURCE + '/api/data/v9.2/...')
+- New code: employee_repo.get_by_employee_id(...)
+
+Why this matters:
+- Without this layer, migration will become brittle and error-prone.
+- With this layer, you can switch implementations per module:
+  - Dataverse-backed implementation
+  - MySQL-backed implementation
+
+Recommended transitional approach:
+- Keep current endpoints unchanged for frontend compatibility
+- Only change persistence internals first
+
+PHASE 3 - STAND UP DIGITALOCEAN MANAGED MYSQL
+---------------------------------------------
+Goal:
+- Create production-grade MySQL environment.
+
+Steps in DigitalOcean:
+1) Log in to DigitalOcean Cloud dashboard
+2) Go to Databases
+3) Create Database Cluster
+4) Select MySQL
+5) Choose production-appropriate version
+6) Choose region close to app servers
+7) Choose node size based on current dataset and traffic
+8) Enable trusted sources / networking rules
+9) Create database name, user, password
+10) Download SSL CA cert if required by client setup
+11) Note host, port, database name, username, password
+
+Recommended environment variables:
+- MYSQL_HOST
+- MYSQL_PORT
+- MYSQL_DATABASE
+- MYSQL_USER
+- MYSQL_PASSWORD
+- MYSQL_SSL_CA
+- DATABASE_URL
+
+Suggested SQLAlchemy URL pattern:
+- mysql+pymysql://USER:PASSWORD@HOST:PORT/DBNAME
+or
+- mysql+mysqlconnector://USER:PASSWORD@HOST:PORT/DBNAME
+
+Recommended operational features:
+- Daily backups enabled
+- Point-in-time recovery if available in your chosen plan
+- Connection limits reviewed
+- Alerting enabled
+- Staging DB cluster separate from production DB cluster
+
+PHASE 4 - IMPLEMENT MYSQL SCHEMA + MIGRATIONS
+---------------------------------------------
+Goal:
+- Create schema in a controlled, repeatable way.
+
+Recommended toolset:
+- SQLAlchemy ORM for models
+- Alembic for schema migrations
+
+Why:
+- You need versioned schema changes for production reliability
+- Manual SQL files alone become risky over time
+
+Tasks:
+- Create models
+- Create initial Alembic migration
+- Add indexes and constraints
+- Validate schema in staging
+- Create seed/reference data migration where needed
+
+PHASE 5 - DATA EXTRACTION FROM DATAVERSE AND FILES
+--------------------------------------------------
+Goal:
+- Extract current production data into portable form.
+
+For Dataverse data:
+- Export entity by entity using scripts or Dataverse APIs
+- Preserve:
+  - Dataverse GUIDs where useful for traceability
+  - business IDs
+  - timestamps
+  - status values
+  - foreign relationships
+
+For local files:
+- Export JSON/CSV into structured intermediate datasets
+- Clean duplicates and malformed records before MySQL import
+
+Recommended approach:
+- Create one export script per domain:
+  - export_employees.py
+  - export_attendance.py
+  - export_leaves.py
+  - export_projects.py
+  - export_timesheets.py
+  - export_chat.py
+  - export_assets.py
+  - export_local_files.py
+
+Store exports as:
+- CSV for simple tables
+- JSON for hierarchical records
+
+Important:
+- Do not transform too aggressively during extraction.
+- Keep a raw export snapshot for rollback and auditing.
+
+PHASE 6 - TRANSFORM + LOAD INTO MYSQL
+-------------------------------------
+Goal:
+- Convert source formats into the new target schema.
+
+Tasks:
+- Map Dataverse field names to clean SQL column names
+- Normalize mixed date/time formats
+- Convert string numbers to numeric columns
+- Standardize status enums
+- Resolve duplicate IDs
+- Resolve missing foreign keys
+- Handle orphaned records
+- Import in dependency order
+
+Recommended load order:
+1) employees
+2) leave types / holidays / reference tables
+3) projects
+4) boards
+5) columns
+6) contributors
+7) tasks
+8) assets
+9) attendance days
+10) attendance sessions/login activity
+11) time entries / timesheet logs / submissions
+12) chat conversations/members/messages
+13) google tokens
+14) hierarchy / admin metadata / archives
+
+Important validation after each load:
+- source count vs target count
+- random sample comparison
+- business-key uniqueness checks
+- foreign key integrity checks
+
+PHASE 7 - STAGING CUTOVER TEST
+------------------------------
+Goal:
+- Prove the full app works on MySQL in a staging environment.
+
+Set up staging with:
+- cloned backend
+- cloned socket server
+- staging frontend if needed
+- staging managed MySQL
+- production-like env vars
+- sanitized production snapshot if allowed
+
+Then test:
+- login
+- employee list/add/edit/delete/restore
+- attendance checkin/checkout/status/monthly history
+- midnight auto-close scheduler
+- absent marking job
+- leave apply/cancel/approve/reject
+- project create/update/delete
+- board/column/task CRUD
+- contributor add/remove
+- task timer and timesheet workflows
+- asset CRUD
+- chat send/read/reply/search
+- Google calendar token persistence
+- password reset and email sending
+- notifications and socket events
+
+PHASE 8 - PRODUCTION DEPLOYMENT STRATEGY
+----------------------------------------
+Goal:
+- Migrate live production with minimum downtime and rollback safety.
+
+Recommended production strategy:
+
+OPTION 1: Module-by-module cutover
+- Migrate least risky modules first
+- Example order:
+  1) Google tokens
+  2) leave types / holidays / assets
+  3) projects/tasks
+  4) employee master
+  5) leave management
+  6) attendance
+  7) timesheets
+  8) chat
+- Safest from application perspective
+- Takes longer
+
+OPTION 2: Big coordinated cutover
+- Export final Dataverse snapshot
+- Freeze writes briefly
+- Load MySQL
+- Flip app to MySQL backend
+- Validate immediately
+- Only suitable after excellent staging confidence
+
+For this HR app, recommended choice:
+- Module-by-module or domain-by-domain staged cutover
+- Attendance, leave, and employee data are too critical for a reckless big-bang switch
+
+PHASE 9 - DUAL-WRITE OR SHADOW MODE (OPTIONAL BUT IDEAL)
+--------------------------------------------------------
+Goal:
+- Reduce risk by comparing Dataverse and MySQL behavior before full cutover.
+
+Approach:
+- Reads still from Dataverse
+- Writes go to Dataverse and MySQL
+- Compare results in logs/reconciliation jobs
+
+Or:
+- Certain modules read from MySQL while fallback remains Dataverse
+
+Benefits:
+- Early confidence
+- Easier rollback
+- Easier data comparison
+
+Trade-off:
+- More engineering complexity
+
+PHASE 10 - FINAL CUTOVER
+------------------------
+Goal:
+- Make MySQL the source of truth.
+
+Tasks:
+- Schedule maintenance/change window
+- Take final Dataverse export backup
+- Freeze writes briefly if needed
+- Run final incremental sync
+- Switch env vars and backend repository implementation
+- Deploy backend
+- Smoke test critical flows immediately
+- Monitor logs, errors, queue/socket behavior, DB load
+
+PHASE 11 - POST-CUTOVER STABILIZATION
+-------------------------------------
+Goal:
+- Ensure no silent corruption or workflow failures.
+
+Tasks:
+- Daily reconciliation reports for 1-2 weeks
+- Monitor attendance totals vs expected
+- Monitor leave requests and approvals
+- Monitor timesheet submissions and approvals
+- Monitor chat delivery and persistence
+- Monitor scheduler runs and absent marking
+- Monitor DB performance and slow queries
+
+PHASE 12 - DECOMMISSION DATAVERSE DEPENDENCIES
+----------------------------------------------
+Goal:
+- Remove technical debt safely.
+
+Tasks:
+- Remove unused Dataverse helper calls
+- Remove Azure app dependency for business data if no longer needed
+- Keep only what is needed for identity if still applicable
+- Archive export scripts and migration logs
+- Document final architecture
+
+====================================================================
+9. WHAT TO MIGRATE FIRST VS LATER
+====================================================================
+
+Recommended migration priority:
+
+Priority 1 - Low-risk, easy wins
+- google_tokens table
+- leave allocation types from file storage
+- team hierarchy storage if truly persistent
+- document index if truly required
+- assets
+- holidays
+
+Priority 2 - Structured business domains with good relational fit
+- projects
+- boards
+- columns
+- contributors
+- tasks
+
+Priority 3 - Core HR master data
+- employees
+- employee status/archive/restore logic
+- leave balances
+
+Priority 4 - Critical operational HR flows
+- leave requests and approval flows
+- attendance days and sessions
+- scheduler jobs
+
+Priority 5 - Hardest hybrid flows
+- timesheets/time tracking
+- chat/messages/attachments
+
+Why this order:
+- It builds migration capability progressively.
+- It avoids starting with the most fragile modules.
+- It reduces production risk.
+
+====================================================================
+10. SUGGESTED MYSQL TABLE DESIGN DIRECTION
+====================================================================
+
+This is a planning model, not final DDL.
+
+10.1 employees
+--------------
+Columns suggested:
+- id (PK)
+- employee_code unique (EMP001 etc)
+- first_name
+- last_name
+- full_name optional/generated
+- email unique if business allows
+- contact_number
+- address
+- department
+- designation
+- joining_date
+- release_date nullable
+- active_flag
+- employee_flag
+- quota_hours
+- profile_picture_url or blob reference
+- created_at
+- updated_at
+
+10.2 attendance_days
+--------------------
+One per employee per date.
+- id
+- employee_id FK
+- attendance_code/business id nullable
+- attendance_date
+- first_checkin_time
+- last_checkout_time
+- total_seconds
+- total_hours
+- duration_text
+- status_code
+- created_at
+- updated_at
+
+Unique key:
+- (employee_id, attendance_date)
+
+10.3 attendance_sessions
+------------------------
+Represents session/login-activity granularity.
+- id
+- employee_id FK
+- attendance_day_id FK optional
+- work_date
+- checkin_utc
+- checkout_utc nullable
+- checkin_local_time_display
+- checkout_local_time_display
+- checkin_location
+- checkout_location
+- base_seconds_before_session
+- session_seconds
+- total_seconds_after_session
+- timezone_name
+- created_at
+- updated_at
+
+10.4 leave_types
+----------------
+- id
+- code
+- name
+- total_quota
+- active_flag
+
+10.5 leave_balances
+-------------------
+- id
+- employee_id FK
+- leave_type_id FK
+- balance
+- year
+- updated_at
+
+10.6 leave_requests
+-------------------
+- id
+- leave_code/business id
+- employee_id FK
+- leave_type_id FK
+- start_date
+- end_date
+- total_days
+- paid_unpaid
+- status
+- reason
+- approved_by_employee_id nullable
+- approval_comments nullable
+- applied_at
+- decided_at nullable
+
+10.7 projects
+-------------
+- id
+- project_code unique
+- project_name
+- client_id nullable
+- project_status
+- no_of_contributors derived or cached
+- created_at
+- updated_at
+
+10.8 project_boards
+-------------------
+- id
+- board_code unique
+- project_id FK
+- board_name
+- description
+- created_at
+- updated_at
+
+10.9 project_columns
+--------------------
+- id
+- column_code nullable
+- project_id FK
+- board_id FK nullable
+- column_name
+- color
+- sort_order
+- created_at
+- updated_at
+
+10.10 project_tasks
+-------------------
+- id
+- task_guid legacy mapping nullable
+- task_code unique (TASK001/BUG001)
+- project_id FK
+- board_id FK nullable
+- column_id FK nullable
+- task_name
+- task_description
+- task_type
+- task_priority
+- task_status
+- assigned_employee_id nullable
+- due_date nullable
+- assigned_date nullable
+- created_at
+- updated_at
+
+10.11 project_contributors
+--------------------------
+- id
+- contributor_code unique (REC001)
+- project_id FK
+- employee_id FK
+- billing_type
+- hourly_rate nullable
+- assigned_date
+- created_at
+- updated_at
+
+Unique key:
+- (project_id, employee_id)
+
+10.12 time_entries / timesheet_logs / submissions
+-------------------------------------------------
+Use one of two designs:
+A) normalized raw entry + submission model
+B) keep separate logs and submissions tables to mirror current behavior
+
+Recommended:
+- time_entries for raw logged work
+- timesheet_submissions for approval workflow
+- timesheet_submission_items for grouped approval items
+
+10.13 conversations / members / messages
+----------------------------------------
+- conversations
+- conversation_members
+- messages
+- message_statuses
+- attachments
+
+Store attachment binary outside MySQL if files are large.
+
+10.14 assets
+------------
+- id
+- asset_code unique
+- employee_id FK nullable
+- assigned_to_name optional snapshot
+- asset_type
+- serial_number
+- status
+- assigned_date
+- return_date nullable
+- created_at
+- updated_at
+
+10.15 audit_logs
+----------------
+Strongly recommended for HR systems.
+Track:
+- actor
+- entity
+- entity_id
+- action
+- before_json
+- after_json
+- created_at
+
+====================================================================
+11. DIGITALOCEAN SETUP PLAN FOR MYSQL
+====================================================================
+
+11.1 Create a Staging Database First
+------------------------------------
+Do not start with production DB.
+Create:
+- officetool-mysql-staging
+Then later:
+- officetool-mysql-prod
+
+11.2 Region Placement
+---------------------
+Choose the same or nearest region to your backend hosting region to reduce latency.
+
+11.3 Networking
+---------------
+If backend is on App Platform:
+- Configure trusted sources or app-to-db access according to DigitalOcean managed DB networking model
+- Restrict access to backend service and admin IPs only
+
+11.4 Credentials and Secrets
+----------------------------
+Store in DO App Platform environment variables, not in code.
+
+11.5 SSL/TLS
+------------
+Use SSL for DB connections in production.
+Do not run plaintext DB access over the internet.
+
+11.6 Backups
+------------
+Enable automated backups before any production import.
+
+11.7 Monitoring
+---------------
+Enable monitoring and alerting for:
+- CPU
+- memory
+- storage
+- connections
+- slow queries
+- replication/availability if applicable
+
+====================================================================
+12. CODE REFACTOR PLAN
+====================================================================
+
+12.1 Introduce a Persistence Layer
+----------------------------------
+Create a structure such as:
+- backend/repositories/
+- backend/models/
+- backend/db/
+
+Examples:
+- db/session.py
+- models/employee.py
+- repositories/employee_repository.py
+- repositories/dataverse_employee_repository.py
+- repositories/mysql_employee_repository.py
+
+12.2 Add Feature Flags / Backend Switches
+-----------------------------------------
+Use env vars to control migration safely.
+Examples:
+- DATA_BACKEND=dataverse or mysql
+- ATTENDANCE_BACKEND=mysql
+- PROJECTS_BACKEND=mysql
+- CHAT_BACKEND=dataverse
+
+This allows phased rollout.
+
+12.3 Preserve API Contracts
+---------------------------
+Do not change frontend request/response shapes during the initial DB migration.
+Keep the endpoints stable.
+
+12.4 Add Proper ORM and Migrations
+----------------------------------
+Use:
+- SQLAlchemy
+- Alembic
+- MySQL driver such as PyMySQL or mysqlclient or mysql-connector-python
+
+12.5 Logging and Observability
+------------------------------
+Add structured logs around:
+- repository backend in use
+- SQL write success/failure
+- dual-write comparisons
+- migration reconciliation counts
+
+====================================================================
+13. DATA MIGRATION EXECUTION PLAN
+====================================================================
+
+13.1 Build Mapping Document
+---------------------------
+For each source entity/file, define:
+- source name
+- source field
+- target table
+- target column
+- transform rule
+- nullable?
+- unique?
+- default?
+- notes
+
+13.2 Export Raw Snapshots
+-------------------------
+Export all source data before any transformation.
+Keep immutable backup copies.
+
+13.3 Write Idempotent Import Scripts
+------------------------------------
+Import scripts should be rerunnable safely.
+Use:
+- upsert by business key where possible
+- checkpoints
+- dry-run mode
+- verbose logging
+
+13.4 Validate Incrementally
+---------------------------
+After each domain import:
+- compare counts
+- compare random records
+- compare aggregates
+- verify UI/API behavior in staging
+
+13.5 Final Production Sync
+--------------------------
+At cutover time:
+- run incremental export for changed records since last snapshot
+- load deltas
+- validate counts
+- switch backend module flag(s)
+
+====================================================================
+14. ZERO-DOWNTIME / LOW-DOWNTIME RECOMMENDATION
+====================================================================
+
+Because app is already live in production, recommended pattern is:
+
+1) Build MySQL read/write path in parallel
+2) Test in staging
+3) Enable for a low-risk module first
+4) Monitor
+5) Progressively switch modules
+6) For critical modules, keep rollback toggle ready
+
+Potential sequence:
+- week 1: Google tokens + leave types + assets
+- week 2: projects/boards/columns/tasks
+- week 3: employees + leave balances
+- week 4: leave requests
+- week 5: attendance
+- week 6: timesheets
+- week 7: chat
+
+If timelines are tighter, group related modules together, but still avoid migrating attendance and chat on day one.
+
+====================================================================
+15. ROLLBACK PLAN
+====================================================================
+
+You must define rollback before production cutover.
+
+Rollback essentials:
+- Keep Dataverse unchanged until confidence is high
+- Keep export snapshot before every major import
+- Keep feature flags to switch back to Dataverse quickly
+- Do not delete Dataverse data during initial cutover period
+- Keep DB backups before schema changes and before production import
+
+Rollback scenarios:
+- If MySQL write path fails for a module, switch that module back to Dataverse
+- If data integrity issue found, restore from backup and replay from validated snapshot
+- If performance issue found, revert module read path to Dataverse while tuning MySQL
+
+====================================================================
+16. RISK REGISTER
+====================================================================
+
+Risk 1: Dataverse field semantics do not match clean relational assumptions
+Mitigation:
+- Build mapping doc
+- validate real sample records
+
+Risk 2: Hidden production data in local JSON/CSV files gets forgotten
+Mitigation:
+- inventory every file-backed store
+- inspect production filesystem contents before cutover
+
+Risk 3: Duplicate / legacy backend modules cause migration of wrong code path
+Mitigation:
+- confirm live entrypoint and used endpoints from deployment/start command and logs
+
+Risk 4: Attendance timezone/session logic breaks after migration
+Mitigation:
+- write automated tests using real edge cases around midnight and timezone transitions
+
+Risk 5: Business IDs collide in MySQL sequences
+Mitigation:
+- add unique constraints
+- centralize ID generation
+- backfill next-sequence values after import
+
+Risk 6: Chat attachments become oversized for DB
+Mitigation:
+- use object storage for files, keep metadata in DB
+
+Risk 7: Long-running migration causes drift between Dataverse and MySQL
+Mitigation:
+- use delta sync and/or dual-write during transition
+
+Risk 8: Scheduler behavior changes after migration
+Mitigation:
+- test midnight auto-close and absent marking in staging with seeded data
+
+====================================================================
+17. TEST PLAN
+====================================================================
+
+17.1 Data Validation Tests
+--------------------------
+- record counts match per module
+- no orphan foreign keys
+- all business IDs unique
+- nullability assumptions hold
+- aggregates match source
+
+17.2 API Regression Tests
+-------------------------
+- all main endpoints return same payload structure
+- status codes remain compatible
+- validation behavior remains consistent
+
+17.3 Business Workflow Tests
+----------------------------
+- employee add/edit/delete/restore
+- leave apply/cancel/approve/reject
+- attendance checkin/checkout/status/monthly report
+- timesheet logging/submission/approval/rejection
+- project board/task lifecycle
+- contributor management
+- asset lifecycle
+- chat conversation/message flow
+
+17.4 Production Readiness Tests
+-------------------------------
+- DB failover/backups tested
+- env vars verified
+- scheduler starts correctly after deploy
+- socket emits still work
+- mail still works
+- Google OAuth token load/save still works
+
+====================================================================
+18. IMMEDIATE NEXT ACTIONS YOU SHOULD TAKE
+====================================================================
+
+Step 1
+Confirm the actual production start command and active backend entrypoint.
+Likely unified_server.py, but verify from live deployment configuration.
+
+Step 2
+Create a source-to-target mapping sheet for all active Dataverse entities and local storage files.
+
+Step 3
+Set up a DigitalOcean Managed MySQL staging cluster.
+
+Step 4
+Add SQLAlchemy + Alembic-based MySQL infrastructure into the backend codebase.
+
+Step 5
+Create repository abstractions so modules stop depending directly on Dataverse.
+
+Step 6
+Migrate easiest domains first:
+- google tokens
+- assets
+- holidays
+- leave allocation types
+
+Step 7
+Migrate projects/tasks domain.
+
+Step 8
+Migrate employee and leave domain.
+
+Step 9
+Migrate attendance only after strong staging validation.
+
+Step 10
+Migrate timesheet and chat last.
+
+====================================================================
+19. STRONGLY RECOMMENDED TECHNICAL IMPROVEMENTS DURING MIGRATION
+====================================================================
+
+- Add automated tests around attendance and leave logic
+- Add repository abstraction layer
+- Replace file-based business storage with DB tables
+- Move large attachments to object storage
+- Add audit logging for HR-sensitive changes
+- Add DB constraints instead of only code-level duplicate checks
+- Add background-job observability for scheduler tasks
+- Remove or isolate legacy backend modules after migration
+
+====================================================================
+20. FINAL RECOMMENDATION
+====================================================================
+
+Best path for this production HR tool:
+
+1) Use DigitalOcean Managed MySQL
+2) Do a staged migration, not a direct cutover
+3) Refactor persistence behind repositories first
+4) Migrate simpler domains before attendance/timesheet/chat
+5) Keep Dataverse as rollback source until MySQL is stable
+6) Migrate file-based stores into MySQL as part of the same program
+7) Use staging and reconciliation before every production switch
+
+In short:
+This is a full data-platform migration, not just a DB swap.
+Treat it as an engineering project with discovery, schema design, code abstraction, staged rollout, and rollback planning.

@@ -10,8 +10,8 @@ from difflib import SequenceMatcher
 import requests
 import datetime
 from flask import Blueprint, request, jsonify, Response, current_app,send_file, make_response
-import requests
 import logging
+from dataverse_helper import get_dataverse_session
 
 # --------------------------------------------------------------
 # BLUEPRINT
@@ -661,14 +661,14 @@ def dataverse_get(entity_set, q=None):
     url = f"{RESOURCE}/api/data/v9.2/{entity_set}"
     if q:
         url += f"?{q}"
-    r = requests.get(url, headers=dataverse_headers(), timeout=20)
+    r = get_dataverse_session().get(url, headers=dataverse_headers(), timeout=15)
     r.raise_for_status()
     return r.json()
 
 
 def dataverse_create(entity_set, data):
     url = f"{RESOURCE}/api/data/v9.2/{entity_set}"
-    r = requests.post(url, headers=dataverse_headers(), data=json.dumps(data), timeout=20)
+    r = get_dataverse_session().post(url, headers=dataverse_headers(), data=json.dumps(data), timeout=15)
 
     if r.status_code in (200, 201, 204):
         try:
@@ -686,7 +686,7 @@ def dataverse_create(entity_set, data):
 def dataverse_update(entity_set, record_guid, data):
     # record_guid should be GUID without surrounding ()
     url = f"{RESOURCE}/api/data/v9.2/{entity_set}({record_guid})"
-    r = requests.patch(url, headers=dataverse_headers(), data=json.dumps(data), timeout=20)
+    r = get_dataverse_session().patch(url, headers=dataverse_headers(), data=json.dumps(data), timeout=15)
     if r.status_code not in (200, 204):
         r.raise_for_status()
     return True
@@ -694,7 +694,7 @@ def dataverse_update(entity_set, record_guid, data):
 
 def dataverse_delete(entity_set, record_guid):
     url = f"{RESOURCE}/api/data/v9.2/{entity_set}({record_guid})"
-    r = requests.delete(url, headers=dataverse_headers(), timeout=20)
+    r = get_dataverse_session().delete(url, headers=dataverse_headers(), timeout=15)
     if r.status_code not in (200, 204):
         r.raise_for_status()
     return True
@@ -1359,7 +1359,7 @@ def download_file(file_id):
         url = f"{RESOURCE}/api/data/v9.2/crc6f_hr_fileattachments({row_guid})/crc6f_fileupload/$value"
         headers = {"Authorization": f"Bearer {_get_oauth_token()}"}
 
-        r = requests.get(url, headers=headers, timeout=60)
+        r = get_dataverse_session().get(url, headers=headers, timeout=60)
         r.raise_for_status()
 
         resp = Response(r.content, mimetype=mime)

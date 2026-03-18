@@ -2,7 +2,7 @@
 from flask import Blueprint, request, jsonify, current_app
 import requests, os, re
 from dotenv import load_dotenv
-from dataverse_helper import get_access_token
+from dataverse_helper import get_access_token, get_dataverse_session
 
 tasks_bp = Blueprint("project_tasks", __name__, url_prefix="/api")
 
@@ -45,7 +45,7 @@ def generate_task_id(task_type="Task"):
             f"?$select=crc6f_taskid&$filter=startswith(crc6f_taskid,'{filter_prefix}')"
             "&$orderby=createdon desc&$top=1"
         )
-        res = requests.get(url, headers=hdrs, timeout=20)
+        res = get_dataverse_session().get(url, headers=hdrs, timeout=15)
         next_num = 1
         if res.ok:
             data = res.json().get("value", [])
@@ -80,7 +80,7 @@ def get_tasks(project_code):
             filter_q += f" and crc6f_boardid eq '{board_id}'"
 
         url = f"{DATAVERSE_BASE}{DATAVERSE_API}/{ENTITY_SET_TASKS}?$filter={filter_q}"
-        res = requests.get(url, headers=hdrs, timeout=20)
+        res = get_dataverse_session().get(url, headers=hdrs, timeout=15)
 
         if not res.ok:
             current_app.logger.error(f"❌ Failed to fetch tasks for {project_code}: {res.text}")
@@ -134,7 +134,7 @@ def add_task(project_code):
 
         while attempt < MAX_ATTEMPTS:
             check_url = f"{DATAVERSE_BASE}{DATAVERSE_API}/{ENTITY_SET_TASKS}?$filter=crc6f_taskid eq '{candidate_id}'"
-            check_res = requests.get(check_url, headers=hdrs, timeout=15)
+            check_res = get_dataverse_session().get(check_url, headers=hdrs, timeout=10)
 
             if check_res.ok:
                 existing = check_res.json().get("value", [])
@@ -171,7 +171,7 @@ def add_task(project_code):
 
         dv_payload = {k: v for k, v in dv_payload.items() if v not in (None, "", [])}
         url = f"{DATAVERSE_BASE}{DATAVERSE_API}/{ENTITY_SET_TASKS}"
-        res = requests.post(url, headers=hdrs, json=dv_payload, timeout=20)
+        res = get_dataverse_session().post(url, headers=hdrs, json=dv_payload, timeout=15)
 
         current_app.logger.info(f"Dataverse response {res.status_code}: {res.text}")
 
@@ -211,7 +211,7 @@ def update_task(guid):
 
         payload = {v: body[k] for k, v in allowed_fields.items() if k in body}
         url = f"{DATAVERSE_BASE}{DATAVERSE_API}/{ENTITY_SET_TASKS}({guid})"
-        res = requests.patch(url, headers=hdrs, json=payload, timeout=20)
+        res = get_dataverse_session().patch(url, headers=hdrs, json=payload, timeout=15)
 
         if res.status_code in (200, 204):
             return jsonify({"success": True, "message": "Task updated successfully"}), 200
@@ -234,7 +234,7 @@ def delete_task(guid):
         hdrs = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
 
         del_url = f"{DATAVERSE_BASE}{DATAVERSE_API}/{ENTITY_SET_TASKS}({guid})"
-        res = requests.delete(del_url, headers=hdrs, timeout=20)
+        res = get_dataverse_session().delete(del_url, headers=hdrs, timeout=15)
 
         if res.status_code in (200, 204):
             current_app.logger.info(f"🗑️ Task {guid} deleted")
@@ -264,7 +264,7 @@ def get_task(guid):
             "crc6f_duedate", "crc6f_taskid"
         ])
         url = f"{DATAVERSE_BASE}{DATAVERSE_API}/{ENTITY_SET_TASKS}({guid})?$select={select_fields}"
-        res = requests.get(url, headers=hdrs, timeout=20)
+        res = get_dataverse_session().get(url, headers=hdrs, timeout=15)
 
         if not res.ok:
             current_app.logger.error(f"Failed fetching task {guid}: {res.status_code} {res.text}")

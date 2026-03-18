@@ -2,7 +2,7 @@
 from flask import Blueprint, request, jsonify, current_app
 import requests, os, uuid, re, traceback
 from dotenv import load_dotenv
-from dataverse_helper import get_access_token
+from dataverse_helper import get_access_token, get_dataverse_session
 
 bp = Blueprint("project_contributors", __name__, url_prefix="/api")
 
@@ -56,7 +56,7 @@ def generate_record_id():
             f"{DATAVERSE_BASE}{DATAVERSE_API}/{ENTITY_SET_contributors}"
             "?$select=crc6f_recordid&$orderby=createdon desc&$top=1"
         )
-        res = requests.get(url, headers=hdr, timeout=20)
+        res = get_dataverse_session().get(url, headers=hdr, timeout=15)
 
         last_id = None
         if res.ok:
@@ -87,7 +87,7 @@ def contributor_exists(project_code, employeeId):
             f"&$select={F_GUID}"
         )
 
-        res = requests.get(url, headers=hdr, timeout=20)
+        res = get_dataverse_session().get(url, headers=hdr, timeout=15)
         items = res.json().get("value", [])
 
         return len(items) > 0
@@ -110,7 +110,7 @@ def recount_project_contributors(project_code):
             f"{DATAVERSE_BASE}{DATAVERSE_API}/{ENTITY_SET_contributors}"
             f"?$filter=crc6f_projectid eq '{project_code}'&$count=true&$top=1"
         )
-        cr = requests.get(count_url, headers=headers_local, timeout=20)
+        cr = get_dataverse_session().get(count_url, headers=headers_local, timeout=15)
         if not cr.ok:
             current_app.logger.error("recount_project_contributors: count request failed: %s", cr.text)
             return None
@@ -128,7 +128,7 @@ def recount_project_contributors(project_code):
             f"{DATAVERSE_BASE}{DATAVERSE_API}/{PROJECT_HEADER_ES}"
             f"?$filter=crc6f_projectid eq '{project_code}'&$select=crc6f_hr_projectheaderid"
         )
-        rp = requests.get(proj_q, headers=headers_local, timeout=20)
+        rp = get_dataverse_session().get(proj_q, headers=headers_local, timeout=15)
         if not rp.ok:
             current_app.logger.error("recount_project_contributors: failed to fetch project header: %s", rp.text)
             return cnt
@@ -145,7 +145,7 @@ def recount_project_contributors(project_code):
 
         update_url = f"{DATAVERSE_BASE}{DATAVERSE_API}/{PROJECT_HEADER_ES}({proj_rec_id})"
         patch_body = {"crc6f_noofcontributors": str(cnt)}
-        rpatch = requests.patch(update_url, headers={**headers_local, "Content-Type": "application/json"}, json=patch_body, timeout=20)
+        rpatch = get_dataverse_session().patch(update_url, headers={**headers_local, "Content-Type": "application/json"}, json=patch_body, timeout=15)
         if not rpatch.ok:
             current_app.logger.error("recount_project_contributors: failed to patch project header: %s", rpatch.text)
             return cnt
@@ -164,7 +164,7 @@ def recount_project_contributors(project_code):
 def get_contributors(project_code):
     try:
         url = dv_url(f"/{ENTITY_SET_contributors}")
-        res = requests.get(url, headers=headers(), timeout=20)
+        res = get_dataverse_session().get(url, headers=headers(), timeout=15)
         res.raise_for_status()
         data = res.json().get("value", [])
 
@@ -188,7 +188,7 @@ def get_contributors(project_code):
         token = get_access_token()
         emp_entity = "crc6f_table12s"
         emp_url = f"{DATAVERSE_BASE}{DATAVERSE_API}/{emp_entity}?$select=crc6f_employeeid,crc6f_designation&$top=5000"
-        emp_res = requests.get(emp_url, headers={"Authorization": f"Bearer {token}", "Accept": "application/json"}, timeout=20)
+        emp_res = get_dataverse_session().get(emp_url, headers={"Authorization": f"Bearer {token}", "Accept": "application/json"}, timeout=15)
 
         emp_designations = {}
         if emp_res.ok:
@@ -222,7 +222,7 @@ def get_employee_projects(employee_id):
             f"{DATAVERSE_BASE}{DATAVERSE_API}/{ENTITY_SET_contributors}"
             f"?$select={F_PROJECT_ID},{F_ASSIGNED}&$filter={F_EMP_ID} eq '{safe_emp}'"
         )
-        cres = requests.get(contrib_url, headers=hdr, timeout=20)
+        cres = get_dataverse_session().get(contrib_url, headers=hdr, timeout=15)
         if not cres.ok:
             current_app.logger.error(
                 "get_employee_projects: contributor query failed: %s", cres.text
@@ -257,7 +257,7 @@ def get_employee_projects(employee_id):
                     f"?$select=crc6f_projectid,crc6f_projectname,crc6f_projectstatus"
                     f"&$filter=crc6f_projectid eq '{safe_pid}'&$top=1"
                 )
-                pres = requests.get(proj_url, headers=hdr, timeout=20)
+                pres = get_dataverse_session().get(proj_url, headers=hdr, timeout=15)
                 if pres.ok:
                     vals = pres.json().get("value", [])
                     if vals:
@@ -278,7 +278,7 @@ def get_employee_projects(employee_id):
                     f"?$select=crc6f_taskid,crc6f_taskname,crc6f_taskstatus,crc6f_duedate,crc6f_assignedto"
                     f"&$filter=crc6f_projectid eq '{safe_pid}'"
                 )
-                tres = requests.get(tasks_url, headers=hdr, timeout=20)
+                tres = get_dataverse_session().get(tasks_url, headers=hdr, timeout=15)
                 if tres.ok:
                     for t in tres.json().get("value", []):
                         tasks.append(
@@ -351,7 +351,7 @@ def add_contributor(project_code):
         dv_payload = {k: v for k, v in dv_payload.items() if v not in (None, "", [])}
 
         create_url = f"{DATAVERSE_BASE}{DATAVERSE_API}/{ENTITY_SET_contributors}"
-        res = requests.post(create_url, headers=headers_local, json=dv_payload, timeout=20)
+        res = get_dataverse_session().post(create_url, headers=headers_local, json=dv_payload, timeout=15)
         current_app.logger.info("Dataverse create response: %s", res.status_code)
 
         if res.status_code in (200, 201, 204):
@@ -396,7 +396,7 @@ def update_contributor(guid):
         if "billingType" in body: data["crc6f_billingtype"] = body["billingType"]
         if "assignedDate" in body: data["crc6f_assigneddate"] = body["assignedDate"]
         url = f"{DATAVERSE_BASE}{DATAVERSE_API}/{ENTITY_SET_contributors}({guid})"
-        res = requests.patch(url, headers=headers_local, json=data, timeout=20)
+        res = get_dataverse_session().patch(url, headers=headers_local, json=data, timeout=15)
 
         current_app.logger.info(f"🔸 PATCH response {res.status_code}: {res.text}")
 
@@ -418,13 +418,13 @@ def delete_contributor(guid):
         current_app.logger.info("🗑 Delete contributor called for GUID %s", guid)
 
         get_url = f"{DATAVERSE_BASE}{DATAVERSE_API}/{ENTITY_SET_contributors}({guid})?$select=crc6f_projectid"
-        gres = requests.get(get_url, headers=headers_local, timeout=20)
+        gres = get_dataverse_session().get(get_url, headers=headers_local, timeout=15)
         project_id = None
         if gres.ok:
             project_id = gres.json().get("crc6f_projectid")
 
         del_url = f"{DATAVERSE_BASE}{DATAVERSE_API}/{ENTITY_SET_contributors}({guid})"
-        dres = requests.delete(del_url, headers=headers_local, timeout=20)
+        dres = get_dataverse_session().delete(del_url, headers=headers_local, timeout=15)
         current_app.logger.info("Dataverse delete response: %s", dres.status_code)
 
         if dres.status_code in (200, 204):

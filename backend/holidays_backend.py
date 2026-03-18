@@ -1,6 +1,6 @@
 from flask import Flask, Blueprint, jsonify, request
 from flask_cors import CORS
-from dataverse_helper import get_access_token, create_record, update_record, delete_record
+from dataverse_helper import get_access_token, create_record, update_record, delete_record, get_dataverse_session
 import requests
 import os
 from dotenv import load_dotenv
@@ -39,7 +39,7 @@ def get_holidays():
         url = f"{RESOURCE}/api/data/v9.2/{ENTITY_NAME}?$select=crc6f_date,crc6f_holidayname,crc6f_hr_holidaysid&$orderby=crc6f_date asc"
         print(f"🔗 Request URL: {url}")
         
-        response = requests.get(url, headers=headers)
+        response = get_dataverse_session().get(url, headers=headers, timeout=15)
         print(f"📊 Response status: {response.status_code}")
 
         if response.status_code != 200:

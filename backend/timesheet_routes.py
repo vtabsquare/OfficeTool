@@ -4,6 +4,7 @@ Handles task time logging and timesheet data retrieval
 """
 from flask import request, jsonify
 import requests
+from dataverse_helper import get_dataverse_session
 from datetime import datetime, timedelta
 
 def register_timesheet_routes(app, get_access_token, RESOURCE, TIMESHEET_ENTITY, _apply_timesheet_rpt, create_record):
@@ -52,7 +53,7 @@ def register_timesheet_routes(app, get_access_token, RESOURCE, TIMESHEET_ENTITY,
             filter_query = f"crc6f_employeeid eq '{safe_emp}' and crc6f_taskguid eq '{safe_guid}' and crc6f_workdate eq '{safe_date}'"
             check_url = f"{RESOURCE}/api/data/v9.2/{TIMESHEET_ENTITY}?$filter={filter_query}&$top=1"
             
-            check_resp = requests.get(check_url, headers=headers)
+            check_resp = get_dataverse_session().get(check_url, headers=headers)
             existing_records = []
             if check_resp.status_code == 200:
                 existing_records = check_resp.json().get("value", [])
@@ -71,7 +72,7 @@ def register_timesheet_routes(app, get_access_token, RESOURCE, TIMESHEET_ENTITY,
                     _apply_timesheet_rpt(update_payload)
                     
                     update_url = f"{RESOURCE}/api/data/v9.2/{TIMESHEET_ENTITY}({record_id})"
-                    update_resp = requests.patch(update_url, headers=headers, json=update_payload)
+                    update_resp = get_dataverse_session().patch(update_url, headers=headers, json=update_payload)
                     
                     if update_resp.status_code in [200, 204]:
                         print(f"[TIMESHEET] Updated existing log: {record_id}")
@@ -150,7 +151,7 @@ def register_timesheet_routes(app, get_access_token, RESOURCE, TIMESHEET_ENTITY,
             select_fields = "$select=crc6f_employeeid,crc6f_projectid,crc6f_taskguid,crc6f_taskid,crc6f_taskname,crc6f_seconds,crc6f_hours,crc6f_workdate,crc6f_description,crc6f_billing,crc6f_hr_timesheetid"
             url = f"{RESOURCE}/api/data/v9.2/{TIMESHEET_ENTITY}?$filter={filter_query}&{select_fields}&$top=5000&$orderby=crc6f_workdate desc"
             
-            resp = requests.get(url, headers=headers)
+            resp = get_dataverse_session().get(url, headers=headers)
             
             if resp.status_code != 200:
                 print(f"[TIMESHEET] Fetch failed: {resp.status_code} - {resp.text}")

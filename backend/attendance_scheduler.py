@@ -15,7 +15,7 @@ import threading
 import requests
 import traceback
 
-from dataverse_helper import get_access_token, update_record, create_record
+from dataverse_helper import get_access_token, update_record, create_record, get_dataverse_session
 from time_tracking import stop_active_task_entries_for_user
 
 try:
@@ -165,7 +165,8 @@ def midnight_auto_checkout():
         url = f"{RESOURCE}/api/data/v9.2/{LOGIN_ACTIVITY_ENTITY}?{filter_q}&$top=5000"
         print(f"[SCHEDULER] Querying open sessions: {url}")
 
-        resp = requests.get(url, headers=headers, timeout=30)
+        s = get_dataverse_session()
+        resp = s.get(url, headers=headers, timeout=20)
         if resp.status_code != 200:
             print(f"[SCHEDULER] Failed to fetch open sessions: {resp.status_code} {resp.text[:300]}")
             return {"closed": 0, "error": f"fetch failed: {resp.status_code}"}
@@ -219,7 +220,7 @@ def midnight_auto_checkout():
                     LA_FIELD_TOTAL_SECONDS: total_seconds,
                 }
                 la_url = f"{RESOURCE}/api/data/v9.2/{LOGIN_ACTIVITY_ENTITY}({la_id})"
-                la_resp = requests.patch(la_url, headers=headers, json=la_patch, timeout=20)
+                la_resp = s.patch(la_url, headers=headers, json=la_patch, timeout=15)
                 if la_resp.status_code >= 400:
                     print(f"[SCHEDULER] Failed to close login activity for {employee_id} ({raw_date}): {la_resp.status_code}")
                     continue
@@ -228,7 +229,7 @@ def midnight_auto_checkout():
                 try:
                     att_filter = f"$filter={FIELD_EMPLOYEE_ID} eq '{employee_id}' and {FIELD_DATE} eq '{raw_date}'"
                     att_url = f"{RESOURCE}/api/data/v9.2/{ATTENDANCE_ENTITY}?{att_filter}"
-                    att_resp = requests.get(att_url, headers=headers, timeout=20)
+                    att_resp = s.get(att_url, headers=headers, timeout=15)
 
                     if att_resp.status_code == 200:
                         att_records = att_resp.json().get("value", [])
@@ -299,7 +300,8 @@ def mark_absent_employees():
 
         # Get all active employees
         emp_url = f"{RESOURCE}/api/data/v9.2/{EMPLOYEE_ENTITY}?$filter=crc6f_activeflag eq true&$select=crc6f_employeeid"
-        emp_resp = requests.get(emp_url, headers=headers, timeout=30)
+        s = get_dataverse_session()
+        emp_resp = s.get(emp_url, headers=headers, timeout=20)
 
         if emp_resp.status_code != 200:
             print(f"[SCHEDULER] Failed to fetch employees: {emp_resp.status_code}")
@@ -310,7 +312,7 @@ def mark_absent_employees():
 
         # Get employees who have attendance for yesterday
         att_url = f"{RESOURCE}/api/data/v9.2/{ATTENDANCE_ENTITY}?$filter={FIELD_DATE} eq '{yesterday}'&$select={FIELD_EMPLOYEE_ID}"
-        att_resp = requests.get(att_url, headers=headers, timeout=30)
+        att_resp = s.get(att_url, headers=headers, timeout=20)
 
         if att_resp.status_code != 200:
             print(f"[SCHEDULER] Failed to fetch attendance: {att_resp.status_code}")

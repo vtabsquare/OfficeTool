@@ -252,7 +252,7 @@
 # Replace existing functions for columns endpoints with this block
 from flask import Blueprint, request, jsonify, current_app
 import requests, os, uuid, urllib.parse
-from dataverse_helper import get_access_token
+from dataverse_helper import get_access_token, get_dataverse_session
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -298,7 +298,7 @@ def get_columns(project_id):
             filter_q += f" and crc6f_boardid eq '{board}'"
 
         url = f"{DATAVERSE_BASE}{DATAVERSE_API}/{ENTITY_SET}?$filter={urllib.parse.quote(filter_q, safe='')}"
-        res = requests.get(url, headers=hdrs, timeout=20)
+        res = get_dataverse_session().get(url, headers=hdrs, timeout=15)
 
         if not res.ok:
             return jsonify({"success": False, "error": res.text}), 500
@@ -339,7 +339,7 @@ def create_column(project_id):
 
         dup_url = f"{DATAVERSE_BASE}{DATAVERSE_API}/{ENTITY_SET}?$filter={urllib.parse.quote(dup_filter, safe='')}"
 
-        dup_res = requests.get(dup_url, headers=hdrs, timeout=20)
+        dup_res = get_dataverse_session().get(dup_url, headers=hdrs, timeout=15)
 
         if dup_res.ok and dup_res.json().get("value"):
             return jsonify({"success": False, "error": "Column already exists"}), 400
@@ -365,7 +365,7 @@ def create_column(project_id):
 
         # Create record
         url = f"{DATAVERSE_BASE}{DATAVERSE_API}/{ENTITY_SET}"
-        res = requests.post(url, headers=hdrs, json=payload, timeout=30)
+        res = get_dataverse_session().post(url, headers=hdrs, json=payload, timeout=15)
 
         if res.status_code not in (200, 201, 204):
             return jsonify({"success": False, "error": res.text}), 500
@@ -402,7 +402,7 @@ def rename_column(project_id):
             filter_query += f" and crc6f_boardid eq '{board}'"
 
         url = f"{DATAVERSE_BASE}{DATAVERSE_API}/{ENTITY_SET}?$filter={urllib.parse.quote(filter_query, safe='')}"
-        res = requests.get(url, headers=hdrs, timeout=20)
+        res = get_dataverse_session().get(url, headers=hdrs, timeout=15)
         if not res.ok:
             current_app.logger.error("Lookup failed: %s", res.text)
             return jsonify({"success": False, "error": "Lookup failed"}), 500
@@ -420,7 +420,7 @@ def rename_column(project_id):
         for base_key, rpt_key in TASKSTATUS_RPT_MAP.items():
             if base_key in body:
                 patch_body[rpt_key] = body.get(base_key)
-        patch_res = requests.patch(patch_url, headers=hdrs, json=patch_body, timeout=20)
+        patch_res = get_dataverse_session().patch(patch_url, headers=hdrs, json=patch_body, timeout=15)
         if patch_res.status_code not in (200, 204):
             current_app.logger.error("Rename failed: %s", patch_res.text)
             return jsonify({"success": False, "error": "Dataverse rename failed"}), 500
@@ -431,7 +431,7 @@ def rename_column(project_id):
             task_filter += f" and crc6f_boardid eq '{board}'"
 
         t_url = f"{DATAVERSE_BASE}{DATAVERSE_API}/{TASK_ENTITY}?$filter={urllib.parse.quote(task_filter, safe='')}"
-        t_res = requests.get(t_url, headers=hdrs, timeout=30)
+        t_res = get_dataverse_session().get(t_url, headers=hdrs, timeout=20)
         if t_res.ok:
             tasks = t_res.json().get("value", [])
             for t in tasks:
@@ -439,7 +439,7 @@ def rename_column(project_id):
                 if tid:
                     task_patch_url = f"{DATAVERSE_BASE}{DATAVERSE_API}/{TASK_ENTITY}({tid})"
                     try:
-                        requests.patch(task_patch_url, headers=hdrs, json={"crc6f_taskstatus": new_name}, timeout=20)
+                        get_dataverse_session().patch(task_patch_url, headers=hdrs, json={"crc6f_taskstatus": new_name}, timeout=15)
                     except Exception as ex:
                         current_app.logger.warning("Failed updating task %s: %s", tid, ex)
 
@@ -469,7 +469,7 @@ def delete_column(project_id):
             task_filter += f" and crc6f_boardid eq '{board}'"
 
         t_url = f"{DATAVERSE_BASE}{DATAVERSE_API}/{TASK_ENTITY}?$select=crc6f_hr_taskdetailsid&$filter={urllib.parse.quote(task_filter, safe='')}"
-        t_res = requests.get(t_url, headers=hdrs, timeout=20)
+        t_res = get_dataverse_session().get(t_url, headers=hdrs, timeout=15)
         if not t_res.ok:
             current_app.logger.error("Task lookup failed: %s", t_res.text)
             return jsonify({"success": False, "error": "Task lookup failed"}), 500
@@ -484,7 +484,7 @@ def delete_column(project_id):
             filter_query += f" and crc6f_boardid eq '{board}'"
 
         url = f"{DATAVERSE_BASE}{DATAVERSE_API}/{ENTITY_SET}?$filter={urllib.parse.quote(filter_query, safe='')}"
-        res = requests.get(url, headers=hdrs, timeout=20)
+        res = get_dataverse_session().get(url, headers=hdrs, timeout=15)
         if not res.ok:
             current_app.logger.error("Lookup failed: %s", res.text)
             return jsonify({"success": False, "error": "Lookup failed"}), 500
@@ -495,7 +495,7 @@ def delete_column(project_id):
 
         rec_guid = items[0].get("crc6f_hr_taskstatusboardid")
         delete_url = f"{DATAVERSE_BASE}{DATAVERSE_API}/{ENTITY_SET}({rec_guid})"
-        del_res = requests.delete(delete_url, headers=hdrs, timeout=20)
+        del_res = get_dataverse_session().delete(delete_url, headers=hdrs, timeout=15)
 
         if del_res.status_code not in (200, 204):
             current_app.logger.error("Delete failed: %s", del_res.text)
