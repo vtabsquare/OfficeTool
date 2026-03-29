@@ -1,0 +1,23 @@
+[
+  {
+    "type": "Type 1",
+    "experience": 3,
+    "casualLeave": 6,
+    "sickLeave": 6,
+    "totalQuota": 12
+  },
+  {
+    "type": "Type 2",
+    "experience": 2,
+    "casualLeave": 4,
+    "sickLeave": 4,
+    "totalQuota": 8
+  },
+  {
+    "type": "Type 3",
+    "experience": 1,
+    "casualLeave": 3,
+    "sickLeave": 3,
+    "totalQuota": 6
+  }
+]

@@ -1307,6 +1307,9 @@ export const renderLoginPage = () => {
   const loader = loginBtn.querySelector(".loader");
   const emailInput = document.getElementById("login-email");
   const passwordInput = document.getElementById("login-password");
+  
+  // Guard to prevent double form submission
+  let isSubmitting = false;
 
   // first-login simplified refs
   const flForm = document.getElementById("firstlogin-form");
@@ -1530,6 +1533,14 @@ export const renderLoginPage = () => {
   // ---------- LOGIN logic ----------
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
+    
+    // Prevent double submission
+    if (isSubmitting) {
+      console.log("[LOGIN] Ignoring duplicate submit - already in progress");
+      return;
+    }
+    isSubmitting = true;
+    
     err.style.display = "none";
     const email = emailInput.value.trim();
     const password = passwordInput.value;
@@ -1538,6 +1549,7 @@ export const renderLoginPage = () => {
       err.textContent = "Email and password are required";
       err.style.display = "block";
       handleError();
+      isSubmitting = false;
       return;
     }
 
@@ -1580,6 +1592,7 @@ export const renderLoginPage = () => {
         loginBtn.disabled = false;
         btnText.classList.remove("hidden");
         loader.classList.add("hidden");
+        isSubmitting = false;
 
         return;
       }
@@ -1589,18 +1602,26 @@ export const renderLoginPage = () => {
         loginBtn.disabled = false;
         btnText.classList.remove("hidden");
         loader.classList.add("hidden");
+        isSubmitting = false;
         err.textContent = "Your account is locked. Contact admin.";
         err.style.display = "block";
         handleError();
         return;
       }
 
-      // ===== NORMAL ERROR =====
+      // ===== NORMAL ERROR (including 401) =====
       if (!res.ok) {
         loginBtn.disabled = false;
         btnText.classList.remove("hidden");
         loader.classList.add("hidden");
-        err.textContent = (data && data.message) || "Login failed";
+        isSubmitting = false;
+        
+        // Handle 401 with proper error message
+        if (res.status === 401) {
+          err.textContent = (data && data.error) || "Invalid credentials. Please try again.";
+        } else {
+          err.textContent = (data && data.message) || (data && data.error) || "Login failed";
+        }
         err.style.display = "block";
         handleError();
         return;
@@ -1633,7 +1654,44 @@ export const renderLoginPage = () => {
         is_admin: isAdmin,
         is_manager: isManager,
       };
+      // ===== FACE VERIFICATION CHECK (MUST BE FIRST) =====
+      // If face verification is required, redirect to FaceAuth BEFORE storing auth
+      // This prevents users from bypassing face verification by navigating to dashboard
+      if (data.face_verification_required && data.face_verify_url) {
+        // DEBUG: Log the exact URL we're redirecting to
+        console.log("[FACEAUTH] Redirecting to external-verify:", data.face_verify_url);
+        
+        // Store only the token and pending user data for FaceAuth flow
+        try {
+          localStorage.setItem("face_auth_token", data.token);
+          localStorage.setItem("face_verified", "false");
+          localStorage.setItem("pending_user", JSON.stringify(state.user));
+          // Do NOT set "auth" - user is not fully authenticated yet
+        } catch {}
+        
+        setTimeout(() => {
+          const appContent = document.getElementById("app-content");
+          if (appContent) appContent.classList.add("page-exit-anim");
+          setTimeout(() => {
+            // Redirect to FaceAuth /external-verify endpoint
+            console.log("[FACEAUTH] Now navigating to:", data.face_verify_url);
+            window.location.href = data.face_verify_url;
+          }, 900);
+        }, 1000);
+        return;
+      }
+      
+      // ===== FACE VERIFIED - PROCEED WITH FULL AUTH =====
       state.authenticated = true;
+      
+      // Store face auth token if provided
+      if (data.token) {
+        try {
+          localStorage.setItem("face_auth_token", data.token);
+          localStorage.setItem("face_verified", data.face_verified ? "true" : "false");
+        } catch {}
+      }
+      
       try {
         localStorage.setItem(
           "auth",
@@ -1661,6 +1719,7 @@ export const renderLoginPage = () => {
 
       startNotificationPolling();
 
+      // Normal flow - go to dashboard
       setTimeout(() => {
         const appContent = document.getElementById("app-content");
         if (appContent) appContent.classList.add("page-exit-anim");
@@ -1672,6 +1731,7 @@ export const renderLoginPage = () => {
       loginBtn.disabled = false;
       btnText.classList.remove("hidden");
       loader.classList.add("hidden");
+      isSubmitting = false;
       err.textContent = ex.message || "Unexpected error";
       err.style.display = "block";
       handleError();

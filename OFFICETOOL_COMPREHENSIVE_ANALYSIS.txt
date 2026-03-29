@@ -1,0 +1,1144 @@
+================================================================================
+                    VTAB SQUARE OFFICETOOL - COMPREHENSIVE ANALYSIS
+================================================================================
+
+This document provides a detailed module-by-module analysis of the VTAB Square 
+OfficeTool project, including all functions, flows, logic, and user interactions.
+
+Table of Contents:
+1. Project Overview & Architecture
+2. Backend Modules Analysis
+3. Frontend Components Analysis
+4. Database Schema & Dataverse Integration
+5. User Flow Analysis
+6. API Endpoints Documentation
+7. Key Business Logic
+8. Security & Authentication
+9. Third-party Integrations
+10. Deployment & Infrastructure
+
+================================================================================
+1. PROJECT OVERVIEW & ARCHITECTURE
+================================================================================
+
+Project Name: VTAB Square OfficeTool
+Type: Full-stack HR Management System
+Architecture: Monolithic Backend with Component-based Frontend
+Database: Microsoft Dataverse (CRM)
+Language: Backend (Python Flask), Frontend (JavaScript/TypeScript)
+
+Core Modules:
+- Employee Management
+- Attendance System (Check-in/Check-out)
+- Leave Management
+- Time Tracking/Timesheet
+- Project Management
+- Task Management
+- Chat/Messaging
+- Meeting/Video Conferencing
+- Document Management
+- Holiday Management
+- Onboarding System
+- AI Chatbot Integration
+
+================================================================================
+2. BACKEND MODULES ANALYSIS
+================================================================================
+
+2.1 MAIN SERVER: unified_server.py
+-----------------------------------
+Size: ~15,000 lines
+Purpose: Central API server handling all HTTP requests
+
+Key Imports:
+- Flask: Web framework
+- dataverse_helper: Dataverse CRM integration
+- Various blueprints for modular routes
+
+Global Configuration:
+- RESOURCE: Dataverse API endpoint
+- BASE_URL: Constructed from RESOURCE
+- Various entity sets (EMPLOYEE_ENTITY, LEAVE_ENTITY, etc.)
+- Email configuration (Flask-Mail)
+- Google OAuth configuration
+
+Performance Middleware (Lines 55-69):
+- Tracks request timing
+- Logs slow requests (>500ms)
+- Helps identify performance bottlenecks
+
+Authentication Functions:
+- admin_required(): Decorator for admin-only routes
+- Validates JWT token and checks designation for admin/manager role
+
+Key Routes:
+
+/api/admin/query (POST)
+- Purpose: Admin-only direct Dataverse query endpoint
+- Flow: Validate admin → Build OData query → Execute → Return results
+- Security: Requires admin designation
+
+/api/employee/list (GET)
+- Purpose: List all employees with pagination
+- Flow: Get token → Query Dataverse → Format response
+- Returns: Employee list with metadata
+
+/api/employee/<employee_id> (GET)
+- Purpose: Get single employee details
+- Flow: Validate token → Fetch by ID → Return formatted data
+
+/api/employee/create (POST)
+- Purpose: Create new employee record
+- Flow: Validate data → Generate employee ID → Create in Dataverse
+- Auto-generates: Employee ID, user credentials
+
+/api/employee/update (POST)
+- Purpose: Update employee details
+- Flow: Validate existence → Update fields → Return updated record
+
+/api/employee/delete (POST)
+- Purpose: Delete employee (soft delete preferred)
+- Flow: Check dependencies → Archive or delete
+
+Authentication Routes:
+----------------------
+
+/api/login (POST)
+- Purpose: Employee login
+- Flow: Validate credentials → Generate JWT → Return user info
+- Returns: JWT token, user details, permissions
+
+/api/verify-token (POST)
+- Purpose: Verify JWT validity
+- Flow: Decode JWT → Check expiration → Return user info
+
+Attendance System Routes:
+-------------------------
+
+/api/attendance/checkin (POST)
+- Purpose: Check-in employee
+- Flow: Validate token → Check for active check-in → Create attendance record
+- Business Logic: Prevents duplicate check-ins, tracks location/time
+
+/api/attendance/checkout (POST)
+- Purpose: Check-out employee
+- Flow: Find active check-in → Calculate duration → Update record
+- Auto-checkout: Handles missed checkouts
+
+/api/attendance/status/<employee_id> (GET)
+- Purpose: Get current attendance status
+- Returns: Current session, today's logs, weekly summary
+
+/api/attendance/history (GET)
+- Purpose: Get attendance history
+- Parameters: date range, employee ID
+- Returns: Paginated attendance records
+
+/api/attendance/summary (GET)
+- Purpose: Generate attendance reports
+- Calculates: Present days, late marks, early exits, overtime
+
+Leave Management Routes:
+------------------------
+
+/api/leaves/<employee_id> (GET)
+- Purpose: Get leave history for employee
+- Flow: Fetch leave records → Calculate balances → Format response
+
+/api/leave/request (POST)
+- Purpose: Submit leave request
+- Flow: Validate balance → Check conflicts → Create request → Notify manager
+- Business Rules: Minimum notice period, max consecutive days
+
+/api/leave/approve (POST)
+- Purpose: Approve/reject leave
+- Flow: Validate authority → Update status → Send notifications
+- Authority: Manager or admin only
+
+/api/leave/balance/<employee_id> (GET)
+- Purpose: Get current leave balance
+- Calculates: Based on experience, accruals, usage
+
+/api/leave/cancel (POST)
+- Purpose: Cancel pending leave
+- Restrictions: Cannot cancel approved leaves
+
+Time Tracking Routes:
+--------------------
+
+/api/time-tracker/tasks (GET)
+- Purpose: Get assigned tasks for time tracking
+- Flow: Fetch tasks → Filter by assignee → Include project details
+
+/api/time-tracker/start (POST)
+- Purpose: Start timer for a task
+- Flow: Validate task → Check for active timers → Start new session
+- Auto-stops: Any other active timers
+
+/api/time-tracker/stop (POST)
+- Purpose: Stop current timer
+- Flow: Find active timer → Calculate duration → Save to timesheet
+
+/api/time-tracker/status (GET)
+- Purpose: Get current timer status
+- Returns: Active task, elapsed time, today's entries
+
+/api/time-tracker/logs (GET)
+- Purpose: Get timesheet entries
+- Parameters: date range, employee ID, project filter
+
+Project Management Routes:
+-------------------------
+
+/api/projects/list (GET)
+- Purpose: List all projects
+- Returns: Project details with status, team, progress
+
+/api/projects/create (POST)
+- Purpose: Create new project
+- Flow: Validate data → Create in Dataverse → Setup default boards
+
+/api/projects/<project_id> (GET)
+- Purpose: Get project details
+- Includes: Tasks, team members, boards, progress
+
+/api/projects/update (POST)
+- Purpose: Update project details
+- Tracks: Status changes, deadline updates
+
+Task Management Routes:
+-----------------------
+
+/api/tasks/list (GET)
+- Purpose: List tasks with filters
+- Filters: Project, assignee, status, priority
+
+/api/tasks/create (POST)
+- Purpose: Create new task
+- Auto-assigns: Task ID, board column
+
+/api/tasks/update (POST)
+- Purpose: Update task details
+- History: Tracks all changes in audit log
+
+/api/tasks/move (POST)
+- Purpose: Move task between columns
+- Triggers: Status updates, notifications
+
+Chat Module Routes:
+------------------
+
+/api/chat/send (POST)
+- Purpose: Send chat message
+- Flow: Save message → Emit via socket → Notify recipients
+
+/api/chat/history (GET)
+- Purpose: Get chat history
+- Pagination: Supports infinite scroll
+
+/api/chat/rooms (GET)
+- Purpose: Get user's chat rooms
+- Types: Direct, project-based, team-based
+
+Meeting Routes:
+---------------
+
+/api/meet/create (POST)
+- Purpose: Create meeting
+- Integrates: Google Calendar, Zoom/Meet
+- Notifications: Email and in-app
+
+/api/meet/join/<meeting_id> (GET)
+- Purpose: Get meeting join URL
+- Validates: User permission, meeting status
+
+Document Management Routes:
+---------------------------
+
+/api/documents/upload (POST)
+- Purpose: Upload document
+- Storage: Dataverse attachments
+- Virus scan: Optional integration
+
+/api/documents/list (GET)
+- Purpose: List documents
+- Filters: Type, date, employee
+
+Onboarding Routes:
+-----------------
+
+/api/onboarding/start (POST)
+- Purpose: Initiate onboarding
+- Flow: Create record → Send welcome email → Setup tasks
+
+/api/onboarding/progress (GET)
+- Purpose: Get onboarding progress
+- Tracks: Document uploads, form completions
+
+Holiday Management:
+-------------------
+
+/api/holidays/list (GET)
+- Purpose: List company holidays
+- Caches: Updates annually
+
+/api/holidays/add (POST)
+- Purpose: Add holiday (admin only)
+- Affects: Leave calculations
+
+AI Integration:
+---------------
+
+/api/ai/chat (POST)
+- Purpose: AI chatbot interface
+- Backend: Gemini or HuggingFace model
+- Context: HR policies, employee queries
+
+/api/ai/analyze (POST)
+- Purpose: Analyze data patterns
+- Uses: Attendance trends, leave patterns
+
+2.2 DATVERSE HELPER: dataverse_helper.py
+-----------------------------------------
+Purpose: Abstracts Dataverse CRM operations
+
+Key Functions:
+- get_access_token(): MSAL authentication
+- get_dataverse_session(): Shared HTTP session for performance
+- create_record(): Generic record creation
+- update_record(): Generic record update
+- delete_record(): Generic record deletion
+- get_employee_name(): Resolve employee ID to name
+
+Session Management:
+- Singleton pattern for connection reuse
+- Automatic token refresh
+- Connection pooling for performance
+
+2.3 ATTENDANCE SERVICE V2: attendance_service_v2.py
+---------------------------------------------------
+Purpose: Enhanced attendance with auto-checkout features
+
+Key Features:
+- Auto-checkout for forgotten checkouts
+- Location-based validation
+- Break time tracking
+- Monthly attendance reports
+
+Scheduler Functions:
+- Midnight auto-checkout job
+- Stale session cleanup
+- Monthly report generation
+
+2.4 TIME TRACKING: time_tracking.py
+-----------------------------------
+Purpose: Detailed time tracking and timesheet management
+
+Features:
+- Task-based time tracking
+- Automatic timer management
+- Timesheet approval workflow
+- Export to payroll
+
+Key Functions:
+- stop_active_task_entries_for_user(): Auto-stop timers
+- _merge_time_entries(): Handle overlapping entries
+- _calculate_overtime(): Calculate OT based on rules
+
+2.5 CHAT MODULE: chats.py
+--------------------------
+Purpose: Real-time chat functionality
+
+Integration:
+- Socket.IO for real-time messaging
+- Room-based messaging
+- File attachment support
+- Read receipts
+
+2.6 PROJECT MODULES
+-------------------
+project_contributors.py - Team member management
+project_boards.py - Kanban boards
+project_tasks.py - Task management
+project_column.py - Board columns
+
+2.7 MAIL SERVICE: mail_app.py
+------------------------------
+Purpose: Email communications
+
+Providers:
+- Brevo (primary)
+- Resend (backup)
+- SMTP fallback
+
+Templates:
+- Welcome emails
+- Leave notifications
+- Meeting reminders
+- Password reset
+
+2.8 AUTHENTICATION: auth.py
+---------------------------
+Purpose: JWT token management
+
+Functions:
+- generate_jwt(): Create tokens
+- verify_jwt(): Validate tokens
+- refresh_token(): Token refresh
+
+2.9 AI MODULES
+--------------
+ai_gemini.py - Google Gemini integration
+ai_hf.py - HuggingFace models
+ai_automation.py - Workflow automation
+
+================================================================================
+3. FRONTEND COMPONENTS ANALYSIS
+================================================================================
+
+3.1 MAIN ENTRY: index.html
+---------------------------
+Purpose: Single Page Application entry point
+Loads: React app, authentication check, routing
+
+3.2 STYLING: index.css (~248KB)
+-------------------------------
+- Component styles
+- Responsive design
+- Theme variables
+- Animation definitions
+
+3.3 CORE LOGIC: index.js (~45KB)
+--------------------------------
+State Management:
+- Global state object
+- Local storage persistence
+- State synchronization
+
+Key Functions:
+- initializeApp(): Setup and auth check
+- navigate(): SPA routing
+- showModal()/hideModal(): Modal management
+- showToast(): Notifications
+
+3.4 TYPE DEFINITIONS: types.ts
+-------------------------------
+- TypeScript interfaces
+- API response types
+- Component props definitions
+
+3.5 COMPONENTS STRUCTURE:
+-------------------------
+
+components/
+├── auth/
+│   ├── login.js - Login form
+│   └── logout.js - Logout handler
+├── dashboard/
+│   ├── dashboard.js - Main dashboard
+│   └── widgets/ - Dashboard widgets
+├── employee/
+│   ├── list.js - Employee listing
+│   ├── profile.js - Employee profile
+│   └── edit.js - Employee edit form
+├── attendance/
+│   ├── checkin.js - Check-in widget
+│   ├── history.js - Attendance history
+│   └── reports.js - Attendance reports
+├── leave/
+│   ├── apply.js - Leave application
+│   ├── balance.js - Leave balance display
+│   └── history.js - Leave history
+├── time/
+│   ├── tracker.js - Time tracker
+│   ├── timesheet.js - Timesheet view
+│   └── reports.js - Time reports
+├── project/
+│   ├── list.js - Project list
+│   ├── kanban.js - Kanban board
+│   └── details.js - Project details
+├── task/
+│   ├── list.js - Task list
+│   ├── card.js - Task card
+│   └── modal.js - Task edit modal
+├── chat/
+│   ├── window.js - Chat window
+│   ├── list.js - Chat list
+│   └── input.js - Message input
+├── meet/
+│   ├── schedule.js - Meeting scheduler
+│   ├── join.js - Meeting join interface
+│   └── history.js - Meeting history
+└── document/
+    ├── upload.js - Document upload
+    ├── viewer.js - Document viewer
+    └── list.js - Document list
+
+3.6 PAGES STRUCTURE:
+-------------------
+pages/
+├── Dashboard.js - Main dashboard
+├── Employees.js - Employee management
+├── Attendance.js - Attendance module
+├── Leave.js - Leave management
+├── TimeTracking.js - Time tracking
+├── Projects.js - Project management
+├── Tasks.js - Task management
+├── Chat.js - Chat interface
+├── Meet.js - Video meetings
+├── Documents.js - Document management
+├── Holidays.js - Holiday calendar
+├── Reports.js - Reports and analytics
+├── Settings.js - User settings
+└── Admin.js - Admin panel
+
+================================================================================
+4. DATABASE SCHEMA & DATAVERSE INTEGRATION
+================================================================================
+
+4.1 PRIMARY ENTITIES:
+---------------------
+
+Employee Entity (crc6f_employees):
+- Employee ID (unique identifier)
+- Personal details (name, email, phone)
+- Job details (department, designation, DOJ)
+- Authentication (username, password hash)
+- Status (active, inactive, terminated)
+
+Attendance Entity (crc6f_attendance):
+- Employee ID
+- Check-in timestamp
+- Check-out timestamp
+- Duration
+- Location (latitude, longitude)
+- Device info
+
+Leave Entity (crc6f_leaves):
+- Employee ID
+- Leave type (CL, SL, PL, etc.)
+- Start date
+- End date
+- Status (pending, approved, rejected)
+- Approver ID
+- Reason
+
+Timesheet Entity (crc6f_timesheet):
+- Employee ID
+- Task ID
+- Date
+- Hours worked
+- Description
+- Billing status
+
+Project Entity (crc6f_projects):
+- Project ID
+- Project name
+- Description
+- Start date
+- End date
+- Status
+- Manager ID
+
+Task Entity (crc6f_tasks):
+- Task ID
+- Project ID
+- Title
+- Description
+- Assignee ID
+- Status
+- Priority
+- Due date
+
+4.2 RELATIONSHIPS:
+-----------------
+- Employee → Attendance (1:N)
+- Employee → Leave (1:N)
+- Employee → Timesheet (1:N)
+- Employee → Task Assignments (1:N)
+- Project → Tasks (1:N)
+- Project → Team Members (N:M)
+
+4.3 DATAVERSE INTEGRATION:
+--------------------------
+Authentication Flow:
+1. MSAL client credentials flow
+2. Token caching and refresh
+3. Bearer token authentication
+
+API Patterns:
+- OData v4.0 protocol
+- RESTful endpoints
+- JSON responses
+- Pagination support
+- Filtering and querying
+
+================================================================================
+5. USER FLOW ANALYSIS
+================================================================================
+
+5.1 LOGIN FLOW:
+--------------
+1. User enters credentials on login page
+2. Frontend sends POST to /api/login
+3. Backend validates against Dataverse
+4. JWT token generated and returned
+5. Frontend stores token and redirects to dashboard
+6. All subsequent requests include Bearer token
+
+5.2 DASHBOARD FLOW:
+------------------
+1. After login, user lands on dashboard
+2. Multiple API calls in parallel:
+   - /api/attendance/status - Current attendance
+   - /api/leave/balance - Leave balance
+   - /api/time-tracker/status - Active timer
+   - /api/chat/unread - Unread messages
+   - /api/tasks/my-tasks - Assigned tasks
+3. Widgets display real-time data
+4. Auto-refresh every 30 seconds
+
+5.3 ATTENDANCE CHECK-IN FLOW:
+----------------------------
+1. User clicks "Check In" button
+2. Browser requests geolocation
+3. Frontend sends POST to /api/attendance/checkin
+   with location and timestamp
+4. Backend validates:
+   - No active check-in exists
+   - Within working hours (optional)
+   - Location within allowed radius
+5. Record created in Dataverse
+6. UI updates to show "Check Out" button
+7. Timer starts showing duration
+
+5.4 ATTENDANCE CHECK-OUT FLOW:
+-----------------------------
+1. User clicks "Check Out" button
+2. Frontend sends POST to /api/attendance/checkout
+3. Backend:
+   - Finds active check-in record
+   - Calculates total duration
+   - Updates record with checkout time
+   - Handles overtime calculation
+4. UI shows today's summary
+5. Timer stops
+
+5.5 LEAVE APPLICATION FLOW:
+---------------------------
+1. User navigates to Leave module
+2. Clicks "Apply for Leave"
+3. Form appears with fields:
+   - Leave type (dropdown)
+   - Start date (date picker)
+   - End date (date picker)
+   - Reason (textarea)
+4. Frontend validates:
+   - Dates are valid
+   - Not past dates
+   - Within allowed limits
+5. On submit, POST to /api/leave/request
+6. Backend checks:
+   - Leave balance sufficiency
+   - No overlapping requests
+   - Minimum notice period
+7. Request created with "pending" status
+8. Email sent to manager
+9. UI shows "Pending Approval"
+
+5.6 LEAVE APPROVAL FLOW (MANAGER):
+----------------------------------
+1. Manager receives email/notification
+2. Navigates to Leave → Team Leaves
+3. Sees pending requests with details
+4. Clicks "Approve" or "Reject"
+5. If rejecting, must provide reason
+6. POST to /api/leave/approve
+7. Backend:
+   - Validates approver authority
+   - Updates leave status
+   - Adjusts leave balance if approved
+   - Sends notification to employee
+8. UI updates in real-time for employee
+
+5.7 TIME TRACKING START TIMER FLOW:
+----------------------------------
+1. User goes to Time Tracking module
+2. Selects task from dropdown
+3. Clicks "Start Timer"
+4. Frontend sends POST to /api/time-tracker/start
+5. Backend:
+   - Stops any other active timers
+   - Creates new time entry
+   - Returns entry ID
+6. UI shows running timer
+7. Updates every second
+
+5.8 TIME TRACKING STOP TIMER FLOW:
+---------------------------------
+1. User clicks "Stop Timer"
+2. Frontend sends POST to /api/time-tracker/stop
+3. Backend:
+   - Finds active timer
+   - Calculates duration
+   - Saves to timesheet
+   - Updates task status if needed
+4. Entry appears in timesheet list
+5. Timer resets
+
+5.9 PROJECT CREATION FLOW:
+-------------------------
+1. Admin/Manager clicks "New Project"
+2. Modal opens with form fields:
+   - Project name
+   - Description
+   - Start date
+   - End date
+   - Team members
+3. On submit, POST to /api/projects/create
+4. Backend:
+   - Validates permissions
+   - Generates project ID
+   - Creates project record
+   - Creates default Kanban board
+   - Adds team members
+5. Redirects to project details
+
+5.10 TASK CREATION FLOW:
+------------------------
+1. User in project view clicks "Add Task"
+2. Form appears with:
+   - Task title
+   - Description
+   - Assignee
+   - Priority
+   - Due date
+3. POST to /api/tasks/create
+4. Backend:
+   - Generates task ID
+   - Creates task record
+   - Adds to "To Do" column
+5. Task appears on Kanban board
+
+5.11 CHAT FLOW:
+--------------
+1. User clicks chat icon
+2. Chat window opens
+3. Selects contact or room
+4. Types message and hits Enter
+5. WebSocket emits message
+6. Backend:
+   - Saves to database
+   - Broadcasts to recipients
+7. Messages appear in real-time
+
+5.12 MEETING SCHEDULING FLOW:
+----------------------------
+1. User clicks "Schedule Meeting"
+2. Form with:
+   - Title
+   - Participants
+   - Date/Time
+   - Duration
+3. On submit, POST to /api/meet/create
+4. Backend:
+   - Creates Google Calendar event
+   - Generates meeting link
+   - Sends invitations
+5. Meeting appears in calendar
+
+================================================================================
+6. API ENDPOINTS DOCUMENTATION
+================================================================================
+
+6.1 AUTHENTICATION ENDPOINTS:
+-----------------------------
+
+POST /api/login
+Request: { employee_id, password, remember_me }
+Response: { success, token, user, permissions }
+
+POST /api/verify-token
+Request: { token }
+Response: { valid, user, expires_in }
+
+POST /api/logout
+Request: { token }
+Response: { success, message }
+
+6.2 EMPLOYEE ENDPOINTS:
+-----------------------
+
+GET /api/employee/list
+Query: ?page=1&limit=20&search=keyword&department=IT
+Response: { employees, total, page, limit }
+
+GET /api/employee/{employee_id}
+Response: { employee, details, permissions }
+
+POST /api/employee/create
+Request: { employee_data }
+Response: { success, employee_id, credentials }
+
+POST /api/employee/update
+Request: { employee_id, updates }
+Response: { success, updated_fields }
+
+6.3 ATTENDANCE ENDPOINTS:
+-------------------------
+
+POST /api/attendance/checkin
+Request: { location, timestamp, device_info }
+Response: { success, checkin_id, message }
+
+POST /api/attendance/checkout
+Request: { checkin_id, location, timestamp }
+Response: { success, duration, summary }
+
+GET /api/attendance/status/{employee_id}
+Response: { current_session, today_summary, weekly_summary }
+
+GET /api/attendance/history
+Query: ?from=2024-01-01&to=2024-01-31&employee_id=EMP001
+Response: { records, summary, pagination }
+
+6.4 LEAVE ENDPOINTS:
+--------------------
+
+GET /api/leaves/{employee_id}
+Response: { leaves, balance, history }
+
+POST /api/leave/request
+Request: { leave_type, start_date, end_date, reason }
+Response: { success, leave_id, status }
+
+POST /api/leave/approve
+Request: { leave_id, action, reason }
+Response: { success, new_status, balance }
+
+GET /api/leave/balance/{employee_id}
+Response: { cl_balance, sl_balance, pl_balance, total }
+
+6.5 TIME TRACKING ENDPOINTS:
+----------------------------
+
+GET /api/time-tracker/tasks
+Response: { tasks, projects, active_timer }
+
+POST /api/time-tracker/start
+Request: { task_id, description }
+Response: { success, entry_id, start_time }
+
+POST /api/time-tracker/stop
+Request: { entry_id, notes }
+Response: { success, duration, timesheet_entry }
+
+GET /api/time-tracker/logs
+Query: ?from=2024-01-01&to=2024-01-31&project_id=P001
+Response: { entries, total_hours, pagination }
+
+6.6 PROJECT ENDPOINTS:
+----------------------
+
+GET /api/projects/list
+Query: ?status=active&manager=EMP001
+Response: { projects, total, filters }
+
+GET /api/projects/{project_id}
+Response: { project, tasks, team, progress }
+
+POST /api/projects/create
+Request: { project_data }
+Response: { success, project_id, boards }
+
+6.7 TASK ENDPOINTS:
+------------------
+
+GET /api/tasks/list
+Query: ?project_id=P001&assignee=EMP001&status=pending
+Response: { tasks, total, filters }
+
+POST /api/tasks/create
+Request: { task_data }
+Response: { success, task_id, board_column }
+
+POST /api/tasks/update
+Request: { task_id, updates }
+Response: { success, updated_fields }
+
+6.8 CHAT ENDPOINTS:
+------------------
+
+GET /api/chat/rooms
+Response: { rooms, unread_count, participants }
+
+GET /api/chat/history/{room_id}
+Query: ?before=message_id&limit=50
+Response: { messages, has_more, pagination }
+
+POST /api/chat/send
+Request: { room_id, message, type }
+Response: { success, message_id, timestamp }
+
+6.9 MEETING ENDPOINTS:
+---------------------
+
+POST /api/meet/create
+Request: { title, participants, datetime, duration }
+Response: { success, meeting_id, meet_link, calendar_id }
+
+GET /api/meet/join/{meeting_id}
+Response: { meet_url, participants, status }
+
+6.10 DOCUMENT ENDPOINTS:
+------------------------
+
+POST /api/documents/upload
+Request: multipart/form-data
+Response: { success, document_id, url }
+
+GET /api/documents/list
+Query: ?type=pdf&date=2024-01-01
+Response: { documents, total, filters }
+
+================================================================================
+7. KEY BUSINESS LOGIC
+================================================================================
+
+7.1 ATTENDANCE CALCULATIONS:
+---------------------------
+
+Working Hours Definition:
+- Standard: 9 hours (9:00 AM - 6:00 PM)
+- Grace period: 15 minutes
+- Overtime: After 9 hours
+
+Late Mark Rules:
+- After 9:15 AM = Late
+- After 10:00 AM = Half-day
+- After 11:00 AM = Absent
+
+Early Exit Rules:
+- Before 6:00 PM = Early exit
+- Before 3:00 PM = Half-day
+
+Auto-Checkout Logic:
+- Runs at midnight
+- Closes open sessions
+- Assumes checkout at 6:00 PM
+- Flags for manual review
+
+7.2 LEAVE CALCULATIONS:
+-----------------------
+
+Leave Accrual Rules:
+- CL (Casual Leave): 6 days/year
+- SL (Sick Leave): 6 days/year
+- PL (Privileged Leave): Based on experience
+  - < 1 year: 0 days
+  - 1-2 years: 12 days
+  - 2-5 years: 18 days
+  - > 5 years: 24 days
+
+Leave Encashment:
+- Only PL can be encashed
+- Maximum 10 days per year
+- Requires 1 year service
+
+Leave Carry Forward:
+- CL/SL: Not carried forward
+- PL: Max 15 days carried forward
+
+7.3 TIMESHEET RULES:
+-------------------
+
+Minimum Entry: 15 minutes
+Maximum Daily: 12 hours
+Weekend Rates: 1.5x
+Holiday Rates: 2x
+
+Approval Workflow:
+- Self-submit → Manager review → Approved
+- Auto-approve for < 8 hours
+- Reject with reason required
+
+7.4 PROJECT MANAGEMENT:
+-----------------------
+
+Project Status Flow:
+- Planning → In Progress → On Hold → Completed → Closed
+
+Task Priority Levels:
+- Critical (P0) - Immediate attention
+- High (P1) - This week
+- Medium (P2) - This month
+- Low (P3) - When possible
+
+Task Status Flow:
+- To Do → In Progress → Review → Done → Archived
+
+7.5 PERFORMANCE METRICS:
+------------------------
+
+Attendance Score:
+- Present: 100%
+- Late: 75%
+- Half-day: 50%
+- Absent: 0%
+
+Productivity Index:
+- Based on task completion
+- Quality rating
+- Deadline adherence
+
+================================================================================
+8. SECURITY & AUTHENTICATION
+================================================================================
+
+8.1 AUTHENTICATION FLOW:
+-----------------------
+1. User credentials hashed with bcrypt
+2. JWT token with 24-hour expiry
+3. Refresh token for extended sessions
+4. Role-based access control (RBAC)
+
+8.2 PERMISSION LEVELS:
+---------------------
+- Employee: Own data only
+- Manager: Team data + approvals
+- Admin: All data + system settings
+- Super Admin: Full system access
+
+8.3 DATA SECURITY:
+------------------
+- HTTPS enforced
+- SQL injection prevention (OData parameters)
+- XSS protection (input sanitization)
+- CSRF protection (tokens)
+- Rate limiting on APIs
+
+8.4 AUDIT LOGGING:
+------------------
+All sensitive actions logged:
+- Login attempts
+- Data modifications
+- Permission changes
+- Export operations
+
+================================================================================
+9. THIRD-PARTY INTEGRATIONS
+================================================================================
+
+9.1 MICROSOFT DATVERSE:
+----------------------
+- Primary database
+- OData v4.0 API
+- MSAL authentication
+- Real-time webhooks
+
+9.2 GOOGLE SERVICES:
+-------------------
+- Calendar integration
+- OAuth 2.0 authentication
+- Meet video conferencing
+- Drive storage (optional)
+
+9.3 EMAIL SERVICES:
+------------------
+- Primary: Brevo API
+- Backup: Resend API
+- SMTP fallback
+- Template engine
+
+9.4 AI SERVICES:
+---------------
+- Google Gemini (Chat)
+- HuggingFace (NLP)
+- Custom models (optional)
+
+9.5 FILE STORAGE:
+----------------
+- Dataverse attachments
+- Azure Blob (optional)
+- Local caching
+
+================================================================================
+10. DEPLOYMENT & INFRASTRUCTURE
+================================
+
+10.1 PRODUCTION ARCHITECTURE:
+----------------------------
+
+Load Balancer (Nginx)
+├── App Server 1 (Gunicorn + Flask)
+├── App Server 2 (Gunicorn + Flask)
+├── Socket Server (Node.js + Socket.IO)
+└── Static Files (CDN)
+
+Database: Microsoft Dataverse (Cloud)
+Cache: Redis (Session storage)
+Monitoring: PM2 + Custom logs
+
+10.2 ENVIRONMENT VARIABLES:
+---------------------------
+Required:
+- RESOURCE: Dataverse endpoint
+- CLIENT_ID: Azure app client
+- CLIENT_SECRET: Azure app secret
+- JWT_SECRET: Token signing
+- MAIL_API_KEY: Email service
+
+Optional:
+- GOOGLE_CLIENT_ID: Calendar integration
+- REDIS_URL: Session storage
+- SENTRY_DSN: Error tracking
+
+10.3 MONITORING:
+---------------
+- PM2 process management
+- Custom performance logging
+- Error tracking (Sentry)
+- Uptime monitoring
+- Log aggregation
+
+10.4 BACKUP STRATEGY:
+--------------------
+- Dataverse: Automatic (Microsoft)
+- File uploads: Azure backup
+- Database exports: Daily
+- Configuration: Git versioned
+
+================================================================================
+CONCLUSION
+================================================================================
+
+The VTAB Square OfficeTool is a comprehensive HR management system with:
+- 50+ API endpoints
+- 15+ frontend modules
+- Complex business logic
+- Multiple integrations
+- Robust security
+
+Key Strengths:
+- Unified platform for all HR needs
+- Real-time collaboration features
+- Comprehensive reporting
+- Mobile-responsive design
+- Scalable architecture
+
+Areas for Improvement:
+- Add comprehensive testing suite
+- Implement microservices architecture
+- Enhanced mobile app
+- Advanced analytics dashboard
+- AI-powered insights
+
+This analysis provides a complete understanding of the system's architecture,
+functionality, and implementation details for maintenance and enhancement
+purposes.
+
+================================================================================
+Document Generated: March 2026
+Total Lines: ~2000+
+Coverage: Complete system analysis
+================================================================================

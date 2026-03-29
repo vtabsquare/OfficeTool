@@ -18,6 +18,14 @@ from typing import Tuple
 import jwt
 from email.header import decode_header
 from dotenv import load_dotenv
+
+# Load environment variables FIRST (before any os.getenv calls)
+if os.path.exists("id.env.local"):
+    load_dotenv("id.env.local")
+elif os.path.exists("id.env"):
+    load_dotenv("id.env")
+load_dotenv()  # Also try .env in current directory
+
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
 from google_token_store import load_google_token, save_google_token
@@ -213,13 +221,6 @@ app.config['MAIL_DEFAULT_SENDER'] = os.getenv('MAIL_DEFAULT_SENDER', app.config[
 # ✉️ Initialize Flask-Mail with the app configuration
 mail = Mail(app)
 
-
-# Load environment variables
-if os.getenv("FLASK_ENV", "development").lower() != "production":
-    if os.path.exists("id.env"):
-        load_dotenv("id.env")
-    load_dotenv()  # Also try .env in current directory
-
 # Allow insecure (HTTP) transport for Google OAuth when not running in production.
 if os.getenv("FLASK_ENV", "development").lower() != "production":
     os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
@@ -394,6 +395,8 @@ LOGIN_TABLE = "crc6f_hr_login_detailses"  # Default to most common
 LOGIN_TABLE_RESOLVED = None
 
 # RPT mirror map for login details
+# Set DISABLE_RPT_UPDATE=true to skip RPT field updates (they often fail with 400 on Dynamics CRM)
+DISABLE_LOGIN_RPT_UPDATE = os.getenv("DISABLE_RPT_UPDATE", "true").lower() == "true"
 LOGIN_RPT_MAP = {
     "crc6f_loginattempts": "crc6f_RPT_loginattempts",
     "crc6f_last_login": "crc6f_RPT_last_login",
@@ -879,6 +882,7 @@ COMPOFF_REQUEST_ENTITY = os.getenv("COMPOFF_REQUEST_ENTITY", "crc6f_compensatory
 COMPOFF_REQUEST_ENTITY_CANDIDATES = [
     COMPOFF_REQUEST_ENTITY,
     "crc6f_compensatoryrequests",
+    "crc6f_compensatoryrequests",
     "crc6f_compensatoryrequestses",
     "crc6f_compensatoryrequest",
     "crc6f_hr_compensatoryrequests",
@@ -1107,9 +1111,9 @@ def _live_session_progress_hours(emp_id: str, target_date: str) -> float:
             "OData-Version": "4.0"
         }
         safe_emp = _safe_odata_string(normalized_emp)
-        safe_date = _safe_odata_string(target_date)
+        safe_dt = _safe_odata_string(target_date)
         
-        filter_q = f"?$filter={LA_FIELD_EMPLOYEE_ID} eq '{safe_emp}' and {LA_FIELD_DATE} eq '{safe_date}'"
+        filter_q = f"?$filter={LA_FIELD_EMPLOYEE_ID} eq '{safe_emp}' and {LA_FIELD_DATE} eq '{safe_dt}'"
         url = f"{RESOURCE}/api/data/v9.2/{LOGIN_ACTIVITY_ENTITY}{filter_q}&$top=1"
         
         resp = get_dataverse_session().get(url, headers=headers, timeout=10)
@@ -2356,13 +2360,6 @@ def _compose_hierarchy_display(token: str, employee_id: str, manager_id: str, re
         result["employeeDepartment"] = employee_info.get('department') or ''
         result["managerName"] = manager_info.get('name') or manager_id
         result["managerDepartment"] = manager_info.get('department') or ''
-    else:
-        existing = _find_local_hierarchy_record(normalized_id)
-        if existing:
-            result["employeeName"] = existing.get('employeeName') or employee_id
-            result["employeeDepartment"] = existing.get('employeeDepartment') or ''
-            result["managerName"] = existing.get('managerName') or manager_id
-            result["managerDepartment"] = existing.get('managerDepartment') or ''
 
     return result
 
@@ -2833,6 +2830,17 @@ def _update_login_record(record_id: str, payload: dict, headers: dict, token: st
     record_id = (record_id or '').strip("{}")
     base_payload = dict(payload or {})
     url = f"{BASE_URL}/{login_table}({record_id})"
+    
+    # If RPT updates are disabled, skip directly to base payload
+    if DISABLE_LOGIN_RPT_UPDATE:
+        try:
+            r = get_dataverse_session().patch(url, headers=headers, json=base_payload, timeout=15)
+            r.raise_for_status()
+            return True
+        except Exception as base_err:
+            print(f"[LOGIN] Update failed: {base_err}")
+            raise base_err
+    
     # Try with RPT fields first, fallback to base payload if RPT fields cause error
     try:
         full_payload = _apply_login_rpt(dict(base_payload))
@@ -3173,6 +3181,104 @@ def verify_reset_token(token):
         return None
 
 
+# ================== FACEAUTH INTEGRATION (NON-BREAKING) ==================
+# These functions support optional face verification as a second auth layer.
+# Existing login flow continues to work unchanged.
+
+FACEAUTH_VERIFY_URL = os.getenv("FACEAUTH_VERIFY_URL", "https://biometrics.vtabsquare.com/external-verify")
+print(f"[FACEAUTH] Configured FACEAUTH_VERIFY_URL: {FACEAUTH_VERIFY_URL}")
+
+def generate_face_auth_token(user_data: dict, face_verified: bool = False) -> str:
+    """
+    Generate a JWT token for face authentication flow.
+    
+    Args:
+        user_data: Dict containing employee_id, email, role, name, etc.
+        face_verified: Boolean indicating if face has been verified.
+    
+    Returns:
+        JWT token string.
+    """
+    payload = {
+        "employee_id": user_data.get("employee_id"),
+        "email": user_data.get("email"),
+        "name": user_data.get("name"),
+        "role": user_data.get("role") or user_data.get("access_level"),
+        "access_level": user_data.get("access_level"),
+        "is_admin": user_data.get("is_admin", False),
+        "is_manager": user_data.get("is_manager", False),
+        "face_verified": face_verified,
+        "iat": datetime.now(timezone.utc),
+        "exp": datetime.now(timezone.utc) + timedelta(hours=12)
+    }
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
+
+def decode_token(token: str) -> dict:
+    """
+    Decode and verify a JWT token.
+    
+    Args:
+        token: JWT token string.
+    
+    Returns:
+        Decoded payload dict, or None if invalid/expired.
+    """
+    try:
+        decoded = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        return decoded
+    except jwt.ExpiredSignatureError:
+        return None
+    except jwt.InvalidTokenError:
+        return None
+    except Exception:
+        return None
+
+
+def face_required_optional(f):
+    """
+    Optional decorator that checks face_verified claim in JWT.
+    
+    If Authorization header is present:
+        - Decodes JWT and checks face_verified == True
+        - Returns 403 if face not verified
+    If no Authorization header:
+        - Allows request to proceed (backward compatible)
+    
+    Apply only to sensitive endpoints (dashboard, attendance).
+    """
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        auth_header = request.headers.get('Authorization')
+        
+        # No auth header = allow (backward compatible with existing flow)
+        if not auth_header:
+            return f(*args, **kwargs)
+        
+        # Has auth header = must be valid and face_verified
+        if not auth_header.startswith('Bearer '):
+            return jsonify({'error': 'Invalid authorization header format'}), 401
+        
+        token = auth_header.split(' ')[1]
+        decoded = decode_token(token)
+        
+        if not decoded:
+            return jsonify({'error': 'Invalid or expired token'}), 401
+        
+        if not decoded.get('face_verified'):
+            return jsonify({
+                'error': 'Face verification required',
+                'face_verified': False,
+                'face_verify_url': f"{FACEAUTH_VERIFY_URL}?token={token}"
+            }), 403
+        
+        # Attach decoded user to request context
+        request.face_auth_user = decoded
+        return f(*args, **kwargs)
+    
+    return decorated_function
+
+
 def _normalize_access_level(value):
     level = (value or "").strip().upper()
     if level in ("L1", "L2", "L3", "L4"):
@@ -3210,7 +3316,7 @@ def login():
 
         # USER NOT FOUND
         if not record:
-            return jsonify({"status": "failed", "message": "Invalid Username or Password"}), 401
+            return jsonify({"error": "Invalid credentials", "code": "INVALID_CREDENTIALS"}), 401
 
         record_id = record.get("crc6f_hr_login_detailsid")
         status = record.get("crc6f_user_status", "Active")
@@ -3242,10 +3348,7 @@ def login():
                     "message": "Default password detected. Create new password."
                 }), 200
             else:
-                return jsonify({
-                    "status": "failed",
-                    "message": "Invalid Username or Password"
-                }), 401
+                return jsonify({"error": "Invalid credentials", "code": "INVALID_CREDENTIALS"}), 401
 
         # ======================================================
         # RULE 2: NORMAL LOGIN
@@ -3327,19 +3430,51 @@ def login():
             # SUCCESS LOGIN RESPONSE
             # Use employee name from master table if available, otherwise fallback to login table
             display_name = employee_name or record.get('crc6f_employeename') or username
+            
+            # Build user data for JWT generation
+            user_data = {
+                "email": record.get("crc6f_username"),
+                "name": display_name,
+                "employee_id": employee_id_value,
+                "designation": employee_designation,
+                "access_level": access_level,
+                "role": access_level,
+                "is_admin": is_admin_flag,
+                "is_manager": is_manager_flag
+            }
+            
+            # Generate face auth token (face_verified=False initially)
+            face_auth_token = generate_face_auth_token(user_data, face_verified=False)
+            
+            # Build FaceAuth redirect URL with properly encoded params
+            import urllib.parse
+            
+            # URL-encode token with safe='' to encode all special chars (+, =, /)
+            encoded_token = urllib.parse.quote(face_auth_token, safe='')
+            
+            # Build callback URL for FaceAuth to redirect back to HR Tool
+            # Use FRONTEND_BASE_URL env var or default to localhost:3000
+            frontend_base = os.getenv("FRONTEND_BASE_URL", "http://localhost:3000")
+            callback_url = f"{frontend_base}/auth/face-callback"
+            encoded_callback = urllib.parse.quote(callback_url, safe='')
+            
+            face_verify_url = f"{FACEAUTH_VERIFY_URL}?token={encoded_token}&callback_url={encoded_callback}"
+            
+            print("[FACEAUTH] ORIGINAL TOKEN:", face_auth_token[:50], "...")
+            print("[FACEAUTH] ENCODED TOKEN:", encoded_token[:50], "...")
+            print("[FACEAUTH] CALLBACK URL:", callback_url)
+            print("[FACEAUTH] FINAL URL:", face_verify_url[:120], "...")
+            
             return jsonify({
                 "status": "success",
                 "message": f"Welcome, {display_name}",
-                "user": {
-                    "email": record.get("crc6f_username"),
-                    "name": display_name,
-                    "employee_id": employee_id_value,
-                    "designation": employee_designation,
-                    "access_level": access_level,
-                    "role": access_level,
-                    "is_admin": is_admin_flag,
-                    "is_manager": is_manager_flag
-                }
+                "user": user_data,
+                # FaceAuth integration fields (additive, non-breaking)
+                "token": face_auth_token,
+                "face_verified": False,
+                "face_verification_required": True,
+                "face_verify_url": face_verify_url,
+                "redirect_url": face_verify_url
             }), 200
 
         # ======================================================
@@ -3375,13 +3510,160 @@ def login():
                 "message": "Account locked after 3 attempts"
             }), 403
 
-        return jsonify({
-            "status": "failed",
-            "message": "Invalid Username or Password"
-        }), 401
+        return jsonify({"error": "Invalid credentials", "code": "INVALID_CREDENTIALS"}), 401
 
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/api/auth/face-verified", methods=["POST"])
+def face_verified_callback():
+    """
+    Endpoint called by FaceAuth after successful face verification.
+    
+    Input JSON:
+        { "employee_id": "EMP001" }
+        OR
+        { "token": "<jwt_token>" }  (to extract employee_id from token)
+    
+    Returns:
+        { "success": true, "token": "<new_jwt_with_face_verified_true>" }
+    """
+    try:
+        data = request.get_json(force=True) or {}
+        employee_id = data.get("employee_id")
+        incoming_token = data.get("token")
+        
+        # If token provided, decode it to get employee_id
+        if incoming_token and not employee_id:
+            decoded = decode_token(incoming_token)
+            if decoded:
+                employee_id = decoded.get("employee_id")
+        
+        if not employee_id:
+            return jsonify({
+                "success": False,
+                "error": "employee_id is required"
+            }), 400
+        
+        # Normalize employee_id
+        normalized_emp_id = employee_id.strip().upper()
+        
+        # Fetch employee data from Dataverse
+        token = get_access_token()
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            "OData-MaxVersion": "4.0",
+            "OData-Version": "4.0",
+            "Accept": "application/json"
+        }
+        
+        entity_set = get_employee_entity_set(token)
+        field_map = get_field_map(entity_set)
+        
+        id_field = field_map.get("id")
+        email_field = field_map.get("email")
+        desig_field = field_map.get("designation")
+        fullname_field = field_map.get("fullname")
+        firstname_field = field_map.get("firstname")
+        lastname_field = field_map.get("lastname")
+        
+        if not id_field:
+            return jsonify({
+                "success": False,
+                "error": "Employee ID field not configured"
+            }), 500
+        
+        # Query employee by employee_id
+        select_cols = [id_field]
+        if email_field:
+            select_cols.append(email_field)
+        if desig_field:
+            select_cols.append(desig_field)
+        if fullname_field:
+            select_cols.append(fullname_field)
+        if firstname_field:
+            select_cols.append(firstname_field)
+        if lastname_field:
+            select_cols.append(lastname_field)
+        
+        url = (
+            f"{BASE_URL}/{entity_set}"
+            f"?$top=1&$select={','.join(select_cols)}"
+            f"&$filter={id_field} eq '{normalized_emp_id}'"
+        )
+        
+        resp = get_dataverse_session().get(url, headers=headers, timeout=15)
+        if resp.status_code != 200:
+            return jsonify({
+                "success": False,
+                "error": f"Failed to fetch employee: {resp.status_code}"
+            }), 500
+        
+        vals = resp.json().get("value", [])
+        if not vals:
+            return jsonify({
+                "success": False,
+                "error": "Employee not found"
+            }), 404
+        
+        emp = vals[0]
+        employee_email = emp.get(email_field) if email_field else None
+        employee_designation = emp.get(desig_field) if desig_field else None
+        employee_name = _get_employee_display_name(emp, field_map)
+        
+        # Fetch access level from login table
+        access_level = "L1"
+        is_admin_flag = False
+        is_manager_flag = False
+        
+        if employee_email:
+            try:
+                login_record = _fetch_login_by_username(employee_email, token, headers)
+                if login_record:
+                    access_level = _normalize_access_level(login_record.get("crc6f_accesslevel"))
+                    is_admin_flag = access_level == "L3"
+                    is_manager_flag = access_level in ("L2", "L3")
+            except Exception:
+                pass
+        
+        # Check designation for admin/manager
+        designation_lower = (employee_designation or "").lower()
+        if "admin" in designation_lower:
+            is_admin_flag = True
+        if "manager" in designation_lower:
+            is_manager_flag = True
+        
+        # Build user data and generate new token with face_verified=True
+        user_data = {
+            "employee_id": normalized_emp_id,
+            "email": employee_email,
+            "name": employee_name,
+            "designation": employee_designation,
+            "access_level": access_level,
+            "role": access_level,
+            "is_admin": is_admin_flag,
+            "is_manager": is_manager_flag
+        }
+        
+        new_token = generate_face_auth_token(user_data, face_verified=True)
+        
+        print(f"[FACEAUTH] Face verified for employee: {normalized_emp_id}")
+        
+        return jsonify({
+            "success": True,
+            "token": new_token,
+            "face_verified": True,
+            "user": user_data
+        }), 200
+        
+    except Exception as e:
+        print(f"[FACEAUTH] Error in face-verified callback: {e}")
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
 
 
 @app.route("/api/forgot-password", methods=["POST"])

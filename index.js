@@ -29,6 +29,7 @@ import { initAiAssistant } from './components/AiAssistant.js';
 import { deriveRoleInfo } from './utils/accessHelpers.js';
 import { runWithSubmissionLoading } from './utils/submissionLoading.js';
 import { API_BASE_URL as CONFIG_API_BASE_URL } from './config.js';
+import { initFaceAuthAlerts, refreshFaceAuthStatus, getFaceAuthReturnUrl } from './features/faceAuthAlert.js';
 
 const normalizeApiBase = () => String(CONFIG_API_BASE_URL).replace(/\/$/, '');
 
@@ -221,7 +222,7 @@ if (typeof window !== 'undefined' && typeof window.fetch === 'function') {
       }
 
       if (urlString && (urlString.startsWith('http://localhost:5000') || urlString.startsWith('http://127.0.0.1:5000'))) {
-        const normalizedBase = String(API_BASE_URL).replace(/\/$/, '');
+        const normalizedBase = String(CONFIG_API_BASE_URL).replace(/\/$/, '');
         const path = urlString.replace(/^https?:\/\/(localhost|127\.0\.0\.1):5000/, '');
         const resolved = normalizedBase + path;
 
@@ -240,7 +241,7 @@ if (typeof window !== 'undefined' && typeof window.fetch === 'function') {
   };
 
   try {
-    window.API_BASE_URL = API_BASE_URL;
+    window.API_BASE_URL = CONFIG_API_BASE_URL;
   } catch {
     // ignore if window is not writable
   }
@@ -770,7 +771,135 @@ const setupRealtimeCallClient = () => {
 
 // --- INITIALIZATION ---
 const AUTH_VERSION = '2026-02-27-identity-fix';
+
+// Decode JWT payload without verification (base64 decode only)
+const decodeJwtPayload = (token) => {
+  try {
+    const parts = token.split('.');
+    if (parts.length !== 3) return null;
+    const payload = parts[1];
+    const base64 = payload.replace(/-/g, '+').replace(/_/g, '/');
+    const jsonPayload = decodeURIComponent(
+      atob(base64)
+        .split('')
+        .map(c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
+        .join('')
+    );
+    return JSON.parse(jsonPayload);
+  } catch (e) {
+    console.warn('[FACEAUTH] Failed to decode JWT payload:', e);
+    return null;
+  }
+};
+
+// Handle /auth/face-callback route (when returning from FaceAuth)
+const handleFaceAuthCallback = () => {
+  try {
+    const path = window.location.pathname;
+    if (path === '/auth/face-callback' || path === '/auth/face-callback/') {
+      const urlParams = new URLSearchParams(window.location.search);
+      const token = urlParams.get('token');
+      const faceVerified = urlParams.get('face_verified');
+      
+      console.log('[FACEAUTH] Face callback route hit, token:', !!token, 'verified:', faceVerified);
+      
+      if (faceVerified !== 'true' || !token) {
+        console.warn('[FACEAUTH] Face verification failed or missing token');
+        window.location.href = '/login.html?error=face_verification_failed';
+        return true;
+      }
+      
+      const decoded = decodeJwtPayload(token);
+      if (!decoded) {
+        console.warn('[FACEAUTH] Failed to decode token');
+        window.location.href = '/login.html?error=invalid_token';
+        return true;
+      }
+      
+      const user = {
+        name: decoded.name || decoded.email || 'User',
+        email: decoded.email,
+        id: decoded.employee_id,
+        employee_id: decoded.employee_id,
+        designation: decoded.designation,
+        role: decoded.role || decoded.access_level,
+        access_level: decoded.access_level,
+        is_admin: decoded.is_admin,
+        is_manager: decoded.is_manager,
+        initials: (decoded.name || 'U').split(' ').map(x => x[0]).join('').slice(0, 2).toUpperCase()
+      };
+      
+      localStorage.setItem('face_auth_token', token);
+      localStorage.setItem('authToken', token);
+      localStorage.setItem('face_verified', 'true');
+      localStorage.setItem('auth', JSON.stringify({ authenticated: true, user }));
+      localStorage.setItem('auth_version', AUTH_VERSION);
+      localStorage.setItem('role', user.role || 'L1');
+      localStorage.removeItem('pending_user');
+      
+      // Store the current timestamp as last verification time (resets the 2-hour timer)
+      localStorage.setItem('last_face_verified_at', String(Date.now()));
+      
+      // Refresh FaceAuth alert status with new token (clears alert)
+      refreshFaceAuthStatus();
+      
+      console.log('[FACEAUTH] User authenticated, redirecting to dashboard');
+      window.location.href = '/index.html#/';
+      return true;
+    }
+    return false;
+  } catch (e) {
+    console.error('[FACEAUTH] Error in face callback handler:', e);
+    window.location.href = '/login.html?error=callback_error';
+    return true;
+  }
+};
+
+// Handle face auth token from URL (legacy support)
+const handleFaceAuthTokenFromUrl = () => {
+  try {
+    if (handleFaceAuthCallback()) return;
+    
+    const urlParams = new URLSearchParams(window.location.search);
+    const token = urlParams.get('token');
+    if (token) {
+      localStorage.setItem('face_auth_token', token);
+      localStorage.setItem('face_verified', 'true');
+      
+      const decoded = decodeJwtPayload(token);
+      if (decoded) {
+        const user = {
+          name: decoded.name || decoded.email || 'User',
+          email: decoded.email,
+          id: decoded.employee_id,
+          employee_id: decoded.employee_id,
+          designation: decoded.designation,
+          role: decoded.role || decoded.access_level,
+          access_level: decoded.access_level,
+          is_admin: decoded.is_admin,
+          is_manager: decoded.is_manager,
+          initials: (decoded.name || 'U').split(' ').map(x => x[0]).join('').slice(0, 2).toUpperCase()
+        };
+        localStorage.setItem('auth', JSON.stringify({ authenticated: true, user }));
+        localStorage.setItem('auth_version', AUTH_VERSION);
+        localStorage.setItem('authToken', token);
+        localStorage.removeItem('pending_user');
+      }
+      
+      const url = new URL(window.location.href);
+      url.searchParams.delete('token');
+      url.searchParams.delete('face_verified');
+      window.history.replaceState({}, document.title, url.pathname + url.hash);
+    }
+  } catch (e) {
+    console.warn('[FACEAUTH] Error handling token from URL:', e);
+  }
+};
+
 const init = async () => {
+  // Handle face auth callback/token from URL first
+  handleFaceAuthTokenFromUrl();
+  
   // Force re-login if auth version changed (e.g. after identity wipe/fix)
   const storedAuthVersion = localStorage.getItem('auth_version');
   if (storedAuthVersion !== AUTH_VERSION) {
@@ -881,6 +1010,9 @@ const init = async () => {
   // Start notification polling for real-time updates
   startNotificationPolling();
 
+  // Initialize FaceAuth re-verification alert system
+  initFaceAuthAlerts();
+
   // Global event listeners (delegation)
   document.body.addEventListener('click', (e) => {
     const target = e.target;
@@ -912,6 +1044,20 @@ const init = async () => {
       return;
     }
     if (target.closest("#add-employee-btn")) showAddEmployeeModal();
+    // FaceAuth Admin button - redirect to FaceAuth admin dashboard with SSO token
+    if (target.closest("#faceauth-admin-btn")) {
+      e.preventDefault();
+      const token = localStorage.getItem('face_auth_token') || localStorage.getItem('authToken');
+      if (!token) {
+        alert('Session expired. Please login again.');
+        window.location.href = '/login.html';
+        return;
+      }
+      // Redirect to FaceAuth admin SSO endpoint with token
+      const faceAuthAdminUrl = `https://biometrics.vtabsquare.com/admin-sso?token=${encodeURIComponent(token)}`;
+      window.open(faceAuthAdminUrl, '_blank');
+      return;
+    }
     if (target.id === "apply-leave-btn" || target.closest("#apply-leave-btn")) {
       showApplyLeaveModal();
     }

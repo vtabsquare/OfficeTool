@@ -1182,6 +1182,8 @@ export const renderMyTimesheetPage = async () => {
     // Load projects and tasks for dropdowns (cached for speed)
     let projects = [];
     let tasks = [];
+    let myActiveTasks = []; // Tasks from "My Tasks" page (active assignments)
+    
     try {
         const cachedProj = sessionStorage.getItem('ts_projects_cache');
         if (cachedProj) { projects = JSON.parse(cachedProj); } 
@@ -1206,6 +1208,33 @@ export const renderMyTimesheetPage = async () => {
             try { sessionStorage.setItem('ts_tasks_cache', JSON.stringify(tasks)); } catch { }
         }
     }
+    
+    // Fetch active tasks from "My Tasks" API (these are the tasks user is currently working on)
+    const fetchMyActiveTasks = async () => {
+        try {
+            const params = new URLSearchParams();
+            if (empId) params.set('user_id', String(empId).trim());
+            if (user.name) params.set('user_name', String(user.name).trim());
+            if (user.email) params.set('user_email', String(user.email || '').trim());
+            params.set('role', user.is_admin ? 'l3' : 'l1');
+            
+            const res = await fetch(`${API}/my-tasks?${params.toString()}`);
+            const data = await res.json().catch(() => ({ success: false }));
+            
+            if (res.ok && data.success) {
+                myActiveTasks = (data.tasks || []).filter(t => {
+                    // Only include tasks with active statuses
+                    const status = String(t.task_status || '').toLowerCase();
+                    return status === 'in progress' || status === 'hold' || status === 'new' || status === 'open';
+                });
+                console.log('[TIMESHEET] Fetched active tasks from My Tasks:', myActiveTasks.length);
+            }
+        } catch (e) {
+            console.warn('[TIMESHEET] Failed to fetch My Tasks:', e);
+        }
+    };
+    
+    await fetchMyActiveTasks();
 
     const refreshProjectTaskSources = async () => {
         const [projRes, taskRes] = await Promise.allSettled([
@@ -1502,16 +1531,33 @@ export const renderMyTimesheetPage = async () => {
             }
         });
 
-        gridRows = Object.values(grouped);
-        // Auto-sync: ensure all tasks assigned to this user appear as rows (even with 0 hours)
+        // Build set of active task keys from "My Tasks" for filtering
+        const myActiveTaskKeys = new Set();
+        (myActiveTasks || []).forEach(t => {
+            const key = `${t.project_id || ''}|${taskIdentityFor({ task_guid: t.guid, task_id: t.task_id })}`;
+            myActiveTaskKeys.add(key);
+        });
+        console.log('[TIMESHEET] Active task keys from My Tasks:', myActiveTaskKeys.size);
+
+        // Filter grouped logs to only include:
+        // 1. Tasks that are in "My Tasks" (active assignments)
+        // 2. Tasks that have logged time THIS WEEK (from timer)
+        const allGroupedRows = Object.values(grouped);
+        gridRows = allGroupedRows.filter(row => {
+            const key = rowKeyFor(row);
+            // Always include if task is in My Tasks
+            if (myActiveTaskKeys.has(key)) return true;
+            // Include if task has any logged time this week
+            const hasLoggedTime = (row.hours || []).some(h => Number(h) > 0);
+            return hasLoggedTime;
+        });
+
+        console.log('[TIMESHEET] Filtered grid rows:', gridRows.length, 'from', allGroupedRows.length, 'total');
+
+        // Add active tasks from "My Tasks" that don't have logs yet (with 0 hours)
         try {
-            const upEmp = String(empId || '').toUpperCase();
-            const assignedTasks = (tasks || []).filter(t => {
-                const asg = String(t.assigned_to || '');
-                return asg.toUpperCase().includes(upEmp) || (!!userNameLc && asg.trim().toLowerCase().includes(userNameLc));
-            });
-            const existingKeys = new Set(Object.keys(grouped));
-            assignedTasks.forEach(t => {
+            const existingKeys = new Set(gridRows.map(r => rowKeyFor(r)));
+            (myActiveTasks || []).forEach(t => {
                 const key = `${t.project_id || ''}|${taskIdentityFor({ task_guid: t.guid, task_id: t.task_id })}`;
                 if (hiddenRowSet.has(key)) return;
                 if (!existingKeys.has(key)) {
@@ -1523,12 +1569,14 @@ export const renderMyTimesheetPage = async () => {
                         board_id: t.board_id || '',
                         billing: 'Non-billable',
                         hours: Array(7).fill(0),
-                        dayLogIds: Array(7).fill('')
+                        dayLogIds: Array(7).fill(''),
+                        _fromMyTasks: true // Flag to identify tasks from My Tasks
                     });
                     existingKeys.add(key);
                 }
             });
         } catch { }
+
         // Append any manual rows that don't already exist by key
         if (Array.isArray(manualRows) && manualRows.length) {
             const existingKeys = new Set((gridRows || []).map(r => rowKeyFor(r)));
