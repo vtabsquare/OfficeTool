@@ -3763,6 +3763,10 @@ def get_faceauth_settings():
             "employees": employees
         }), 200
         
+    except Exception as e:
+        print(f"[FACEAUTH-SETTINGS] Error fetching: {e}")
+        return jsonify({"error": str(e)}), 500
+
 
 @app.route("/api/faceauth-settings/<employee_id>", methods=["PUT"])
 def update_faceauth_setting(employee_id):
