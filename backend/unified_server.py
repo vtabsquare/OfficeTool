@@ -3759,10 +3759,6 @@ def get_faceauth_settings():
             "employees": employees
         }), 200
         
-    except Exception as e:
-        print(f"[FACEAUTH-SETTINGS] Error: {e}")
-        return jsonify({"error": str(e)}), 500
-
 
 @app.route("/api/faceauth-settings/<employee_id>", methods=["PUT"])
 def update_faceauth_setting(employee_id):
@@ -3794,19 +3790,27 @@ def update_faceauth_setting(employee_id):
         id_field = field_map.get("id")
         primary_field = field_map.get("primary", "crc6f_table12id")
         
+        print(f"[FACEAUTH-SETTINGS] Updating {employee_id}: entity_set={entity_set}, id_field={id_field}, primary_field={primary_field}")
+        
         # First, find the employee record
         safe_emp_id = employee_id.replace("'", "''").strip().upper()
         url = f"{BASE_URL}/{entity_set}?$filter={id_field} eq '{safe_emp_id}'&$select={primary_field},{id_field}&$top=1"
         
+        print(f"[FACEAUTH-SETTINGS] Lookup URL: {url}")
+        
         resp = get_dataverse_session().get(url, headers=headers, timeout=15)
         if resp.status_code != 200:
+            print(f"[FACEAUTH-SETTINGS] Lookup failed: {resp.status_code} {resp.text}")
             return jsonify({"error": f"Failed to find employee: {resp.status_code}"}), 500
         
         vals = resp.json().get("value", [])
         if not vals:
+            print(f"[FACEAUTH-SETTINGS] Employee not found: {employee_id}")
             return jsonify({"error": "Employee not found"}), 404
         
         record_id = vals[0].get(primary_field)
+        print(f"[FACEAUTH-SETTINGS] Found record: {vals[0]}, record_id={record_id}")
+        
         if not record_id:
             return jsonify({"error": "Could not find record ID"}), 500
         
@@ -3824,12 +3828,17 @@ def update_faceauth_setting(employee_id):
             "If-Match": "*"
         }
         
+        print(f"[FACEAUTH-SETTINGS] Update URL: {update_url}")
+        print(f"[FACEAUTH-SETTINGS] Update payload: {update_payload}")
+        
         update_resp = get_dataverse_session().patch(update_url, headers=update_headers, json=update_payload, timeout=15)
+        
+        print(f"[FACEAUTH-SETTINGS] Update response: {update_resp.status_code} {update_resp.text[:500] if update_resp.text else ''}")
         
         if update_resp.status_code not in (200, 204):
             return jsonify({"error": f"Failed to update: {update_resp.status_code} {update_resp.text}"}), 500
         
-        print(f"[FACEAUTH-SETTINGS] Updated face_auth_required={face_auth_required} for {employee_id}")
+        print(f"[FACEAUTH-SETTINGS] Successfully updated face_auth_required={face_auth_required} for {employee_id}")
         
         return jsonify({
             "success": True,
@@ -3838,7 +3847,9 @@ def update_faceauth_setting(employee_id):
         }), 200
         
     except Exception as e:
+        import traceback
         print(f"[FACEAUTH-SETTINGS] Error updating: {e}")
+        print(f"[FACEAUTH-SETTINGS] Traceback: {traceback.format_exc()}")
         return jsonify({"error": str(e)}), 500
 
 
