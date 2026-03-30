@@ -44,6 +44,7 @@ const loaders = {
   "/attendance-holidays": async () => (await import('./pages/holidays.js')).renderHolidaysPage,
   "/onboarding": async () => (await import('./pages/onboarding.js')).renderOnboardingPage,
   "/interns/detail": async () => (await import('./pages/internDetail.js')).renderInternDetailPage,
+  "/faceauth-settings": async () => (await import('./pages/faceAuthSettings.js')).renderFaceAuthSettings,
 };
 
 export const router = async () => {
@@ -154,6 +155,12 @@ export const router = async () => {
   }
   if (path === '/onboarding') {
     if (!isManagerOrAdmin()) {
+      renderAccessDenied("#/");
+      return;
+    }
+  }
+  if (path === '/faceauth-settings') {
+    if (!isAdminUser()) {
       renderAccessDenied("#/");
       return;
     }

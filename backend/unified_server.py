@@ -3378,6 +3378,7 @@ def login():
             employee_name = None
             is_admin_flag = access_level == "L3"
             is_manager_flag = access_level in ("L2", "L3")
+            face_auth_required_for_employee = True  # Default to True
 
             try:
                 entity_set = get_employee_entity_set(token)
@@ -3401,6 +3402,8 @@ def login():
                         select_cols.append(lastname_field)
                     if desig_field:
                         select_cols.append(desig_field)
+                    # Add face auth required field
+                    select_cols.append("crc6f_faceauthrequired")
 
                     url_emp = (
                         f"{BASE_URL}/{entity_set}"
@@ -3416,6 +3419,11 @@ def login():
                             employee_id_value = emp.get(id_field)
                             employee_designation = emp.get(desig_field)
                             employee_name = _get_employee_display_name(emp, field_map)
+                            # Check if face auth is required for this employee (default: True)
+                            face_auth_required_for_employee = emp.get("crc6f_faceauthrequired", True)
+                            # Handle None/null values - default to True
+                            if face_auth_required_for_employee is None:
+                                face_auth_required_for_employee = True
 
                             designation_lower = (employee_designation or "").lower()
                             if "admin" in designation_lower:
@@ -3460,11 +3468,27 @@ def login():
             
             face_verify_url = f"{FACEAUTH_VERIFY_URL}?token={encoded_token}&callback_url={encoded_callback}"
             
+            print(f"[FACEAUTH] Face auth required for employee: {face_auth_required_for_employee}")
             print("[FACEAUTH] ORIGINAL TOKEN:", face_auth_token[:50], "...")
             print("[FACEAUTH] ENCODED TOKEN:", encoded_token[:50], "...")
             print("[FACEAUTH] CALLBACK URL:", callback_url)
             print("[FACEAUTH] FINAL URL:", face_verify_url[:120], "...")
             
+            # If face auth is NOT required for this employee, skip face verification
+            if not face_auth_required_for_employee:
+                # Generate token with face_verified=True (bypass face auth)
+                face_auth_token_verified = generate_face_auth_token(user_data, face_verified=True)
+                print(f"[FACEAUTH] Skipping face verification for employee (face_auth_required=False)")
+                return jsonify({
+                    "status": "success",
+                    "message": f"Welcome, {display_name}",
+                    "user": user_data,
+                    "token": face_auth_token_verified,
+                    "face_verified": True,
+                    "face_verification_required": False
+                }), 200
+            
+            # Face auth IS required - redirect to FaceAuth
             return jsonify({
                 "status": "success",
                 "message": f"Welcome, {display_name}",
@@ -3664,6 +3688,158 @@ def face_verified_callback():
             "success": False,
             "error": str(e)
         }), 500
+
+
+# ================== FACEAUTH SETTINGS API ==================
+
+@app.route("/api/faceauth-settings", methods=["GET"])
+def get_faceauth_settings():
+    """
+    Get FaceAuth settings for all employees.
+    Returns list of employees with their face_auth_required status.
+    """
+    try:
+        token = get_access_token()
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            "OData-MaxVersion": "4.0",
+            "OData-Version": "4.0",
+            "Accept": "application/json"
+        }
+        
+        entity_set = get_employee_entity_set(token)
+        field_map = get_field_map(entity_set)
+        
+        id_field = field_map.get("id")
+        email_field = field_map.get("email")
+        fullname_field = field_map.get("fullname")
+        firstname_field = field_map.get("firstname")
+        lastname_field = field_map.get("lastname")
+        
+        select_cols = [id_field]
+        if email_field:
+            select_cols.append(email_field)
+        if fullname_field:
+            select_cols.append(fullname_field)
+        if firstname_field:
+            select_cols.append(firstname_field)
+        if lastname_field:
+            select_cols.append(lastname_field)
+        select_cols.append("crc6f_faceauthrequired")
+        
+        # Also get the primary key field for updates
+        primary_field = field_map.get("primary", "crc6f_table12id")
+        select_cols.append(primary_field)
+        
+        url = f"{BASE_URL}/{entity_set}?$select={','.join(select_cols)}&$top=500"
+        
+        resp = get_dataverse_session().get(url, headers=headers, timeout=30)
+        if resp.status_code != 200:
+            return jsonify({"error": f"Failed to fetch employees: {resp.status_code}"}), 500
+        
+        employees = []
+        for emp in resp.json().get("value", []):
+            name = _get_employee_display_name(emp, field_map)
+            face_auth_required = emp.get("crc6f_faceauthrequired")
+            # Default to True if not set
+            if face_auth_required is None:
+                face_auth_required = True
+            
+            employees.append({
+                "employee_id": emp.get(id_field),
+                "name": name,
+                "email": emp.get(email_field) if email_field else None,
+                "face_auth_required": face_auth_required,
+                "record_id": emp.get(primary_field)
+            })
+        
+        return jsonify({
+            "success": True,
+            "employees": employees
+        }), 200
+        
+    except Exception as e:
+        print(f"[FACEAUTH-SETTINGS] Error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/faceauth-settings/<employee_id>", methods=["PUT"])
+def update_faceauth_setting(employee_id):
+    """
+    Update FaceAuth setting for a specific employee.
+    
+    Input JSON:
+        { "face_auth_required": true/false }
+    """
+    try:
+        data = request.get_json(force=True) or {}
+        face_auth_required = data.get("face_auth_required")
+        
+        if face_auth_required is None:
+            return jsonify({"error": "face_auth_required is required"}), 400
+        
+        token = get_access_token()
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            "OData-MaxVersion": "4.0",
+            "OData-Version": "4.0",
+            "Accept": "application/json"
+        }
+        
+        entity_set = get_employee_entity_set(token)
+        field_map = get_field_map(entity_set)
+        
+        id_field = field_map.get("id")
+        primary_field = field_map.get("primary", "crc6f_table12id")
+        
+        # First, find the employee record
+        safe_emp_id = employee_id.replace("'", "''").strip().upper()
+        url = f"{BASE_URL}/{entity_set}?$filter={id_field} eq '{safe_emp_id}'&$select={primary_field},{id_field}&$top=1"
+        
+        resp = get_dataverse_session().get(url, headers=headers, timeout=15)
+        if resp.status_code != 200:
+            return jsonify({"error": f"Failed to find employee: {resp.status_code}"}), 500
+        
+        vals = resp.json().get("value", [])
+        if not vals:
+            return jsonify({"error": "Employee not found"}), 404
+        
+        record_id = vals[0].get(primary_field)
+        if not record_id:
+            return jsonify({"error": "Could not find record ID"}), 500
+        
+        # Update the face_auth_required field
+        update_url = f"{BASE_URL}/{entity_set}({record_id})"
+        update_payload = {
+            "crc6f_faceauthrequired": bool(face_auth_required)
+        }
+        
+        update_headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            "OData-MaxVersion": "4.0",
+            "OData-Version": "4.0",
+            "If-Match": "*"
+        }
+        
+        update_resp = get_dataverse_session().patch(update_url, headers=update_headers, json=update_payload, timeout=15)
+        
+        if update_resp.status_code not in (200, 204):
+            return jsonify({"error": f"Failed to update: {update_resp.status_code} {update_resp.text}"}), 500
+        
+        print(f"[FACEAUTH-SETTINGS] Updated face_auth_required={face_auth_required} for {employee_id}")
+        
+        return jsonify({
+            "success": True,
+            "employee_id": employee_id,
+            "face_auth_required": face_auth_required
+        }), 200
+        
+    except Exception as e:
+        print(f"[FACEAUTH-SETTINGS] Error updating: {e}")
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/forgot-password", methods=["POST"])

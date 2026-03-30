@@ -131,6 +131,7 @@ export const getSidebarHTML = () => {
             <ul class="nav-submenu">
                 <li><a href="#/leave-settings" class="nav-link" data-page="leave-settings">Leave Settings</a></li>
                 <li><a href="#/login-settings" class="nav-link" data-page="login-settings">Login Settings</a></li>
+                <li><a href="#/faceauth-settings" class="nav-link" data-page="faceauth-settings">FaceAuth Settings</a></li>
             </ul>
         </li>
         <li><a href="#" class="nav-link" id="faceauth-admin-btn"><i class="fa-solid fa-fingerprint"></i> FaceAuth Admin</a></li>`
