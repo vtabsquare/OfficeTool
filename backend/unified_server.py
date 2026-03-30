@@ -3207,6 +3207,7 @@ def generate_face_auth_token(user_data: dict, face_verified: bool = False) -> st
         "access_level": user_data.get("access_level"),
         "is_admin": user_data.get("is_admin", False),
         "is_manager": user_data.get("is_manager", False),
+        "face_auth_required": user_data.get("face_auth_required", True),
         "face_verified": face_verified,
         "iat": datetime.now(timezone.utc),
         "exp": datetime.now(timezone.utc) + timedelta(hours=12)
@@ -3450,7 +3451,8 @@ def login():
                 "access_level": access_level,
                 "role": access_level,
                 "is_admin": is_admin_flag,
-                "is_manager": is_manager_flag
+                "is_manager": is_manager_flag,
+                "face_auth_required": face_auth_required_for_employee
             }
             
             # Generate face auth token (face_verified=False initially)
@@ -3638,6 +3640,11 @@ def face_verified_callback():
         employee_email = emp.get(email_field) if email_field else None
         employee_designation = emp.get(desig_field) if desig_field else None
         employee_name = _get_employee_display_name(emp, field_map)
+        face_auth_raw = emp.get("crc6f_faceauthrequired")
+        if face_auth_raw is None or face_auth_raw == "" or str(face_auth_raw).lower() in ("yes", "true", "1"):
+            face_auth_required_for_employee = True
+        else:
+            face_auth_required_for_employee = False
         
         # Fetch access level from login table
         access_level = "L1"
@@ -3670,7 +3677,8 @@ def face_verified_callback():
             "access_level": access_level,
             "role": access_level,
             "is_admin": is_admin_flag,
-            "is_manager": is_manager_flag
+            "is_manager": is_manager_flag,
+            "face_auth_required": face_auth_required_for_employee
         }
         
         new_token = generate_face_auth_token(user_data, face_verified=True)

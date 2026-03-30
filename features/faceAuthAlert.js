@@ -58,6 +58,16 @@ function decodeJwtPayload(token) {
     }
 }
 
+function isFaceAuthRequiredForCurrentUser() {
+    const token = localStorage.getItem('face_auth_token');
+    if (!token) return true;
+
+    const payload = decodeJwtPayload(token);
+    if (!payload) return true;
+
+    return payload.face_auth_required !== false;
+}
+
 /**
  * Get the last verification timestamp
  * Priority: localStorage last_face_verified_at > JWT last_verified > JWT iat
@@ -92,6 +102,16 @@ function getLastVerifiedTimestamp() {
  * Returns: { status, remainingMs, elapsedMs, lastVerified }
  */
 export function checkFaceAuthStatus() {
+    if (!isFaceAuthRequiredForCurrentUser()) {
+        return {
+            status: 'disabled',
+            remainingMs: 0,
+            elapsedMs: 0,
+            overdueMs: 0,
+            lastVerified: null
+        };
+    }
+
     const lastVerified = getLastVerifiedTimestamp();
     
     if (!lastVerified) {
@@ -706,8 +726,8 @@ function updateAlertUI(statusData) {
         return;
     }
     
-    // Don't show alert if verified or unknown
-    if (status === 'verified' || status === 'unknown') {
+    // Don't show alert if verified, unknown, or disabled
+    if (status === 'verified' || status === 'unknown' || status === 'disabled') {
         if (alertElement) {
             alertElement.classList.remove('visible', 'due_soon', 'overdue', 'missed');
         }
@@ -818,6 +838,17 @@ function redirectToFaceAuth() {
 function checkAndUpdate() {
     // Only check if user is authenticated
     if (!state.authenticated && !localStorage.getItem('face_auth_token')) {
+        return;
+    }
+
+    if (!isFaceAuthRequiredForCurrentUser()) {
+        updateAlertUI({
+            status: 'disabled',
+            remainingMs: 0,
+            elapsedMs: 0,
+            overdueMs: 0,
+            lastVerified: null
+        });
         return;
     }
     
