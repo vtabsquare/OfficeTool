@@ -3,7 +3,7 @@
  * This enables notifications even when the browser is minimized
  */
 
-const FACEAUTH_VERIFY_URL = 'https://biometric-attendance-system-tsca.onrender.com/external-verify';
+const FACEAUTH_VERIFY_URL = 'https://biometrics.vtabsquare.com/external-verify';
 
 // Listen for push events (for future server-side push)
 self.addEventListener('push', (event) => {
@@ -41,7 +41,7 @@ self.addEventListener('notificationclick', (event) => {
             .then((windowClients) => {
                 // Check if there's already a window open
                 for (const client of windowClients) {
-                    if (client.url.includes('localhost:3000') || client.url.includes('index.html')) {
+                    if (client.url.includes('localhost:3000') || client.url.includes('officeportal.vtabsquare.com') || client.url.includes('index.html')) {
                         client.focus();
                         return client;
                     }
