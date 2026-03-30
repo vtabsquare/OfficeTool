@@ -3420,10 +3420,12 @@ def login():
                             employee_designation = emp.get(desig_field)
                             employee_name = _get_employee_display_name(emp, field_map)
                             # Check if face auth is required for this employee (default: True)
-                            face_auth_required_for_employee = emp.get("crc6f_faceauthrequired", True)
-                            # Handle None/null values - default to True
-                            if face_auth_required_for_employee is None:
+                            face_auth_raw = emp.get("crc6f_faceauthrequired")
+                            # Convert string "Yes"/"No" to boolean, default to True if not set
+                            if face_auth_raw is None or face_auth_raw == "" or str(face_auth_raw).lower() in ("yes", "true", "1"):
                                 face_auth_required_for_employee = True
+                            else:
+                                face_auth_required_for_employee = False
 
                             designation_lower = (employee_designation or "").lower()
                             if "admin" in designation_lower:
@@ -3741,10 +3743,12 @@ def get_faceauth_settings():
         employees = []
         for emp in resp.json().get("value", []):
             name = _get_employee_display_name(emp, field_map)
-            face_auth_required = emp.get("crc6f_faceauthrequired")
-            # Default to True if not set
-            if face_auth_required is None:
+            face_auth_raw = emp.get("crc6f_faceauthrequired")
+            # Convert string "Yes"/"No" to boolean, default to True if not set
+            if face_auth_raw is None or face_auth_raw == "" or str(face_auth_raw).lower() in ("yes", "true", "1"):
                 face_auth_required = True
+            else:
+                face_auth_required = False
             
             employees.append({
                 "employee_id": emp.get(id_field),
@@ -3816,8 +3820,9 @@ def update_faceauth_setting(employee_id):
         
         # Update the face_auth_required field
         update_url = f"{BASE_URL}/{entity_set}({record_id})"
+        # Dataverse column is a text field, so use "Yes"/"No" strings
         update_payload = {
-            "crc6f_faceauthrequired": bool(face_auth_required)
+            "crc6f_faceauthrequired": "Yes" if face_auth_required else "No"
         }
         
         update_headers = {
