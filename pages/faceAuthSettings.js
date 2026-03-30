@@ -3,7 +3,7 @@
 import { state } from '../state.js';
 import { getPageContentHTML } from '../utils.js';
 import { isAdminUser } from '../utils/accessControl.js';
-import { API_BASE_URL } from '../features/accessHelpers.js';
+import { API_BASE_URL } from '../config.js';
 
 let cachedEmployees = [];
 let isLoading = false;
