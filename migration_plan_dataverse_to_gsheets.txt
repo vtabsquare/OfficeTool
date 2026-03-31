@@ -1,0 +1,455 @@
+================================================================================
+                  DATASPACE TO GOOGLE SHEETS MIGRATION PLAN
+                              (1-2 Weeks Timeline)
+================================================================================
+
+OVERVIEW
+--------
+This document outlines a comprehensive migration plan to transition the OfficeTool
+web application from Microsoft Dataverse to Google Sheets as the primary data
+storage backend. The migration will be executed in phases to minimize downtime
+and ensure data integrity.
+
+TECHNICAL STACK CHANGES
+----------------------
+FROM: Dataverse (Microsoft Power Platform) + Azure Functions
+TO:   Google Sheets API + Google Apps Script + Node.js Backend
+
+PREREQUISITES
+------------
+1. Google Cloud Project with Google Sheets API enabled
+2. Service Account credentials for API access
+3. Google Workspace domain-wide delegation (if using organization data)
+4. Backup of all Dataverse data
+5. Testing environment (separate Google Sheets for testing)
+
+PHASE 1: PREPARATION & SETUP (Days 1-2)
+======================================
+
+1.1 Google Cloud Setup
+----------------------
+- Create Google Cloud Project
+- Enable Google Sheets API, Google Drive API
+- Create Service Account with appropriate permissions
+- Generate credentials (JSON key file)
+- Set up OAuth2.0 for web application access
+
+1.2 Backend Architecture Changes
+--------------------------------
+- Install required npm packages:
+  * googleapis
+  * google-auth-library
+  * google-spreadsheet (alternative library)
+- Create new authentication middleware for Google
+- Set up Google Sheets client initialization
+- Create data access layer abstraction
+
+1.3 Create Master Migration Sheet
+---------------------------------
+- Sheet: "Migration_Tracker"
+- Tabs:
+  * Progress_Tracker
+  * Data_Validation_Log
+  * Error_Log
+  * Rollback_Points
+
+PHASE 2: CORE DATA STRUCTURES (Days 3-4)
+=======================================
+
+2.1 Projects Module
+-------------------
+Dataverse Table: crc6f_hr_projectheaders
+Google Sheet: "Projects"
+Columns:
+| Column Name | Dataverse Field | Data Type | Notes |
+|-------------|----------------|-----------|-------|
+| Project_ID | crc6f_projectid | Text | Primary Key (e.g., VTAR001) |
+| Project_Name | crc6f_projectname | Text | |
+| Description | crc6f_description | Text | |
+| Start_Date | crc6f_startdate | Date | Format: YYYY-MM-DD |
+| End_Date | crc6f_enddate | Date | Format: YYYY-MM-DD |
+| Status | crc6f_status | Text | Active/Inactive/Completed |
+| Created_Date | createdon | DateTime | ISO Format |
+| Modified_Date | modifiedon | DateTime | ISO Format |
+| Created_By | _createdby_value | Text | User ID/Email |
+| Project_Manager | crc6f_projectmanager | Text | Email/Name |
+
+Additional Sheets:
+- "Project_Boards"
+  Columns: Board_ID, Project_ID, Board_Name, Description, Created_Date
+
+2.2 Tasks Module
+----------------
+Dataverse Table: crc6f_hr_taskdetailses
+Google Sheet: "Tasks"
+Columns:
+| Column Name | Dataverse Field | Data Type | Notes |
+|-------------|----------------|-----------|-------|
+| Task_GUID | crc6f_hr_taskdetailsid | Text | Unique Identifier |
+| Task_ID | crc6f_taskid | Text | TASK001, BUG001, etc. |
+| Task_Name | crc6f_taskname | Text | |
+| Description | crc6f_taskdescription | Text | |
+| Task_Type | crc6f_tasktype | Text | Task/Bug |
+| Priority | crc6f_taskpriority | Text | Low/Medium/High |
+| Status | crc6f_taskstatus | Text | New/In Progress/Hold/Completed |
+| Assigned_To | crc6f_assignedto | Text | CSV of assignees |
+| Assigned_Date | crc6f_assigneddate | Date | |
+| Due_Date | crc6f_duedate | Date | |
+| Project_ID | crc6f_projectid | Text | Foreign Key |
+| Board_ID | crc6f_boardid | Text | Board identifier |
+| Created_Date | createdon | DateTime | |
+| Modified_Date | modifiedon | DateTime | |
+
+2.3 Employees Module
+--------------------
+Dataverse Table: crc6f_employees
+Google Sheet: "Employees"
+Columns:
+| Column Name | Dataverse Field | Data Type | Notes |
+|-------------|----------------|-----------|-------|
+| Employee_ID | crc6f_employeeid | Text | Primary Key |
+| Email | crc6f_email | Text | Unique |
+| Name | crc6f_name | Text | Full Name |
+| Role | crc6f_role | Text | L1/L2/L3/L4/Admin |
+| Department | crc6f_department | Text | |
+| Manager_ID | crc6f_managerid | Text | Foreign Key |
+| Join_Date | crc6f_joindate | Date | |
+| Status | crc6f_status | Text | Active/Inactive |
+| Face_Auth_Required | crc6f_faceauthrequired | Boolean | true/false |
+| Created_Date | createdon | DateTime | |
+| Modified_Date | modifiedon | DateTime | |
+
+2.4 Time Tracking Module
+------------------------
+Dataverse Tables: crc6f_timelogs
+Google Sheet: "Time_Logs"
+Columns:
+| Column Name | Dataverse Field | Data Type | Notes |
+|-------------|----------------|-----------|-------|
+| Log_ID | crc6f_timelogid | Text | Primary Key |
+| Employee_ID | crc6f_employeeid | Text | |
+| Task_ID | crc6f_taskid | Text | |
+| Project_ID | crc6f_projectid | Text | |
+| Date | crc6f_date | Date | |
+| Start_Time | crc6f_starttime | Time | HH:MM:SS |
+| End_Time | crc6f_endtime | Time | HH:MM:SS |
+| Duration_Seconds | crc6f_duration | Integer | |
+| Description | crc6f_description | Text | |
+| Created_Date | createdon | DateTime | |
+
+Additional Sheets:
+- "Time_Sheets"
+  Columns: Employee_ID, Week_Start, Total_Hours, Status
+
+2.5 Attendance Module
+---------------------
+Dataverse Tables: crc6f_attendance
+Google Sheet: "Attendance"
+Columns:
+| Column Name | Dataverse Field | Data Type | Notes |
+|-------------|----------------|-----------|-------|
+| Attendance_ID | crc6f_attendanceid | Text | Primary Key |
+| Employee_ID | crc6f_employeeid | Text | |
+| Date | crc6f_date | Date | |
+| Check_In_Time | crc6f_checkintime | DateTime | |
+| Check_Out_Time | crc6f_checkouttime | DateTime | |
+| Work_Hours | crc6f_workhours | Decimal | Hours |
+| Status | crc6f_status | Text | Present/Absent/Late |
+| Location | crc6f_location | Text | |
+| Created_Date | createdon | DateTime | |
+
+2.6 Leave Management Module
+---------------------------
+Dataverse Tables: crc6f_leaverequests
+Google Sheet: "Leave_Requests"
+Columns:
+| Column Name | Dataverse Field | Data Type | Notes |
+|-------------|----------------|-----------|-------|
+| Leave_ID | crc6f_leaveid | Text | Primary Key |
+| Employee_ID | crc6f_employeeid | Text | |
+| Leave_Type | crc6f_leavetype | Text | Sick/Casual/Annual |
+| Start_Date | crc6f_startdate | Date | |
+| End_Date | crc6f_enddate | Date | |
+| Days_Count | crc6f_dayscount | Decimal | |
+| Reason | crc6f_reason | Text | |
+| Status | crc6f_status | Text | Pending/Approved/Rejected |
+| Approved_By | crc6f_approvedby | Text | |
+| Approved_Date | crc6f_approveddate | DateTime | |
+| Created_Date | createdon | DateTime | |
+
+Additional Sheets:
+- "Leave_Balance"
+  Columns: Employee_ID, Leave_Type, Total_Days, Used_Days, Balance_Days
+
+2.7 Assets Module
+-----------------
+Dataverse Tables: crc6f_assets
+Google Sheet: "Assets"
+Columns:
+| Column Name | Dataverse Field | Data Type | Notes |
+|-------------|----------------|-----------|-------|
+| Asset_ID | crc6f_assetid | Text | Primary Key |
+| Asset_Name | crc6f_assetname | Text | |
+| Asset_Type | crc6f_assettype | Text | Laptop/Mobile/etc |
+| Serial_Number | crc6f_serialnumber | Text | |
+| Assigned_To | crc6f_assignedto | Text | Employee_ID |
+| Assigned_Date | crc6f_assigneddate | Date | |
+| Status | crc6f_status | Text | Active/Inactive/Lost |
+| Purchase_Date | crc6f_purchasedate | Date | |
+| Warranty_Expiry | crc6f_warrantyexpiry | Date | |
+| Created_Date | createdon | DateTime | |
+
+PHASE 3: BACKEND API MIGRATION (Days 5-7)
+========================================
+
+3.1 Create Google Sheets Data Access Layer
+-------------------------------------------
+File: backend/google_sheets_dal.js
+
+```javascript
+class GoogleSheetsDAL {
+  constructor(spreadsheetId) {
+    this.spreadsheetId = spreadsheetId;
+    this.sheets = new GoogleSheetsAPI();
+  }
+  
+  async getRows(sheetName, query = {}) {
+    // Implementation for fetching rows with filters
+  }
+  
+  async addRow(sheetName, data) {
+    // Implementation for adding a new row
+  }
+  
+  async updateRow(sheetName, rowIndex, data) {
+    // Implementation for updating a row
+  }
+  
+  async deleteRow(sheetName, rowIndex) {
+    // Implementation for deleting a row
+  }
+  
+  async batchUpdate(sheetName, operations) {
+    // Implementation for batch operations
+  }
+}
+```
+
+3.2 Migrate API Endpoints
+--------------------------
+Projects API:
+- GET /api/projects → Read from "Projects" sheet
+- POST /api/projects → Add row to "Projects" sheet
+- PATCH /api/projects/:id → Update row in "Projects" sheet
+- DELETE /api/projects/:id → Mark as inactive in "Projects" sheet
+
+Tasks API:
+- GET /api/projects/:projectId/tasks → Filter by Project_ID column
+- POST /api/projects/:projectId/tasks → Add row to "Tasks" sheet
+- PATCH /api/tasks/:id → Update row in "Tasks" sheet
+- DELETE /api/tasks/:id → Mark as deleted in "Tasks" sheet
+
+Employees API:
+- GET /api/employees → Read from "Employees" sheet
+- POST /api/employees → Add row to "Employees" sheet
+- PATCH /api/employees/:id → Update row in "Employees" sheet
+
+Time Tracking API:
+- GET /api/timelogs → Read from "Time_Logs" sheet
+- POST /api/timelogs → Add row to "Time_Logs" sheet
+- GET /api/timesheet/:employeeId → Calculate from "Time_Logs"
+
+3.3 Authentication Changes
+---------------------------
+Current: Dataverse authentication (Azure AD)
+New: Google OAuth + Service Account
+
+Implementation:
+```javascript
+// backend/google_auth.js
+const { google } = require('googleapis');
+
+async function getAuthenticatedClient() {
+  const auth = new google.auth.GoogleAuth({
+    keyFile: 'service-account-key.json',
+    scopes: ['https://www.googleapis.com/auth/spreadsheets']
+  });
+  return auth.getClient();
+}
+```
+
+PHASE 4: FRONTEND ADAPTATIONS (Days 8-9)
+=======================================
+
+4.1 Update API Calls
+---------------------
+File: pages/shared.js
+- Replace all fetch calls to use new endpoints
+- Update error handling for Google Sheets API errors
+- Implement retry logic for API rate limits
+
+4.2 Data Format Adjustments
+---------------------------
+Date Handling:
+- Dataverse: ISO format with timezone
+- Google Sheets: Date objects, need formatting
+
+Example change:
+```javascript
+// Before
+const date = new Date(task.due_date).toISOString();
+
+// After
+const date = formatDateForGoogleSheets(task.due_date);
+```
+
+4.3 Pagination Implementation
+------------------------------
+Google Sheets has limits on rows returned (default 100)
+Implement pagination:
+```javascript
+async function fetchWithPagination(sheetName, pageSize = 100, page = 1) {
+  const offset = (page - 1) * pageSize;
+  const range = `${sheetName}!A${offset + 1}:Z${offset + pageSize}`;
+  // Fetch and return data
+}
+```
+
+PHASE 5: DATA MIGRATION (Days 10-11)
+===================================
+
+5.1 Export Data from Dataverse
+-------------------------------
+Script: scripts/export_dataverse.js
+- Connect to Dataverse API
+- Export each table to JSON files
+- Validate data integrity
+- Create backup in cloud storage
+
+5.2 Import Data to Google Sheets
+--------------------------------
+Script: scripts/import_to_sheets.js
+- Read JSON files
+- Transform data to match Google Sheets format
+- Batch insert data (1000 rows at a time)
+- Validate imported data
+- Generate migration report
+
+5.3 Data Validation Checklist
+------------------------------
+- Row counts match between source and target
+- Foreign key relationships preserved
+- Date formats correctly converted
+- Special characters preserved
+- No data truncation
+
+PHASE 6: TESTING & VALIDATION (Days 12-13)
+==========================================
+
+6.1 Unit Testing
+----------------
+- Test all API endpoints with Google Sheets
+- Validate CRUD operations
+- Test error scenarios
+- Performance testing
+
+6.2 Integration Testing
+-----------------------
+- Test complete user workflows
+- Verify project/task creation flow
+- Test time tracking functionality
+- Validate reports generation
+
+6.3 User Acceptance Testing
+---------------------------
+- Test with sample users
+- Verify all features work as expected
+- Collect feedback
+- Document any issues
+
+PHASE 7: DEPLOYMENT & CUT-OVER (Day 14)
+======================================
+
+7.1 Production Deployment
+-------------------------
+1. Backup current system
+2. Deploy new backend with Google Sheets integration
+3. Update frontend with new API endpoints
+4. Configure production Google Sheets
+5. Set up monitoring and alerts
+
+7.2 Cut-over Plan
+-----------------
+1. Schedule maintenance window (2-4 hours)
+2. Stop write operations in Dataverse
+3. Perform final data sync
+4. Switch traffic to new system
+5. Monitor for issues
+6. Rollback plan if needed
+
+7.3 Post-Migration Tasks
+------------------------
+- Archive Dataverse data
+- Update documentation
+- Train users on any changes
+- Set up automated backups for Google Sheets
+
+RISK MITIGATION
+==============
+
+1. Data Loss Risk
+   - Multiple backups before migration
+   - Incremental migration strategy
+   - Rollback procedures documented
+
+2. Performance Risks
+   - Google Sheets API rate limits: 100 requests per 100 seconds
+   - Implement caching layer
+   - Batch operations where possible
+
+3. Security Risks
+   - Secure service account credentials
+   - Implement proper access controls
+   - Audit trail for all changes
+
+4. Business Continuity
+   - Parallel run for 1 week before cut-over
+   - Critical functions tested first
+   - 24/7 monitoring during cut-over
+
+ESTIMATED EFFORT
+================
+- Total Duration: 14 days
+- Developers Required: 2-3
+- Testing Resources: 1-2
+- DevOps Support: 1
+
+CRITICAL SUCCESS FACTORS
+========================
+1. Complete data mapping validation
+2. Thorough testing of all modules
+3. Performance optimization for Google Sheets
+4. Proper error handling and retry logic
+5. User training and documentation
+
+POST-MIGRATION OPTIMIZATIONS
+===========================
+1. Implement caching for frequently accessed data
+2. Set up Google Apps Script for complex calculations
+3. Create automated reports using Google Data Studio
+4. Implement real-time updates using Google Sheets webhooks
+5. Set up automated backup to Google Drive
+
+ROLLBACK PLAN
+=============
+If critical issues arise:
+1. Switch back to Dataverse endpoints
+2. Restore from backup
+3. Investigate issues
+4. Schedule new migration window
+
+================================================================================
+Created: March 31, 2026
+Author: AI Assistant
+Version: 1.0
+================================================================================

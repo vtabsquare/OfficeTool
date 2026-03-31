@@ -3944,6 +3944,11 @@ function renderTaskFormPage(projectId, boardName, defaultStatus = "New", workIte
   // =========================
   // SAVE TASK (with date rules)
   // =========================
+  // Remove any existing task-form to prevent stale closures capturing old projectId
+  const existingForm = document.getElementById("task-form");
+  if (existingForm) {
+    existingForm.remove();
+  }
   const taskForm = document.createElement("form");
   taskForm.id = "task-form";
   taskForm.style.display = "none";

@@ -1508,51 +1508,13 @@ export const renderMyTimesheetPage = async () => {
             }
         });
 
-        // Build set of active task keys from "My Tasks" for filtering
-        const myActiveTaskKeys = new Set();
-        (myActiveTasks || []).forEach(t => {
-            const key = `${t.project_id || ''}|${taskIdentityFor({ task_guid: t.guid, task_id: t.task_id })}`;
-            myActiveTaskKeys.add(key);
-        });
-        console.log('[TIMESHEET] Active task keys from My Tasks:', myActiveTaskKeys.size);
-
-        // Filter grouped logs to only include:
-        // 1. Tasks that are in "My Tasks" (active assignments)
-        // 2. Tasks that have logged time THIS WEEK (from timer)
         const allGroupedRows = Object.values(grouped);
         gridRows = allGroupedRows.filter(row => {
-            const key = rowKeyFor(row);
-            // Always include if task is in My Tasks
-            if (myActiveTaskKeys.has(key)) return true;
-            // Include if task has any logged time this week
             const hasLoggedTime = (row.hours || []).some(h => Number(h) > 0);
             return hasLoggedTime;
         });
 
         console.log('[TIMESHEET] Filtered grid rows:', gridRows.length, 'from', allGroupedRows.length, 'total');
-
-        // Add active tasks from "My Tasks" that don't have logs yet (with 0 hours)
-        try {
-            const existingKeys = new Set(gridRows.map(r => rowKeyFor(r)));
-            (myActiveTasks || []).forEach(t => {
-                const key = `${t.project_id || ''}|${taskIdentityFor({ task_guid: t.guid, task_id: t.task_id })}`;
-                if (hiddenRowSet.has(key)) return;
-                if (!existingKeys.has(key)) {
-                    gridRows.push({
-                        project_id: t.project_id || '',
-                        task_guid: t.guid || '',
-                        task_id: t.task_id || '',
-                        task_name: t.task_name || '',
-                        board_id: t.board_id || '',
-                        billing: 'Non-billable',
-                        hours: Array(7).fill(0),
-                        dayLogIds: Array(7).fill(''),
-                        _fromMyTasks: true // Flag to identify tasks from My Tasks
-                    });
-                    existingKeys.add(key);
-                }
-            });
-        } catch { }
 
         // Append any manual rows that don't already exist by key
         if (Array.isArray(manualRows) && manualRows.length) {
