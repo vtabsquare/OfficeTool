@@ -215,6 +215,110 @@ const canEditTeamTimesheet = () => {
     }
 };
 
+const formatTeamTimesheetDuration = (secs) => {
+    if (!secs) return '00:00';
+    const h = Math.floor(secs / 3600);
+    const m = Math.floor((secs % 3600) / 60);
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+};
+
+const escapeTeamTimesheetCell = (value) => String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+
+const exportTeamTimesheetToExcel = () => {
+    const exportState = window.__teamTsExportState;
+    if (!exportState || !Array.isArray(exportState.items) || !Array.isArray(exportState.days)) {
+        showToast('No data available to export', 'warning');
+        return;
+    }
+
+    const { month, days, items, logs } = exportState;
+    const today = new Date();
+    const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+
+    const headerCells = [
+        '<th>Employee Name</th>',
+        '<th>Employee ID</th>',
+        '<th>Total</th>',
+        ...days.map((d) => `<th>${escapeTeamTimesheetCell(d.toLocaleDateString(undefined, { weekday: 'short', day: '2-digit', month: 'short' }))}</th>`)
+    ].join('');
+
+    const bodyRows = items.map((emp) => {
+        const upEmp = String(emp.id || '').toUpperCase();
+        const dayValues = days.map((d) => {
+            const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+            if (d.getDay() === 0) return 'DO';
+            if (dateStr > todayStr) return '';
+
+            let totalSecs = 0;
+            (logs || []).forEach((l) => {
+                const logEmpId = String(l.employee_id || '').toUpperCase();
+                const logDate = String(l.work_date || '').slice(0, 10);
+                if (logEmpId === upEmp && logDate === dateStr) {
+                    totalSecs += Number(l.seconds || 0);
+                }
+            });
+            return totalSecs > 0 ? formatTeamTimesheetDuration(totalSecs) : '';
+        });
+
+        const totalSecs = dayValues.reduce((acc, v) => {
+            if (!v || v === 'DO') return acc;
+            const m = String(v).match(/^(\d{2}):(\d{2})$/);
+            if (!m) return acc;
+            return acc + (parseInt(m[1], 10) * 3600) + (parseInt(m[2], 10) * 60);
+        }, 0);
+
+        const cells = [
+            `<td>${escapeTeamTimesheetCell(emp.name || '')}</td>`,
+            `<td>${escapeTeamTimesheetCell(emp.id || '')}</td>`,
+            `<td>${escapeTeamTimesheetCell(formatTeamTimesheetDuration(totalSecs))}</td>`,
+            ...dayValues.map((val) => `<td>${escapeTeamTimesheetCell(val)}</td>`)
+        ].join('');
+
+        return `<tr>${cells}</tr>`;
+    }).join('');
+
+    const monthLabel = month instanceof Date
+        ? month.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })
+        : '';
+
+    const html = `
+        <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
+          <head>
+            <meta charset="UTF-8" />
+            <style>
+              table { border-collapse: collapse; font-family: Arial, sans-serif; }
+              th, td { border: 1px solid #d1d5db; padding: 6px 8px; font-size: 12px; }
+              th { background: #eef2ff; font-weight: 700; }
+            </style>
+          </head>
+          <body>
+            <h3>My Team Timesheet - ${escapeTeamTimesheetCell(monthLabel)}</h3>
+            <table>
+              <thead><tr>${headerCells}</tr></thead>
+              <tbody>${bodyRows}</tbody>
+            </table>
+          </body>
+        </html>`;
+
+    const blob = new Blob([`\ufeff${html}`], { type: 'application/vnd.ms-excel;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    const fileDate = month instanceof Date
+        ? `${month.getFullYear()}_${String(month.getMonth() + 1).padStart(2, '0')}`
+        : new Date().toISOString().slice(0, 7).replace('-', '_');
+
+    link.href = url;
+    link.download = `my_team_timesheet_${fileDate}.xls`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+};
+
 const attachTeamTsEvents = () => {
 
     const prev = document.getElementById('tt-prev');
@@ -241,6 +345,10 @@ const attachTeamTsEvents = () => {
             }, 250); 
         });
     }
+    const exportBtn = document.getElementById('tt-export-excel');
+    if (exportBtn) {
+        exportBtn.onclick = () => exportTeamTimesheetToExcel();
+    }
     if (canEditTeamTimesheet()) {
         document.querySelectorAll('.tt-cell.worked').forEach(cell => {
             cell.addEventListener('click', () => {
@@ -252,138 +360,6 @@ const attachTeamTsEvents = () => {
             });
         });
     }
-};
-
-const openTeamTsEditModal = async (employeeId, workDate) => {
-    if (!canEditTeamTimesheet()) {
-        showToast('You have view-only access to My Team Timesheet.', 'warning');
-        return;
-    }
-
-    const API = `${apiBase}/api`;
-    const empId = String(employeeId || '').toUpperCase();
-    if (!empId || !workDate) return;
-
-    let logs = [];
-    try {
-        const url = `${API}/time-tracker/logs?employee_id=${encodeURIComponent(empId)}&start_date=${workDate}&end_date=${workDate}`;
-        const res = await fetch(url);
-        const data = await res.json().catch(() => ({}));
-        if (res.ok && data.success && Array.isArray(data.logs)) {
-            logs = data.logs || [];
-        }
-    } catch (e) {
-        console.error('Failed to load day logs for team edit', e);
-    }
-    const byTask = {};
-    logs.forEach(l => {
-        const key = `${l.project_id || ''}|${l.task_guid || l.task_id || ''}`;
-        if (!byTask[key]) {
-            byTask[key] = {
-                dv_id: l.id || '',
-                project_id: l.project_id || '',
-                task_guid: l.task_guid || '',
-                task_id: l.task_id || '',
-                task_name: l.task_name || l.task_id || '',
-                seconds: 0,
-                manual: !!l.manual,
-                description: l.description || '',
-            };
-        }
-        byTask[key].seconds += Number(l.seconds || 0);
-    });
-    const entries = Object.values(byTask);
-    const toHHMM = (secs) => {
-        const s = Number(secs || 0);
-        const h = Math.floor(s / 3600);
-        const m = Math.floor((s % 3600) / 60);
-        return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
-    };
-    const rowsHtml = entries.map((e, idx) => `
-        <tr data-idx="${idx}">
-            <td>${e.project_id || '-'}</td>
-            <td>${e.task_id || '-'}</td>
-            <td>${e.task_name || '-'}</td>
-            <td><input type="text" class="tt-edit-time" data-idx="${idx}" value="${toHHMM(e.seconds)}" placeholder="HH:MM" /></td>
-            <td><input type="text" class="tt-edit-notes" data-idx="${idx}" value="${e.description || ''}" placeholder="Notes (optional)" /></td>
-        </tr>
-    `).join('') || '<tr><td colspan="5" class="placeholder-text">No logs for this date</td></tr>';
-    const body = `
-        <div style="padding:4px 0;">
-            <div style="margin-bottom:10px; font-size:13px; color:#475569;">
-                <div><strong>${empId}</strong> &mdash; ${workDate}</div>
-            </div>
-            <div class="table-container" style="max-height:320px; overflow:auto;">
-                <table class="table">
-                    <thead><tr><th>Project</th><th>Task ID</th><th>Task Name</th><th>Time (HH:MM)</th><th>Notes</th></tr></thead>
-                    <tbody>${rowsHtml}</tbody>
-                </table>
-            </div>
-            <p style="font-size:12px; color:#64748b; margin-top:6px;">Manual updates here will be marked with the people icon in team timesheet.</p>
-        </div>`;
-    renderModal('Edit time for selected day', body, [
-        { id: 'tt-edit-cancel', text: 'Cancel', className: 'btn btn-secondary', type: 'button' },
-        { id: 'tt-edit-save', text: 'Save', className: 'btn btn-primary', type: 'button' }
-    ]);
-    setTimeout(() => {
-        const cancelBtn = document.getElementById('tt-edit-cancel');
-        const saveBtn = document.getElementById('tt-edit-save');
-        if (cancelBtn) cancelBtn.addEventListener('click', () => closeModal());
-        if (!saveBtn) return;
-        saveBtn.addEventListener('click', async (e) => {
-            e.preventDefault();
-            if (!canEditTeamTimesheet()) {
-                showToast('You have view-only access to My Team Timesheet.', 'warning');
-                return;
-            }
-            try {
-                const role = ((() => { const u = state?.user || window.state?.user || {}; const isAdm = !!u.is_admin || String(u.id || '').toUpperCase() === 'EMP001'; return isAdm ? 'l3' : 'l2'; })());
-                const user = state?.user || window.state?.user || {};
-
-                const editorId = String(user.id || '').toUpperCase();
-                const timeInputs = Array.from(document.querySelectorAll('.tt-edit-time'));
-                for (const inp of timeInputs) {
-                    const idx = Number(inp.getAttribute('data-idx'));
-                    const row = entries[idx];
-                    if (!row) continue;
-                    const raw = String(inp.value || '').trim();
-                    if (!raw) continue;
-                    const m = raw.match(/^(\d{1,2}):(\d{2})$/);
-                    if (!m) { showToast('Enter time as HH:MM'); return; }
-                    const h = parseInt(m[1], 10) || 0; const mm = parseInt(m[2], 10) || 0;
-                    const secs = (h * 3600) + (mm * 60);
-                    const payload = {
-                        employee_id: empId,
-                        dv_id: row.dv_id || '',
-                        project_id: row.project_id || '',
-                        task_guid: row.task_guid || '',
-                        task_id: row.task_id || '',
-                        task_name: row.task_name || '',
-                        seconds: secs,
-                        work_date: workDate,
-                        description: String(document.querySelector(`.tt-edit-notes[data-idx="${idx}"]`)?.value || '').trim(),
-                        role,
-                        editor_id: editorId,
-                    };
-                    const res = await fetch(`${API}/time-tracker/logs/exact`, {
-                        method: 'PUT',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(payload),
-                    });
-                    if (!res.ok) {
-                        const d = await res.json().catch(() => ({}));
-                        showToast(d.error || 'Failed to save time');
-                        return;
-                    }
-                }
-                closeModal();
-                await renderTeamTimesheetPage();
-            } catch (err) {
-                console.error('Team TS save failed', err);
-                showToast('Failed to save time');
-            }
-        });
-    }, 30);
 };
 
 const resolveCurrentEmployeeId = async () => {
@@ -1517,7 +1493,8 @@ export const renderMyTimesheetPage = async () => {
             const logDate = (l.work_date || '').slice(0, 10);
             if (logDate <= todayStr) {
                 for (let i = 0; i < 7; i++) {
-                    const dayDate = new Date(s); dayDate.setDate(s.getDate() + i);
+                    const dayDate = new Date(s);
+                    dayDate.setDate(s.getDate() + i);
                     const dayDateStr = `${dayDate.getFullYear()}-${String(dayDate.getMonth() + 1).padStart(2, '0')}-${String(dayDate.getDate()).padStart(2, '0')}`;
                     if (logDate === dayDateStr) {
                         const seconds = Number(l.seconds || 0);
@@ -2526,6 +2503,9 @@ export const renderTeamTimesheetPage = async () => {
               <i class="fa-solid fa-search"></i>
               <input id="tt-search" type="text" placeholder="Search by employee name or ID" value="${searchValue}" />
             </div>
+            <button id="tt-export-excel" class="btn btn-secondary" style="white-space:nowrap;">
+              <i class="fa-solid fa-file-excel"></i> Export Excel
+            </button>
           </div>`;
         const head = `
           <div class="tt-head" style="display:grid; grid-template-columns: 260px 120px repeat(${days.length}, 90px);">
@@ -2534,7 +2514,14 @@ export const renderTeamTimesheetPage = async () => {
             ${days.map(function (d) { return '<div class="th" style="padding:10px; font-weight:600; text-align:center; border-right:1px solid #eee; color: var(--text-primary, #1f2937);">' + d.toLocaleDateString(undefined, { weekday: 'short' }) + '<br><span style="color: var(--text-secondary, #9ca3af);">' + d.toLocaleDateString(undefined, { month: 'short', day: '2-digit' }) + '</span></div>'; }).join('')}
           </div>`;
 
-        const rows = (nameFilter(items, window.__ttSearch || '')).map(emp => teamRow(emp, days, allLogs)).join('');
+        const filteredItems = nameFilter(items, window.__ttSearch || '');
+        window.__teamTsExportState = {
+            month: new Date(month),
+            days,
+            items: filteredItems,
+            logs: allLogs
+        };
+        const rows = filteredItems.map(emp => teamRow(emp, days, allLogs)).join('');
         const content = `
           <style>
             :root { --tt-blue:#1e88e5; }
