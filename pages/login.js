@@ -1699,6 +1699,9 @@ export const renderLoginPage = () => {
         );
         localStorage.setItem("role", role);
         localStorage.setItem("auth_version", "2026-02-27-identity-fix");
+        // Store login date for midnight force-logout guard (IST)
+        const _istOff = 5.5 * 60 * 60 * 1000;
+        localStorage.setItem("login_date", new Date(Date.now() + (new Date().getTimezoneOffset() * 60000) + _istOff).toISOString().slice(0, 10));
       } catch {}
 
       try {
@@ -1881,6 +1884,9 @@ export const renderLoginPage = () => {
               );
               localStorage.setItem("role", role);
               localStorage.setItem("auth_version", "2026-02-27-identity-fix");
+              // Store login date for midnight force-logout guard (IST)
+              const _istOff2 = 5.5 * 60 * 60 * 1000;
+              localStorage.setItem("login_date", new Date(Date.now() + (new Date().getTimezoneOffset() * 60000) + _istOff2).toISOString().slice(0, 10));
             } catch {}
             startNotificationPolling();
             setTimeout(() => {

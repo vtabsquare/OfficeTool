@@ -835,6 +835,8 @@ const handleFaceAuthCallback = () => {
       localStorage.setItem('auth', JSON.stringify({ authenticated: true, user }));
       localStorage.setItem('auth_version', AUTH_VERSION);
       localStorage.setItem('role', user.role || 'L1');
+      // Store login date for midnight force-logout guard (IST)
+      { const _io = 5.5*60*60*1000; localStorage.setItem('login_date', new Date(Date.now()+(new Date().getTimezoneOffset()*60000)+_io).toISOString().slice(0,10)); }
       localStorage.removeItem('pending_user');
       
       // Store the current timestamp as last verification time (resets the 2-hour timer)
@@ -883,6 +885,8 @@ const handleFaceAuthTokenFromUrl = () => {
         localStorage.setItem('auth', JSON.stringify({ authenticated: true, user }));
         localStorage.setItem('auth_version', AUTH_VERSION);
         localStorage.setItem('authToken', token);
+        // Store login date for midnight force-logout guard (IST)
+        { const _io = 5.5*60*60*1000; localStorage.setItem('login_date', new Date(Date.now()+(new Date().getTimezoneOffset()*60000)+_io).toISOString().slice(0,10)); }
         localStorage.removeItem('pending_user');
       }
       
@@ -896,9 +900,61 @@ const handleFaceAuthTokenFromUrl = () => {
   }
 };
 
+// ── Force Logout at Midnight IST ──────────────────────────────
+const forceLogoutNow = (reason) => {
+  console.warn(`[AUTH] Force logout: ${reason}`);
+  try { localStorage.removeItem('auth'); } catch {}
+  try { localStorage.removeItem('role'); } catch {}
+  try { localStorage.removeItem('authToken'); } catch {}
+  try { localStorage.removeItem('face_auth_token'); } catch {}
+  try { localStorage.removeItem('auth_version'); } catch {}
+  try { localStorage.removeItem('login_date'); } catch {}
+  state.authenticated = false;
+  state.user = { name: 'Guest', initials: 'GU', id: '' };
+  window.location.href = '/login.html';
+};
+
+let _midnightLogoutTimer = null;
+const scheduleMidnightLogout = () => {
+  if (_midnightLogoutTimer) clearTimeout(_midnightLogoutTimer);
+  // Calculate ms until next 00:00:00 IST
+  const now = new Date();
+  const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+  const nowIST = new Date(now.getTime() + (now.getTimezoneOffset() * 60000) + IST_OFFSET_MS);
+  const tomorrowMidnightIST = new Date(nowIST);
+  tomorrowMidnightIST.setHours(24, 0, 0, 0);
+  const msUntilMidnight = tomorrowMidnightIST.getTime() - nowIST.getTime();
+  console.log(`[AUTH] Midnight logout scheduled in ${Math.round(msUntilMidnight / 1000)}s (${Math.round(msUntilMidnight / 60000)}m)`);
+  _midnightLogoutTimer = setTimeout(() => {
+    forceLogoutNow('Midnight IST session expiry');
+  }, msUntilMidnight);
+};
+
+const getTodayIST = () => {
+  const now = new Date();
+  const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+  const nowIST = new Date(now.getTime() + (now.getTimezoneOffset() * 60000) + IST_OFFSET_MS);
+  return nowIST.toISOString().slice(0, 10); // 'YYYY-MM-DD'
+};
+
+const checkLoginDateGuard = () => {
+  const storedDate = localStorage.getItem('login_date');
+  if (!storedDate) return false; // first-time or cleared → don't block, login.js will set it
+  const todayIST = getTodayIST();
+  if (storedDate !== todayIST) {
+    forceLogoutNow(`Session from ${storedDate}, today is ${todayIST}`);
+    return true; // blocked — redirect in progress
+  }
+  return false;
+};
+// ── End Force Logout ──────────────────────────────────────────
+
 const init = async () => {
   // Handle face auth callback/token from URL first
   handleFaceAuthTokenFromUrl();
+
+  // Force logout if session is from a previous day (IST)
+  if (checkLoginDateGuard()) return;
   
   // Force re-login if auth version changed (e.g. after identity wipe/fix)
   const storedAuthVersion = localStorage.getItem('auth_version');
@@ -965,6 +1021,9 @@ const init = async () => {
     window.location.href = '/login.html';
     return;
   }
+
+  // Schedule automatic logout at midnight IST
+  scheduleMidnightLogout();
 
   // Expose state globally for compatibility
   window.state = state;
