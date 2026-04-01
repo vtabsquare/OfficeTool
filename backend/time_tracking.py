@@ -1829,6 +1829,203 @@ def _update_timesheet_status(entry_id, new_status, comment=None, decided_by=None
     return updated, entries
 
 
+@bp_time.route("/admin/timesheet-monitor", methods=["GET", "POST"])
+def admin_timesheet_monitor():
+    """Return per-employee, per-week submission status + hours logged for a month.
+
+    Accepts employee list from POST body (preferred) or fetches from Dataverse.
+    Query params:
+      - month (1-12, default current)
+      - year  (e.g. 2026, default current)
+    POST body (optional JSON):
+      - employees: [{ "employee_id": "EMP001", "name": "First Last" }, ...]
+    """
+    import calendar
+    try:
+        now = datetime.now()
+        month = int(request.args.get("month") or now.month)
+        year = int(request.args.get("year") or now.year)
+        if month < 1 or month > 12:
+            month = now.month
+
+        # ── 1. Compute weeks (Mon-Sun) that overlap with the month ──
+        first_day = datetime(year, month, 1).date()
+        last_day = datetime(year, month, calendar.monthrange(year, month)[1]).date()
+
+        # Go back to Monday of the week containing the 1st
+        start = first_day - timedelta(days=first_day.weekday())  # weekday(): Mon=0
+        weeks = []
+        while start <= last_day:
+            end = start + timedelta(days=6)
+            weeks.append({
+                "start": start.isoformat(),
+                "end": end.isoformat(),
+                "label": f"Week {len(weeks) + 1}",
+            })
+            start = start + timedelta(days=7)
+
+        month_start = weeks[0]["start"] if weeks else first_day.isoformat()
+        month_end = weeks[-1]["end"] if weeks else last_day.isoformat()
+
+        # ── 2. Get employees from POST body (sent by frontend) ──
+        employees = []
+        body = {}
+        try:
+            body = request.get_json(force=True, silent=True) or {}
+        except Exception:
+            pass
+
+        raw_emps = body.get("employees") or []
+        for e in raw_emps:
+            eid = str(e.get("employee_id") or e.get("id") or "").strip()
+            if not eid:
+                continue
+            name = str(e.get("name") or e.get("employee_name") or "").strip()
+            if not name:
+                fn = str(e.get("first_name") or "").strip()
+                ln = str(e.get("last_name") or "").strip()
+                name = f"{fn} {ln}".strip() or eid
+            employees.append({"id": eid, "name": name})
+
+        if not employees:
+            return jsonify({"success": True, "weeks": weeks, "employees": [], "month": month, "year": year}), 200
+
+        emp_ids = {e["id"].upper() for e in employees}
+
+        # ── 3. Read timesheet submissions (local JSON) ──
+        submissions = _read_ts_entries()
+
+        # Build a mapping: employee_id (upper) -> week_start -> best status
+        # Priority: Accepted > Rejected > Pending > (nothing)
+        status_priority = {"accepted": 3, "rejected": 2, "pending": 1}
+        sub_map = {}  # { "EMP001": { "2026-03-30": "Pending" } }
+        for s in submissions:
+            eid = str(s.get("employee_id") or "").strip().upper()
+            if eid not in emp_ids:
+                continue
+            date_str = str(s.get("date") or "")[:10]
+            if not date_str:
+                continue
+            try:
+                d = datetime.strptime(date_str, "%Y-%m-%d").date()
+            except Exception:
+                continue
+            # Find week_start (Monday)
+            ws = (d - timedelta(days=d.weekday())).isoformat()
+
+            status_raw = str(s.get("status") or "").strip()
+            status_lc = status_raw.lower()
+
+            if eid not in sub_map:
+                sub_map[eid] = {}
+            existing = sub_map[eid].get(ws, "")
+            existing_pri = status_priority.get(existing.lower(), 0)
+            new_pri = status_priority.get(status_lc, 0)
+            if new_pri > existing_pri:
+                sub_map[eid][ws] = status_raw.capitalize() if status_raw else ""
+
+        # ── 4. Fetch timesheet logs for the full month range (Dataverse) ──
+        hours_map = {}  # { "EMP001": { "2026-03-30": total_seconds } }
+        try:
+            token = get_access_token()
+            headers = {
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/json",
+                "OData-Version": "4.0",
+                "Prefer": 'odata.include-annotations="*"',
+            }
+            filter_q = f"crc6f_workdate ge '{month_start}' and crc6f_workdate le '{month_end}'"
+            logs_url = (
+                f"{RESOURCE}{DV_API}/crc6f_hr_timesheetlogs"
+                f"?$filter={filter_q}"
+                "&$select=crc6f_employeeid,crc6f_workdate,crc6f_hoursworked"
+                "&$top=5000"
+            )
+            logs_resp = get_dataverse_session().get(logs_url, headers=headers, timeout=30)
+            if logs_resp.status_code == 200:
+                for r in logs_resp.json().get("value", []):
+                    eid = str(r.get("crc6f_employeeid") or "").strip().upper()
+                    wd = str(r.get("crc6f_workdate") or "")[:10]
+                    if not eid or not wd:
+                        continue
+                    try:
+                        d = datetime.strptime(wd, "%Y-%m-%d").date()
+                    except Exception:
+                        continue
+                    ws = (d - timedelta(days=d.weekday())).isoformat()
+                    secs = _hoursworked_to_seconds(
+                        r.get("crc6f_hoursworked", 0),
+                        r.get("crc6f_hoursworked@OData.Community.Display.V1.FormattedValue"),
+                    )
+                    if eid not in hours_map:
+                        hours_map[eid] = {}
+                    hours_map[eid][ws] = hours_map[eid].get(ws, 0) + secs
+        except Exception as log_err:
+            print(f"[TS-MONITOR] Log fetch error: {log_err}")
+
+        # Also merge local logs as fallback
+        try:
+            local_logs = _read_logs()
+            for r in local_logs:
+                eid = str(r.get("employee_id") or "").strip().upper()
+                wd = str(r.get("work_date") or "")[:10]
+                if not eid or not wd or eid not in emp_ids:
+                    continue
+                try:
+                    d = datetime.strptime(wd, "%Y-%m-%d").date()
+                except Exception:
+                    continue
+                if d < datetime.strptime(month_start, "%Y-%m-%d").date() or d > datetime.strptime(month_end, "%Y-%m-%d").date():
+                    continue
+                ws = (d - timedelta(days=d.weekday())).isoformat()
+                secs = int(r.get("seconds") or 0)
+                if secs <= 0:
+                    continue
+                # Only add if not already covered by Dataverse
+                if eid in hours_map and ws in hours_map[eid]:
+                    continue
+                if eid not in hours_map:
+                    hours_map[eid] = {}
+                hours_map[eid][ws] = hours_map[eid].get(ws, 0) + secs
+        except Exception:
+            pass
+
+        # ── 5. Build response ──
+        week_starts = [w["start"] for w in weeks]
+        result_employees = []
+        for emp in employees:
+            eid_up = emp["id"].upper()
+            emp_weeks = []
+            for ws in week_starts:
+                status = (sub_map.get(eid_up) or {}).get(ws, "Not Submitted")
+                seconds = (hours_map.get(eid_up) or {}).get(ws, 0)
+                hours = round(seconds / 3600, 2) if seconds else 0
+                emp_weeks.append({
+                    "week_start": ws,
+                    "status": status,
+                    "hours": hours,
+                    "seconds": seconds,
+                })
+            result_employees.append({
+                "employee_id": emp["id"],
+                "employee_name": emp["name"],
+                "weeks": emp_weeks,
+            })
+
+        return jsonify({
+            "success": True,
+            "month": month,
+            "year": year,
+            "weeks": weeks,
+            "employees": result_employees,
+        }), 200
+
+    except Exception as e:
+        print(f"[TS-MONITOR] Error: {e}")
+        traceback.print_exc()
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
 @bp_time.route("/time-tracker/timesheet/submit", methods=["POST"])
 def submit_timesheet():
     """Create Pending timesheet submissions from the My Timesheet page.

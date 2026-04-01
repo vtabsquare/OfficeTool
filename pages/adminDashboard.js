@@ -244,6 +244,194 @@ const fetchActiveTaskSnapshot = async () => {
   return data;
 };
 
+let tsMonitorMonth = new Date().getMonth() + 1;
+let tsMonitorYear = new Date().getFullYear();
+let _tsMonitorEmployees = []; // populated from admin dashboard data
+
+const fetchTimesheetMonitor = async (month, year, employees) => {
+  try {
+    const res = await timedFetch(`${BASE_URL}/api/admin/timesheet-monitor?month=${month}&year=${year}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ employees: employees || [] }),
+    }, 'adminTimesheetMonitor');
+    const data = await res.json();
+    if (!res.ok || !data.success) {
+      throw new Error(data.error || 'Failed to load timesheet monitor');
+    }
+    return data;
+  } catch (err) {
+    console.warn('Timesheet monitor fetch failed:', err);
+    return null;
+  }
+};
+
+const buildTimesheetMonitorCard = (tsData) => {
+  if (!tsData) {
+    return `
+      <section class="card admin-card admin-card-span-full">
+        <header class="card-heading">
+          <div>
+            <p class="eyebrow">Timesheet</p>
+            <h3>Timesheet Submissions Monitor</h3>
+          </div>
+        </header>
+        <p class="placeholder-text" style="padding: 20px;">Unable to load timesheet monitor data.</p>
+      </section>
+    `;
+  }
+
+  const weeks = tsData.weeks || [];
+  const employees = tsData.employees || [];
+  const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  const monthLabel = `${monthNames[(tsData.month || 1) - 1]} ${tsData.year || ''}`;
+
+  // Count submission stats for the month
+  let totalSubmitted = 0;
+  let totalNotSubmitted = 0;
+  let totalPending = 0;
+  employees.forEach(emp => {
+    const hasAnySubmission = (emp.weeks || []).some(w => w.status && w.status !== 'Not Submitted');
+    const hasNotSubmitted = (emp.weeks || []).some(w => w.status === 'Not Submitted' && w.hours > 0);
+    const hasPending = (emp.weeks || []).some(w => w.status === 'Pending');
+    if (hasPending) totalPending++;
+    if (hasAnySubmission) totalSubmitted++;
+    if (hasNotSubmitted) totalNotSubmitted++;
+  });
+
+  const statusBadge = (status) => {
+    const s = (status || '').toLowerCase();
+    let cls = 'ts-mon-badge-none';
+    let label = status || 'Not Submitted';
+    if (s === 'accepted') cls = 'ts-mon-badge-accepted';
+    else if (s === 'rejected') cls = 'ts-mon-badge-rejected';
+    else if (s === 'pending') cls = 'ts-mon-badge-pending';
+    else if (s === 'not submitted') cls = 'ts-mon-badge-none';
+    return `<span class="ts-mon-badge ${cls}">${escapeHtml(label)}</span>`;
+  };
+
+  const formatWeekHeader = (w) => {
+    try {
+      const s = new Date(w.start + 'T00:00:00');
+      const e = new Date(w.end + 'T00:00:00');
+      const fmt = (d) => `${d.getDate()} ${d.toLocaleDateString('en-US', { month: 'short' })}`;
+      return `${w.label}<br><span style="font-size:10px;color:var(--text-secondary);font-weight:400;">${fmt(s)} - ${fmt(e)}</span>`;
+    } catch { return w.label || ''; }
+  };
+
+  const employeeRows = employees.map(emp => {
+    const weekCells = (emp.weeks || []).map(w => {
+      const hoursLabel = w.hours > 0 ? `<div style="font-size:11px;color:var(--text-secondary);margin-top:2px;">${w.hours}h</div>` : '';
+      return `<td style="text-align:center;vertical-align:middle;">${statusBadge(w.status)}${hoursLabel}</td>`;
+    }).join('');
+    return `
+      <tr>
+        <td>
+          <div class="admin-employee-cell">
+            <strong>${escapeHtml(emp.employee_id)}</strong>
+            <span>${escapeHtml(emp.employee_name)}</span>
+          </div>
+        </td>
+        ${weekCells}
+      </tr>
+    `;
+  }).join('');
+
+  return `
+    <section class="card admin-card admin-card-span-full" id="ts-monitor-card">
+      <header class="card-heading" style="flex-wrap:wrap;gap:12px;">
+        <div>
+          <p class="eyebrow">Timesheet</p>
+          <h3>Timesheet Submissions Monitor</h3>
+        </div>
+        <div style="display:flex;align-items:center;gap:12px;">
+          <button id="ts-mon-prev" class="btn btn-outline" style="padding:6px 10px;min-width:auto;border-radius:8px;"><i class="fa-solid fa-chevron-left"></i></button>
+          <span id="ts-mon-month-label" style="font-weight:600;font-size:14px;min-width:140px;text-align:center;">${escapeHtml(monthLabel)}</span>
+          <button id="ts-mon-next" class="btn btn-outline" style="padding:6px 10px;min-width:auto;border-radius:8px;"><i class="fa-solid fa-chevron-right"></i></button>
+        </div>
+      </header>
+      <div style="padding:12px 20px 0;display:flex;gap:24px;flex-wrap:wrap;">
+        <div style="font-size:13px;color:var(--text-secondary);">Total Employees: <strong style="color:var(--text-primary);">${employees.length}</strong></div>
+        <div style="font-size:13px;color:var(--text-secondary);">Submitted: <strong style="color:#16a34a;">${totalSubmitted}</strong></div>
+        <div style="font-size:13px;color:var(--text-secondary);">Pending: <strong style="color:#f59e0b;">${totalPending}</strong></div>
+        <div style="font-size:13px;color:var(--text-secondary);">Not Submitted (with hours): <strong style="color:#ef4444;">${totalNotSubmitted}</strong></div>
+      </div>
+      <div class="leave-table-scroll admin-table-scroll" style="margin-top:12px;">
+        <table class="table leave-table">
+          <thead>
+            <tr>
+              <th style="text-align:left;min-width:180px;">Employee</th>
+              ${weeks.map(w => `<th style="text-align:center;min-width:120px;">${formatWeekHeader(w)}</th>`).join('')}
+            </tr>
+          </thead>
+          <tbody>
+            ${employeeRows || '<tr><td colspan="' + (weeks.length + 1) + '" style="color:var(--text-secondary);">No employees found.</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  `;
+};
+
+const loadAndRenderTimesheetMonitor = async () => {
+  const container = document.getElementById('ts-monitor-container');
+  if (!container) return;
+
+  try {
+    const data = await fetchTimesheetMonitor(tsMonitorMonth, tsMonitorYear, _tsMonitorEmployees);
+    container.innerHTML = buildTimesheetMonitorCard(data);
+
+    // Attach event listeners for month navigation
+    const prevBtn = document.getElementById('ts-mon-prev');
+    const nextBtn = document.getElementById('ts-mon-next');
+
+    if (prevBtn) {
+      prevBtn.onclick = () => {
+        tsMonitorMonth--;
+        if (tsMonitorMonth < 1) {
+          tsMonitorMonth = 12;
+          tsMonitorYear--;
+        }
+        container.innerHTML = `
+          <section class="card admin-card admin-card-span-full">
+            <div class="skeleton skeleton-heading-md" style="margin:20px;"></div>
+            <div class="skeleton skeleton-chart-line" style="margin:14px 20px;"></div>
+          </section>`;
+        loadAndRenderTimesheetMonitor();
+      };
+    }
+
+    if (nextBtn) {
+      nextBtn.onclick = () => {
+        tsMonitorMonth++;
+        if (tsMonitorMonth > 12) {
+          tsMonitorMonth = 1;
+          tsMonitorYear++;
+        }
+        container.innerHTML = `
+          <section class="card admin-card admin-card-span-full">
+            <div class="skeleton skeleton-heading-md" style="margin:20px;"></div>
+            <div class="skeleton skeleton-chart-line" style="margin:14px 20px;"></div>
+          </section>`;
+        loadAndRenderTimesheetMonitor();
+      };
+    }
+  } catch (err) {
+    console.warn('Error loading timesheet monitor:', err);
+    container.innerHTML = `
+      <section class="card admin-card admin-card-span-full">
+        <header class="card-heading">
+          <div>
+            <p class="eyebrow">Timesheet</p>
+            <h3>Timesheet Submissions Monitor</h3>
+          </div>
+        </header>
+        <p class="placeholder-text" style="padding: 20px; color: var(--danger);">Failed to load data. Please refresh.</p>
+      </section>
+    `;
+  }
+};
+
 const loadAdminDashboardData = async () => {
   const [attendanceResult, activeTasksResult, leavesResult, employeesResult, loginEventsResult] = await Promise.allSettled([
     fetchAttendanceMonitoring(),
@@ -268,6 +456,12 @@ const loadAdminDashboardData = async () => {
   const upcomingLeaves = leaveBundle.upcoming_leaves || [];
   const employees = employeesResult.status === 'fulfilled' ? (employeesResult.value || []) : [];
   const loginEvents = loginEventsResult.status === 'fulfilled' ? (loginEventsResult.value || {}) : {};
+
+  // Store employees for the timesheet monitor card
+  _tsMonitorEmployees = (employees || []).map(emp => ({
+    employee_id: emp.employee_id || emp.id || '',
+    name: emp.name || `${emp.first_name || ''} ${emp.last_name || ''}`.trim() || emp.employee_id || '',
+  })).filter(e => e.employee_id);
 
   const employeeNameMap = new Map(
     (employees || []).map((emp) => {
@@ -566,6 +760,13 @@ const buildDashboardLayout = (data) => {
           ${buildProjectLoadBars(data.activeTasks)}
         </section>
       </div>
+
+      <div id="ts-monitor-container">
+        <section class="card admin-card admin-card-span-full">
+          <div class="skeleton skeleton-heading-md" style="margin:20px;"></div>
+          <div class="skeleton skeleton-chart-line" style="margin:14px 20px;"></div>
+        </section>
+      </div>
     </section>
   `;
 };
@@ -629,6 +830,9 @@ const refreshAndRender = async (showSkeleton = true) => {
 
     attachRefreshAction();
     startElapsedTick();
+
+    // Async-load timesheet monitor card (non-blocking)
+    loadAndRenderTimesheetMonitor();
   } catch (err) {
     console.error('Failed to render admin dashboard', err);
     appContent.innerHTML = getPageContentHTML('Admin Dashboard', `
