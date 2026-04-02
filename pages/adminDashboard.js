@@ -248,6 +248,7 @@ let tsMonitorMonth = new Date().getMonth() + 1;
 let tsMonitorYear = new Date().getFullYear();
 let _tsMonitorEmployees = []; // populated from admin dashboard data
 let tsMonitorSearch = '';
+let tsMonitorSort = { key: 'employee_id', dir: 'asc' };
 let _lastTsMonitorData = null;
 
 const fetchTimesheetMonitor = async (month, year, employees) => {
@@ -329,6 +330,14 @@ const buildTimesheetMonitorCard = (tsData) => {
     return nameMatch || idMatch;
   });
 
+  filteredEmployees.sort((a, b) => {
+    const valA = String(a[tsMonitorSort.key] || '').toLowerCase();
+    const valB = String(b[tsMonitorSort.key] || '').toLowerCase();
+    if (valA < valB) return tsMonitorSort.dir === 'asc' ? -1 : 1;
+    if (valA > valB) return tsMonitorSort.dir === 'asc' ? 1 : -1;
+    return 0;
+  });
+
   const employeeRows = filteredEmployees.map(emp => {
     const weekCells = (emp.weeks || []).map(w => {
       const hoursLabel = w.hours > 0 ? `<div style="font-size:11px;color:var(--text-secondary);margin-top:2px;">${w.hours}h</div>` : '';
@@ -376,7 +385,13 @@ const buildTimesheetMonitorCard = (tsData) => {
         <table class="table leave-table">
           <thead>
             <tr>
-              <th style="text-align:left;min-width:180px;">Employee</th>
+              <th id="ts-mon-sort-emp" style="text-align:left;min-width:180px;cursor:pointer;user-select:none;" title="Click to sort by ID or Name">
+                Employee
+                <span style="display:inline-block;margin-left:8px;font-size:12px;color:var(--text-secondary);">
+                  ${tsMonitorSort.key === 'employee_name' ? 'Name' : 'ID'} 
+                  ${tsMonitorSort.dir === 'asc' ? '<i class="fa-solid fa-arrow-up"></i>' : '<i class="fa-solid fa-arrow-down"></i>'}
+                </span>
+              </th>
               ${weeks.map(w => `<th style="text-align:center;min-width:120px;">${formatWeekHeader(w)}</th>`).join('')}
             </tr>
           </thead>
@@ -393,6 +408,12 @@ const loadAndRenderTimesheetMonitor = async (forceFetch = true) => {
   const container = document.getElementById('ts-monitor-container');
   if (!container) return;
 
+  const wasSearchFocused = document.activeElement?.id === 'ts-mon-search';
+  let cursorPosition = 0;
+  if (wasSearchFocused) {
+    cursorPosition = document.activeElement.selectionStart;
+  }
+
   try {
     if (forceFetch || !_lastTsMonitorData) {
       _lastTsMonitorData = await fetchTimesheetMonitor(tsMonitorMonth, tsMonitorYear, _tsMonitorEmployees);
@@ -403,17 +424,30 @@ const loadAndRenderTimesheetMonitor = async (forceFetch = true) => {
     // Attach event listeners for search
     const searchInput = document.getElementById('ts-mon-search');
     if (searchInput) {
-      // Maintain focus if typing
-      if (document.activeElement?.id === 'ts-mon-search') {
-        const valLength = searchInput.value.length;
+      if (wasSearchFocused) {
         setTimeout(() => {
           searchInput.focus();
-          searchInput.setSelectionRange(valLength, valLength);
+          searchInput.setSelectionRange(cursorPosition, cursorPosition);
         }, 0);
       }
       
       searchInput.oninput = (e) => {
         tsMonitorSearch = e.target.value;
+        loadAndRenderTimesheetMonitor(false);
+      };
+    }
+
+    // Attach event listeners for sort
+    const sortTh = document.getElementById('ts-mon-sort-emp');
+    if (sortTh) {
+      sortTh.onclick = () => {
+        if (tsMonitorSort.key === 'employee_id') {
+          if (tsMonitorSort.dir === 'asc') tsMonitorSort.dir = 'desc';
+          else { tsMonitorSort.key = 'employee_name'; tsMonitorSort.dir = 'asc'; }
+        } else {
+          if (tsMonitorSort.dir === 'asc') tsMonitorSort.dir = 'desc';
+          else { tsMonitorSort.key = 'employee_id'; tsMonitorSort.dir = 'asc'; }
+        }
         loadAndRenderTimesheetMonitor(false);
       };
     }
