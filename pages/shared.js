@@ -250,46 +250,34 @@ const exportTeamTimesheetToExcel = () => {
         return Math.max(0, net - STD_WORK_SECS);        // OT = excess over standard
     };
 
+    // Build headers: each date column is immediately followed by its "Mon OT" column
     const headerCells = [
         '<th>Employee Name</th>',
         '<th>Employee ID</th>',
         '<th>Total</th>',
-        ...days.map((d) => `<th>${escapeTeamTimesheetCell(d.toLocaleDateString(undefined, { weekday: 'short', day: '2-digit', month: 'short' }))}</th>`),
-        '<th>OT Hours</th>'   // ← new column, appended after all day columns
+        ...days.flatMap((d) => {
+            const dayLabel = d.toLocaleDateString(undefined, { weekday: 'short', day: '2-digit', month: 'short' });
+            const otLabel = d.toLocaleDateString(undefined, { weekday: 'short' }) + ' OT';
+            return [
+                `<th>${escapeTeamTimesheetCell(dayLabel)}</th>`,
+                `<th>${escapeTeamTimesheetCell(otLabel)}</th>`
+            ];
+        })
     ].join('');
 
     const bodyRows = items.map((emp) => {
         const upEmp = String(emp.id || '').toUpperCase();
-        const dayValues = days.map((d) => {
+
+        // Build per-day pairs: { value (HH:MM / 'DO' / ''), otValue (HH:MM) }
+        const dayPairs = days.map((d) => {
             const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-            if (d.getDay() === 0) return 'DO';
-            if (dateStr > todayStr) return '';
+            const isSunday = d.getDay() === 0;
+            const isFuture = dateStr > todayStr;
 
-            let totalSecs = 0;
-            (logs || []).forEach((l) => {
-                const logEmpId = String(l.employee_id || '').toUpperCase();
-                const logDate = String(l.work_date || '').slice(0, 10);
-                if (logEmpId === upEmp && logDate === dateStr) {
-                    totalSecs += Number(l.seconds || 0);
-                }
-            });
-            return totalSecs > 0 ? formatTeamTimesheetDuration(totalSecs) : '';
-        });
+            if (isSunday) return { value: 'DO', otValue: '00:00' };
+            if (isFuture) return { value: '', otValue: '00:00' };
 
-        // --- existing total (unchanged) ---
-        const totalSecs = dayValues.reduce((acc, v) => {
-            if (!v || v === 'DO') return acc;
-            const m = String(v).match(/^(\d{2}):(\d{2})$/);
-            if (!m) return acc;
-            return acc + (parseInt(m[1], 10) * 3600) + (parseInt(m[2], 10) * 60);
-        }, 0);
-
-        // --- OT calculation (additive across all working days) ---
-        const totalOtSecs = days.reduce((otAcc, d, idx) => {
-            if (d.getDay() === 0) return otAcc;          // skip Sundays
-            const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-            if (dateStr > todayStr) return otAcc;         // skip future dates
-            // Re-read raw seconds for this day from logs (same source as dayValues)
+            // Sum raw seconds for this employee on this day
             let rawSecs = 0;
             (logs || []).forEach((l) => {
                 const logEmpId = String(l.employee_id || '').toUpperCase();
@@ -298,15 +286,33 @@ const exportTeamTimesheetToExcel = () => {
                     rawSecs += Number(l.seconds || 0);
                 }
             });
-            return otAcc + calcDayOtSecs(rawSecs);
+
+            // OT is computed inside the per-day loop, not after summing
+            const otSecs = calcDayOtSecs(rawSecs);
+
+            return {
+                value: rawSecs > 0 ? formatTeamTimesheetDuration(rawSecs) : '',
+                otValue: formatTeamTimesheetDuration(otSecs)   // always HH:MM, min 00:00
+            };
+        });
+
+        // --- existing total (unchanged) ---
+        const totalSecs = dayPairs.reduce((acc, { value }) => {
+            if (!value || value === 'DO') return acc;
+            const m = String(value).match(/^(\d{2}):(\d{2})$/);
+            if (!m) return acc;
+            return acc + (parseInt(m[1], 10) * 3600) + (parseInt(m[2], 10) * 60);
         }, 0);
 
         const cells = [
             `<td>${escapeTeamTimesheetCell(emp.name || '')}</td>`,
             `<td>${escapeTeamTimesheetCell(emp.id || '')}</td>`,
             `<td>${escapeTeamTimesheetCell(formatTeamTimesheetDuration(totalSecs))}</td>`,
-            ...dayValues.map((val) => `<td>${escapeTeamTimesheetCell(val)}</td>`),
-            `<td>${escapeTeamTimesheetCell(formatTeamTimesheetDuration(totalOtSecs))}</td>`  // OT Hours
+            // Interleave: day value then its OT column, per-day
+            ...dayPairs.flatMap(({ value, otValue }) => [
+                `<td>${escapeTeamTimesheetCell(value)}</td>`,
+                `<td>${escapeTeamTimesheetCell(otValue)}</td>`
+            ])
         ].join('');
 
         return `<tr>${cells}</tr>`;
