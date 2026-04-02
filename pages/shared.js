@@ -239,11 +239,23 @@ const exportTeamTimesheetToExcel = () => {
     const today = new Date();
     const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
 
+    // OT constants
+    const BREAK_SECS = 3600;          // 1-hour fixed break deducted per working day
+    const STD_WORK_SECS = 9 * 3600;   // 9-hour standard working day
+
+    // Helper: compute OT seconds for a single day's raw logged seconds
+    const calcDayOtSecs = (rawSecs) => {
+        if (!rawSecs || rawSecs <= 0) return 0;
+        const net = Math.max(0, rawSecs - BREAK_SECS); // deduct break; floor at 0
+        return Math.max(0, net - STD_WORK_SECS);        // OT = excess over standard
+    };
+
     const headerCells = [
         '<th>Employee Name</th>',
         '<th>Employee ID</th>',
         '<th>Total</th>',
-        ...days.map((d) => `<th>${escapeTeamTimesheetCell(d.toLocaleDateString(undefined, { weekday: 'short', day: '2-digit', month: 'short' }))}</th>`)
+        ...days.map((d) => `<th>${escapeTeamTimesheetCell(d.toLocaleDateString(undefined, { weekday: 'short', day: '2-digit', month: 'short' }))}</th>`),
+        '<th>OT Hours</th>'   // ← new column, appended after all day columns
     ].join('');
 
     const bodyRows = items.map((emp) => {
@@ -264,6 +276,7 @@ const exportTeamTimesheetToExcel = () => {
             return totalSecs > 0 ? formatTeamTimesheetDuration(totalSecs) : '';
         });
 
+        // --- existing total (unchanged) ---
         const totalSecs = dayValues.reduce((acc, v) => {
             if (!v || v === 'DO') return acc;
             const m = String(v).match(/^(\d{2}):(\d{2})$/);
@@ -271,11 +284,29 @@ const exportTeamTimesheetToExcel = () => {
             return acc + (parseInt(m[1], 10) * 3600) + (parseInt(m[2], 10) * 60);
         }, 0);
 
+        // --- OT calculation (additive across all working days) ---
+        const totalOtSecs = days.reduce((otAcc, d, idx) => {
+            if (d.getDay() === 0) return otAcc;          // skip Sundays
+            const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+            if (dateStr > todayStr) return otAcc;         // skip future dates
+            // Re-read raw seconds for this day from logs (same source as dayValues)
+            let rawSecs = 0;
+            (logs || []).forEach((l) => {
+                const logEmpId = String(l.employee_id || '').toUpperCase();
+                const logDate = String(l.work_date || '').slice(0, 10);
+                if (logEmpId === upEmp && logDate === dateStr) {
+                    rawSecs += Number(l.seconds || 0);
+                }
+            });
+            return otAcc + calcDayOtSecs(rawSecs);
+        }, 0);
+
         const cells = [
             `<td>${escapeTeamTimesheetCell(emp.name || '')}</td>`,
             `<td>${escapeTeamTimesheetCell(emp.id || '')}</td>`,
             `<td>${escapeTeamTimesheetCell(formatTeamTimesheetDuration(totalSecs))}</td>`,
-            ...dayValues.map((val) => `<td>${escapeTeamTimesheetCell(val)}</td>`)
+            ...dayValues.map((val) => `<td>${escapeTeamTimesheetCell(val)}</td>`),
+            `<td>${escapeTeamTimesheetCell(formatTeamTimesheetDuration(totalOtSecs))}</td>`  // OT Hours
         ].join('');
 
         return `<tr>${cells}</tr>`;
