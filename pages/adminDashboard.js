@@ -247,6 +247,8 @@ const fetchActiveTaskSnapshot = async () => {
 let tsMonitorMonth = new Date().getMonth() + 1;
 let tsMonitorYear = new Date().getFullYear();
 let _tsMonitorEmployees = []; // populated from admin dashboard data
+let tsMonitorSearch = '';
+let _lastTsMonitorData = null;
 
 const fetchTimesheetMonitor = async (month, year, employees) => {
   try {
@@ -319,7 +321,15 @@ const buildTimesheetMonitorCard = (tsData) => {
     } catch { return w.label || ''; }
   };
 
-  const employeeRows = employees.map(emp => {
+  const searchTerm = String(tsMonitorSearch || '').trim().toLowerCase();
+  const filteredEmployees = employees.filter(emp => {
+    if (!searchTerm) return true;
+    const nameMatch = String(emp.employee_name || '').toLowerCase().includes(searchTerm);
+    const idMatch = String(emp.employee_id || '').toLowerCase().includes(searchTerm);
+    return nameMatch || idMatch;
+  });
+
+  const employeeRows = filteredEmployees.map(emp => {
     const weekCells = (emp.weeks || []).map(w => {
       const hoursLabel = w.hours > 0 ? `<div style="font-size:11px;color:var(--text-secondary);margin-top:2px;">${w.hours}h</div>` : '';
       return `<td style="text-align:center;vertical-align:middle;">${statusBadge(w.status)}${hoursLabel}</td>`;
@@ -339,15 +349,21 @@ const buildTimesheetMonitorCard = (tsData) => {
 
   return `
     <section class="card admin-card admin-card-span-full" id="ts-monitor-card">
-      <header class="card-heading" style="flex-wrap:wrap;gap:12px;">
+      <header class="card-heading" style="flex-wrap:wrap;gap:12px;align-items:center;">
         <div>
           <p class="eyebrow">Timesheet</p>
           <h3>Timesheet Submissions Monitor</h3>
         </div>
-        <div style="display:flex;align-items:center;gap:12px;">
-          <button id="ts-mon-prev" class="btn btn-outline" style="padding:6px 10px;min-width:auto;border-radius:8px;"><i class="fa-solid fa-chevron-left"></i></button>
-          <span id="ts-mon-month-label" style="font-weight:600;font-size:14px;min-width:140px;text-align:center;">${escapeHtml(monthLabel)}</span>
-          <button id="ts-mon-next" class="btn btn-outline" style="padding:6px 10px;min-width:auto;border-radius:8px;"><i class="fa-solid fa-chevron-right"></i></button>
+        <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-left:auto;">
+          <div style="position:relative;">
+            <i class="fa-solid fa-search" style="position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--text-secondary);font-size:14px;"></i>
+            <input type="text" id="ts-mon-search" class="input" placeholder="Search by name or ID..." value="${escapeHtml(tsMonitorSearch)}" style="padding-left:32px;height:36px;border-radius:8px;border:1px solid var(--border-color);background:var(--bg-secondary);color:var(--text-primary);width:220px;font-size:14px;">
+          </div>
+          <div style="display:flex;align-items:center;border:1px solid var(--border-color);border-radius:8px;overflow:hidden;background:var(--bg-secondary);">
+            <button id="ts-mon-prev" class="btn btn-ghost" style="padding:4px 12px;height:36px;border-radius:0;border-right:1px solid var(--border-color);"><i class="fa-solid fa-chevron-left" style="font-size:12px;"></i></button>
+            <span id="ts-mon-month-label" style="font-weight:600;font-size:13px;min-width:110px;text-align:center;padding:0 12px;color:var(--text-primary);">${escapeHtml(monthLabel)}</span>
+            <button id="ts-mon-next" class="btn btn-ghost" style="padding:4px 12px;height:36px;border-radius:0;border-left:1px solid var(--border-color);"><i class="fa-solid fa-chevron-right" style="font-size:12px;"></i></button>
+          </div>
         </div>
       </header>
       <div style="padding:12px 20px 0;display:flex;gap:24px;flex-wrap:wrap;">
@@ -373,13 +389,34 @@ const buildTimesheetMonitorCard = (tsData) => {
   `;
 };
 
-const loadAndRenderTimesheetMonitor = async () => {
+const loadAndRenderTimesheetMonitor = async (forceFetch = true) => {
   const container = document.getElementById('ts-monitor-container');
   if (!container) return;
 
   try {
-    const data = await fetchTimesheetMonitor(tsMonitorMonth, tsMonitorYear, _tsMonitorEmployees);
+    if (forceFetch || !_lastTsMonitorData) {
+      _lastTsMonitorData = await fetchTimesheetMonitor(tsMonitorMonth, tsMonitorYear, _tsMonitorEmployees);
+    }
+    const data = _lastTsMonitorData;
     container.innerHTML = buildTimesheetMonitorCard(data);
+
+    // Attach event listeners for search
+    const searchInput = document.getElementById('ts-mon-search');
+    if (searchInput) {
+      // Maintain focus if typing
+      if (document.activeElement?.id === 'ts-mon-search') {
+        const valLength = searchInput.value.length;
+        setTimeout(() => {
+          searchInput.focus();
+          searchInput.setSelectionRange(valLength, valLength);
+        }, 0);
+      }
+      
+      searchInput.oninput = (e) => {
+        tsMonitorSearch = e.target.value;
+        loadAndRenderTimesheetMonitor(false);
+      };
+    }
 
     // Attach event listeners for month navigation
     const prevBtn = document.getElementById('ts-mon-prev');
@@ -387,6 +424,7 @@ const loadAndRenderTimesheetMonitor = async () => {
 
     if (prevBtn) {
       prevBtn.onclick = () => {
+        tsMonitorSearch = ''; // Reset search on month change if desired. Leaving it? The user didn't specify. Let's keep search across months.
         tsMonitorMonth--;
         if (tsMonitorMonth < 1) {
           tsMonitorMonth = 12;
@@ -397,7 +435,7 @@ const loadAndRenderTimesheetMonitor = async () => {
             <div class="skeleton skeleton-heading-md" style="margin:20px;"></div>
             <div class="skeleton skeleton-chart-line" style="margin:14px 20px;"></div>
           </section>`;
-        loadAndRenderTimesheetMonitor();
+        loadAndRenderTimesheetMonitor(true);
       };
     }
 
@@ -413,7 +451,7 @@ const loadAndRenderTimesheetMonitor = async () => {
             <div class="skeleton skeleton-heading-md" style="margin:20px;"></div>
             <div class="skeleton skeleton-chart-line" style="margin:14px 20px;"></div>
           </section>`;
-        loadAndRenderTimesheetMonitor();
+        loadAndRenderTimesheetMonitor(true);
       };
     }
   } catch (err) {
