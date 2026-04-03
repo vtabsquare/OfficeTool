@@ -243,13 +243,6 @@ const exportTeamTimesheetToExcel = () => {
     const BREAK_SECS = 3600;          // 1-hour fixed break deducted per working day
     const STD_WORK_SECS = 9 * 3600;   // 9-hour standard working day
 
-    // Helper: compute OT seconds for a single day's raw logged seconds
-    const calcDayOtSecs = (rawSecs) => {
-        if (!rawSecs || rawSecs <= 0) return 0;
-        const net = Math.max(0, rawSecs - BREAK_SECS); // deduct break; floor at 0
-        return Math.max(0, net - STD_WORK_SECS);        // OT = excess over standard
-    };
-
     // Build headers: each date column is immediately followed by its "Mon OT" column
     const headerCells = [
         '<th>Employee Name</th>',
@@ -268,14 +261,14 @@ const exportTeamTimesheetToExcel = () => {
     const bodyRows = items.map((emp) => {
         const upEmp = String(emp.id || '').toUpperCase();
 
-        // Build per-day pairs: { value (HH:MM / 'DO' / ''), otValue (HH:MM) }
+        // Build per-day pairs: { rawValue, stdValue (HH:MM), otValue (HH:MM) }
         const dayPairs = days.map((d) => {
             const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
             const isSunday = d.getDay() === 0;
             const isFuture = dateStr > todayStr;
 
-            if (isSunday) return { value: 'DO', otValue: '00:00' };
-            if (isFuture) return { value: '', otValue: '00:00' };
+            if (isSunday) return { rawValue: 'DO', stdValue: '00:00', otValue: '00:00' };
+            if (isFuture) return { rawValue: '', stdValue: '00:00', otValue: '00:00' };
 
             // Sum raw seconds for this employee on this day
             let rawSecs = 0;
@@ -287,19 +280,22 @@ const exportTeamTimesheetToExcel = () => {
                 }
             });
 
-            // OT is computed inside the per-day loop, not after summing
-            const otSecs = calcDayOtSecs(rawSecs);
+            // Standard and OT computed inside the per-day loop, not after summing
+            const netSecs = Math.max(0, rawSecs - BREAK_SECS); // deduct break; floor at 0
+            const stdSecs = rawSecs > 0 ? Math.min(netSecs, STD_WORK_SECS) : 0;
+            const otSecs = rawSecs > 0 ? Math.max(0, netSecs - STD_WORK_SECS) : 0;
 
             return {
-                value: rawSecs > 0 ? formatTeamTimesheetDuration(rawSecs) : '',
+                rawValue: rawSecs > 0 ? formatTeamTimesheetDuration(rawSecs) : '',
+                stdValue: rawSecs > 0 ? formatTeamTimesheetDuration(stdSecs) : '00:00',
                 otValue: formatTeamTimesheetDuration(otSecs)   // always HH:MM, min 00:00
             };
         });
 
         // --- existing total (unchanged) ---
-        const totalSecs = dayPairs.reduce((acc, { value }) => {
-            if (!value || value === 'DO') return acc;
-            const m = String(value).match(/^(\d{2}):(\d{2})$/);
+        const totalSecs = dayPairs.reduce((acc, { rawValue }) => {
+            if (!rawValue || rawValue === 'DO') return acc;
+            const m = String(rawValue).match(/^(\d{2}):(\d{2})$/);
             if (!m) return acc;
             return acc + (parseInt(m[1], 10) * 3600) + (parseInt(m[2], 10) * 60);
         }, 0);
@@ -308,9 +304,9 @@ const exportTeamTimesheetToExcel = () => {
             `<td>${escapeTeamTimesheetCell(emp.name || '')}</td>`,
             `<td>${escapeTeamTimesheetCell(emp.id || '')}</td>`,
             `<td>${escapeTeamTimesheetCell(formatTeamTimesheetDuration(totalSecs))}</td>`,
-            // Interleave: day value then its OT column, per-day
-            ...dayPairs.flatMap(({ value, otValue }) => [
-                `<td>${escapeTeamTimesheetCell(value)}</td>`,
+            // Interleave: standard value then its OT column, per-day
+            ...dayPairs.flatMap(({ stdValue, otValue }) => [
+                `<td>${escapeTeamTimesheetCell(stdValue)}</td>`,
                 `<td>${escapeTeamTimesheetCell(otValue)}</td>`
             ])
         ].join('');
