@@ -64,7 +64,7 @@ def add_cors_headers(response):
 import time as _time
 
 _FORCE_LOGOUT_SKIP_PATHS = {
-    "/api/login", "/api/auth/face-verified", "/api/auth/session-policy",
+    "/api/login", "/api/auth/face-verified",
     "/api/auth/force-logout", "/api/auth-events", "/api/password-reset",
     "/api/password-reset/verify", "/api/password-reset/change",
 }
