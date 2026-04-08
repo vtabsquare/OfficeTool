@@ -821,6 +821,75 @@ UPLOADS_DIR = os.path.join(STORAGE_DIR, "uploads")
 TEAM_HIERARCHY_STORAGE = os.path.join(STORAGE_DIR, "team_hierarchy.json")
 DOCUMENT_INDEX_FILE = os.path.join(STORAGE_DIR, "document_index.json")
 GOOGLE_TOKEN_FILE = os.path.join(STORAGE_DIR, "google_tokens.json")
+AUTH_SESSION_EVENTS_FILE = os.path.join(STORAGE_DIR, "auth_session_events.json")
+AUTH_SESSION_POLICY_FILE = os.path.join(STORAGE_DIR, "auth_session_policy.json")
+
+def _load_json_file(path, default_value):
+    try:
+        os.makedirs(STORAGE_DIR, exist_ok=True)
+        if not os.path.exists(path):
+            return default_value
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return default_value
+
+def _save_json_file(path, payload):
+    try:
+        os.makedirs(STORAGE_DIR, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+        return True
+    except Exception:
+        return False
+
+def _read_auth_session_events():
+    data = _load_json_file(AUTH_SESSION_EVENTS_FILE, [])
+    return data if isinstance(data, list) else []
+
+def _append_auth_session_event(event_type, req=None, employee_id=None, username=None, employee_name=None, reason=None, source="system"):
+    now = datetime.now(timezone.utc)
+    event = {
+        "id": str(uuid.uuid4()),
+        "event_type": str(event_type or "").strip().lower(),
+        "employee_id": str(employee_id or "").strip().upper(),
+        "username": str(username or "").strip().lower(),
+        "employee_name": str(employee_name or "").strip(),
+        "reason": str(reason or "").strip(),
+        "source": str(source or "system").strip().lower(),
+        "occurred_at_utc": now.isoformat(),
+        "date": now.date().isoformat(),
+        "ip_address": req.remote_addr if req else None,
+        "user_agent": req.headers.get("User-Agent", "") if req else "",
+    }
+    events = _read_auth_session_events()
+    events.append(event)
+    if len(events) > 10000:
+        events = events[-10000:]
+    _save_json_file(AUTH_SESSION_EVENTS_FILE, events)
+    return event
+
+def _get_auth_session_policy():
+    raw = _load_json_file(AUTH_SESSION_POLICY_FILE, {})
+    if not isinstance(raw, dict):
+        raw = {}
+    policy = {
+        "global_force_logout_at": raw.get("global_force_logout_at"),
+        "target_force_logout_at": raw.get("target_force_logout_at") if isinstance(raw.get("target_force_logout_at"), dict) else {},
+        "updated_at": raw.get("updated_at"),
+        "updated_by": raw.get("updated_by"),
+    }
+    return policy
+
+def _save_auth_session_policy(policy):
+    policy = policy or {}
+    safe_policy = {
+        "global_force_logout_at": policy.get("global_force_logout_at"),
+        "target_force_logout_at": policy.get("target_force_logout_at") if isinstance(policy.get("target_force_logout_at"), dict) else {},
+        "updated_at": policy.get("updated_at"),
+        "updated_by": policy.get("updated_by"),
+    }
+    return _save_json_file(AUTH_SESSION_POLICY_FILE, safe_policy)
 
 def _load_document_index():
     try:
@@ -3483,6 +3552,18 @@ def login():
                 # Generate token with face_verified=True (bypass face auth)
                 face_auth_token_verified = generate_face_auth_token(user_data, face_verified=True)
                 print(f"[FACEAUTH] Skipping face verification for employee (face_auth_required=False)")
+                try:
+                    _append_auth_session_event(
+                        "login",
+                        req=request,
+                        employee_id=employee_id_value,
+                        username=record.get("crc6f_username"),
+                        employee_name=display_name,
+                        reason="Login success",
+                        source="server",
+                    )
+                except Exception as evt_err:
+                    print(f"[AUTH-SESSION] Failed to append login event: {evt_err}")
                 return jsonify({
                     "status": "success",
                     "message": f"Welcome, {display_name}",
@@ -3684,6 +3765,18 @@ def face_verified_callback():
         new_token = generate_face_auth_token(user_data, face_verified=True)
         
         print(f"[FACEAUTH] Face verified for employee: {normalized_emp_id}")
+        try:
+            _append_auth_session_event(
+                "login",
+                req=request,
+                employee_id=normalized_emp_id,
+                username=employee_email,
+                employee_name=employee_name,
+                reason="Face verification completed",
+                source="server",
+            )
+        except Exception as evt_err:
+            print(f"[AUTH-SESSION] Failed to append face-verified login event: {evt_err}")
         
         return jsonify({
             "success": True,
@@ -15376,6 +15469,118 @@ def get_login_events():
         })
     except Exception as e:
         print(f"[ERROR] get_login_events: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/auth-events", methods=["POST"])
+def create_auth_event():
+    try:
+        data = request.get_json(force=True) or {}
+        event_type = (data.get("event_type") or "").strip().lower()
+        if event_type not in {"login", "logout", "force_logout"}:
+            return jsonify({"success": False, "error": "event_type must be login/logout/force_logout"}), 400
+
+        event = _append_auth_session_event(
+            event_type=event_type,
+            req=request,
+            employee_id=data.get("employee_id"),
+            username=data.get("username"),
+            employee_name=data.get("employee_name"),
+            reason=data.get("reason"),
+            source=data.get("source") or "client",
+        )
+        return jsonify({"success": True, "event": event}), 201
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/auth-events", methods=["GET"])
+def list_auth_events():
+    try:
+        employee_id = (request.args.get("employee_id") or "").strip().upper()
+        event_type = (request.args.get("event_type") or "").strip().lower()
+        limit_raw = request.args.get("limit")
+        try:
+            limit = int(limit_raw) if limit_raw is not None else 200
+        except Exception:
+            limit = 200
+        limit = max(1, min(limit, 1000))
+
+        rows = _read_auth_session_events()
+        if employee_id:
+            rows = [r for r in rows if str(r.get("employee_id") or "").strip().upper() == employee_id]
+        if event_type:
+            rows = [r for r in rows if str(r.get("event_type") or "").strip().lower() == event_type]
+
+        rows = rows[-limit:]
+        rows.reverse()
+        return jsonify({"success": True, "items": rows, "count": len(rows)})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/auth/session-policy", methods=["GET"])
+def get_auth_session_policy():
+    try:
+        employee_id = (request.args.get("employee_id") or "").strip().upper()
+        policy = _get_auth_session_policy()
+        return jsonify({
+            "success": True,
+            "policy": {
+                "global_force_logout_at": policy.get("global_force_logout_at"),
+                "target_force_logout_at": policy.get("target_force_logout_at", {}).get(employee_id) if employee_id else None,
+                "updated_at": policy.get("updated_at"),
+                "updated_by": policy.get("updated_by"),
+            },
+        })
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/auth/force-logout", methods=["POST"])
+def trigger_force_logout():
+    try:
+        data = request.get_json(force=True) or {}
+        employee_id = (data.get("employee_id") or "").strip().upper()
+        reason = (data.get("reason") or "").strip() or "Admin force logout"
+        actor = (data.get("requested_by") or "").strip() or "admin"
+
+        now_iso = datetime.now(timezone.utc).isoformat()
+        policy = _get_auth_session_policy()
+        target_map = policy.get("target_force_logout_at") if isinstance(policy.get("target_force_logout_at"), dict) else {}
+
+        if employee_id:
+            target_map[employee_id] = now_iso
+        else:
+            policy["global_force_logout_at"] = now_iso
+
+        policy["target_force_logout_at"] = target_map
+        policy["updated_at"] = now_iso
+        policy["updated_by"] = actor
+
+        if not _save_auth_session_policy(policy):
+            return jsonify({"success": False, "error": "Failed to persist force-logout policy"}), 500
+
+        try:
+            _append_auth_session_event(
+                "force_logout",
+                req=request,
+                employee_id=employee_id,
+                username=data.get("username"),
+                employee_name=data.get("employee_name"),
+                reason=reason,
+                source="admin",
+            )
+        except Exception as evt_err:
+            print(f"[AUTH-SESSION] Failed to append force-logout event: {evt_err}")
+
+        return jsonify({
+            "success": True,
+            "forced": "all" if not employee_id else employee_id,
+            "forced_at": now_iso,
+            "reason": reason,
+        })
+    except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
 
 

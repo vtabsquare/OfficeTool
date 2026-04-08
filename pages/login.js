@@ -1702,6 +1702,7 @@ export const renderLoginPage = () => {
         // Store login date for midnight force-logout guard (IST)
         const _istOff = 5.5 * 60 * 60 * 1000;
         localStorage.setItem("login_date", new Date(Date.now() + (new Date().getTimezoneOffset() * 60000) + _istOff).toISOString().slice(0, 10));
+        localStorage.setItem("auth_session_started_at", new Date().toISOString());
       } catch {}
 
       try {
@@ -1887,6 +1888,7 @@ export const renderLoginPage = () => {
               // Store login date for midnight force-logout guard (IST)
               const _istOff2 = 5.5 * 60 * 60 * 1000;
               localStorage.setItem("login_date", new Date(Date.now() + (new Date().getTimezoneOffset() * 60000) + _istOff2).toISOString().slice(0, 10));
+              localStorage.setItem("auth_session_started_at", new Date().toISOString());
             } catch {}
             startNotificationPolling();
             setTimeout(() => {

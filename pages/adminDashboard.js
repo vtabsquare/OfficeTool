@@ -111,7 +111,7 @@ const scheduleLiveRefresh = () => {
   }
   liveRefreshDebounceId = setTimeout(() => {
     liveRefreshDebounceId = null;
-    refreshAndRender(false);
+    refreshAndRender(false, 'live');
   }, 250);
 };
 
@@ -617,6 +617,112 @@ const loadAdminDashboardData = async () => {
   };
 };
 
+const getVisibleActiveTasks = (activeTasks = []) =>
+  (activeTasks || []).filter(
+    (task) =>
+      task.employee_id !== 'VTAB-0001' &&
+      (task.employee_name || task.employee_id) !== 'Vtab Admin' &&
+      task.employee_id !== 'EMP023' &&
+      (task.employee_name || task.employee_id) !== 'EMP023'
+  );
+
+const buildLiveWorkView = ({ activeTasks = [], idleEmployeeRows = [] } = {}) => {
+  const visibleActiveTasks = getVisibleActiveTasks(activeTasks);
+
+  const activeTaskRows = visibleActiveTasks.length
+    ? visibleActiveTasks
+        .map(
+          (task) => `
+      <tr>
+        <td>${escapeHtml(task.employee_name || task.employee_id)}</td>
+        <td>${escapeHtml(task.task_name || task.task_id || task.task_guid)}</td>
+        <td>${escapeHtml(task.project_name || task.project_id || '--')}</td>
+        <td class="mono" data-elapsed data-started-at="${escapeHtml(task.started_at_utc || '')}">${formatDuration(task.elapsed_seconds)}</td>
+      </tr>
+    `
+        )
+        .join('')
+    : '<tr><td colspan="4" style="color: var(--text-secondary);">No active task sessions right now.</td></tr>';
+
+  const idleRows = (idleEmployeeRows || []).length
+    ? (idleEmployeeRows || [])
+        .map(
+          (row) => `
+      <tr>
+        <td>${escapeHtml(row.employee_name || row.employee_id)}</td>
+        <td colspan="2" style="color:var(--text-secondary);">Checked in — no task started</td>
+        <td>${escapeHtml(formatCheckInTime(row.check_in_time))}</td>
+      </tr>
+    `
+        )
+        .join('')
+    : '';
+
+  const idleNoteHtml = (idleEmployeeRows || []).length
+    ? `<div style="padding:6px 16px 10px;font-size:0.75rem;color:var(--text-secondary);"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#f59e0b;margin-right:5px;"></span>${(idleEmployeeRows || []).length} employee${(idleEmployeeRows || []).length > 1 ? 's' : ''} checked in but no task started</div>`
+    : '';
+
+  return {
+    activeTaskRows,
+    idleRows,
+    idleNoteHtml,
+    activeTaskCount: visibleActiveTasks.length,
+  };
+};
+
+const loadLiveWorkData = async () => {
+  const [activeTasksResult, loginEventsResult] = await Promise.allSettled([
+    fetchActiveTaskSnapshot(),
+    fetchLoginEvents(),
+  ]);
+
+  if (activeTasksResult.status !== 'fulfilled') {
+    throw activeTasksResult.reason || new Error('Failed to load active tasks');
+  }
+
+  const activeTasks = activeTasksResult.value || {};
+  const loginEvents = loginEventsResult.status === 'fulfilled' ? (loginEventsResult.value || {}) : {};
+
+  const activeTaskEmpIds = new Set(
+    (activeTasks.items || activeTasks || []).map((task) => normalizeEmpId(task.employee_id))
+  );
+
+  const idleEmployeeRows = (loginEvents.daily_summary || [])
+    .filter((row) => {
+      const id = normalizeEmpId(row.employee_id);
+      return Boolean(row.check_in_time) && !row.check_out_time && !activeTaskEmpIds.has(id);
+    })
+    .map((row) => {
+      const id = normalizeEmpId(row.employee_id);
+      return {
+        employee_id: id,
+        employee_name: String(row.employee_name || row.employee_id || id),
+        check_in_time: row.check_in_time || '',
+      };
+    });
+
+  return {
+    activeTasks: activeTasks.items || [],
+    idleEmployeeRows,
+  };
+};
+
+const patchLiveWorkSection = (liveData = {}) => {
+  const rowsBody = document.getElementById('admin-live-work-body');
+  const idleNoteWrap = document.getElementById('admin-live-work-idle-note');
+  const activeTaskCountEl = document.getElementById('admin-kpi-active-task-count');
+
+  if (!rowsBody || !idleNoteWrap) return false;
+
+  const live = buildLiveWorkView(liveData);
+  rowsBody.innerHTML = `${live.activeTaskRows}${live.idleRows}`;
+  idleNoteWrap.innerHTML = live.idleNoteHtml;
+  if (activeTaskCountEl) {
+    activeTaskCountEl.textContent = String(live.activeTaskCount);
+  }
+  return true;
+};
+
 const buildDashboardLayout = (data) => {
   const combinedLeaveRows = [
     ...(data.leaveRows || []),
@@ -673,28 +779,7 @@ const buildDashboardLayout = (data) => {
     `).join('')
     : '<tr><td colspan="5" style="color: var(--text-secondary);">No login activity available for today.</td></tr>';
 
-  const activeTaskRows = data.activeTasks.length
-    ? data.activeTasks
-        .filter(task => task.employee_id !== 'VTAB-0001' && (task.employee_name || task.employee_id) !== 'Vtab Admin' && task.employee_id !== 'EMP023' && (task.employee_name || task.employee_id) !== 'EMP023')
-        .map((task) => `
-      <tr>
-        <td>${escapeHtml(task.employee_name || task.employee_id)}</td>
-        <td>${escapeHtml(task.task_name || task.task_id || task.task_guid)}</td>
-        <td>${escapeHtml(task.project_name || task.project_id || '--')}</td>
-        <td class="mono" data-elapsed data-started-at="${escapeHtml(task.started_at_utc || '')}">${formatDuration(task.elapsed_seconds)}</td>
-      </tr>
-    `).join('')
-    : '<tr><td colspan="4" style="color: var(--text-secondary);">No active task sessions right now.</td></tr>';
-
-  const idleRows = (data.idleEmployeeRows || []).length
-    ? (data.idleEmployeeRows || []).map((row) => `
-      <tr>
-        <td>${escapeHtml(row.employee_name || row.employee_id)}</td>
-        <td colspan="2" style="color:var(--text-secondary);">Checked in — no task started</td>
-        <td>${escapeHtml(formatCheckInTime(row.check_in_time))}</td>
-      </tr>
-    `).join('')
-    : '';
+  const liveWork = buildLiveWorkView(data);
 
   return `
     <section class="admin-dashboard">
@@ -702,7 +787,7 @@ const buildDashboardLayout = (data) => {
         <div class="hero-stat"><strong>${data.attendance.total_employees || 0}</strong><span>Total Employees</span></div>
         <div class="hero-stat"><strong>${data.attendance.checked_in_count || 0}</strong><span>Checked In</span></div>
         <div class="hero-stat"><strong>${data.attendance.not_checked_in_count || 0}</strong><span>Not Checked In</span></div>
-        <div class="hero-stat"><strong>${data.activeTasks.length}</strong><span>Active Tasks</span></div>
+        <div class="hero-stat"><strong id="admin-kpi-active-task-count">${liveWork.activeTaskCount}</strong><span>Active Tasks</span></div>
       </div>
 
       <div class="dashboard-grid admin-dashboard-grid">
@@ -724,13 +809,13 @@ const buildDashboardLayout = (data) => {
                   <th>Running</th>
                 </tr>
               </thead>
-              <tbody>
-                ${activeTaskRows}
-                ${idleRows}
+              <tbody id="admin-live-work-body">
+                ${liveWork.activeTaskRows}
+                ${liveWork.idleRows}
               </tbody>
             </table>
           </div>
-          ${(data.idleEmployeeRows || []).length ? `<div style="padding:6px 16px 10px;font-size:0.75rem;color:var(--text-secondary);"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#f59e0b;margin-right:5px;"></span>${(data.idleEmployeeRows || []).length} employee${(data.idleEmployeeRows || []).length > 1 ? 's' : ''} checked in but no task started</div>` : ''}
+          <div id="admin-live-work-idle-note">${liveWork.idleNoteHtml}</div>
         </section>
 
         <section class="card admin-card">
@@ -878,7 +963,7 @@ const attachRefreshAction = () => {
   };
 };
 
-const refreshAndRender = async (showSkeleton = true) => {
+const refreshAndRender = async (showSkeleton = true, scope = 'full') => {
   if (refreshInFlight) return;
   refreshInFlight = true;
 
@@ -889,6 +974,12 @@ const refreshAndRender = async (showSkeleton = true) => {
   }
 
   try {
+    if (scope === 'live' && !showSkeleton) {
+      const liveData = await loadLiveWorkData();
+      const patched = patchLiveWorkSection(liveData);
+      if (patched) return;
+    }
+
     if (showSkeleton) {
       appContent.innerHTML = getPageContentHTML('Admin Dashboard', buildSkeleton(), '<button id="admin-dashboard-refresh" class="btn btn-outline"><i class="fa-solid fa-rotate"></i> Refresh</button>');
     }
@@ -944,6 +1035,6 @@ export const renderAdminDashboardPage = async () => {
       stopDashboardTimers();
       return;
     }
-    await refreshAndRender(false);
+    await refreshAndRender(false, 'live');
   }, 15000);
 };

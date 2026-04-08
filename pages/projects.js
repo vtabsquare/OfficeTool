@@ -3140,7 +3140,7 @@ const crmTab = async (project) => {
             </button>
           </div>
         </div>
-        <div style="padding:0 16px 16px;">
+        <div class="kan-list-body" style="padding:0 16px 16px;">
           ${itemsHtml}
         </div>
       </div>
@@ -3150,7 +3150,7 @@ const crmTab = async (project) => {
 
   // Add Plus button for creating new column
   const addColumnButton = `
-    <div class="kan-list add-column-btn" onclick="showAddColumnModal('${project.id}', '${boardParam}')" style="background:transparent; border:2px dashed #cbd5e1; min-height:120px; display:flex; align-items:center; justify-content:center; cursor:pointer; transition:all 0.3s ease;">
+    <div class="kan-list add-column-btn" onclick="showAddColumnModal('${project.id}', '${boardParam}')" style="background:transparent; border:2px dashed #cbd5e1; display:flex; align-items:center; justify-content:center; cursor:pointer; transition:all 0.3s ease;">
       <div style="text-align:center; color:#64748b;">
         <i class="fa-solid fa-plus" style="font-size:24px; margin-bottom:8px; display:block;"></i>
         <span style="font-size:14px; font-weight:500;">Add Column</span>
@@ -3182,6 +3182,25 @@ const crmTab = async (project) => {
       }
       .kan-head {
         padding-right: 8px;
+      }
+      .kan-list {
+        min-width: 260px;
+        width: 260px;
+        max-height: calc(100vh - 240px);
+        min-height: 460px;
+        display: flex;
+        flex-direction: column;
+      }
+      .kan-list-body {
+        flex: 1;
+        min-height: 0;
+        overflow-y: auto;
+        overflow-x: hidden;
+        scrollbar-width: thin;
+      }
+      .add-column-btn {
+        min-height: 460px;
+        max-height: calc(100vh - 240px);
       }
     </style>
   `;
@@ -3488,7 +3507,8 @@ const enableDragDrop = (projectId, boardId) => {
       if (currentCol === newCol) return;
 
       // Move visually
-      list.appendChild(card);
+      const targetBody = list.querySelector(".kan-list-body") || list;
+      targetBody.appendChild(card);
       card.classList.add("drop-animate");
       setTimeout(() => card.classList.remove("drop-animate"), 400);
 

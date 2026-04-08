@@ -3,13 +3,14 @@
 import { state } from '../state.js';
 import { getPageContentHTML } from '../utils.js';
 import { renderModal, closeModal } from '../components/modal.js';
-import { listLoginAccounts, createLoginAccount, updateLoginAccount, deleteLoginAccount, fetchLoginEvents, updateLoginActivity } from '../features/loginSettingsApi.js';
+import { listLoginAccounts, createLoginAccount, updateLoginAccount, deleteLoginAccount, fetchLoginEvents, updateLoginActivity, fetchAuthSessionEvents, triggerForceLogout } from '../features/loginSettingsApi.js';
 import { listAllEmployees } from '../features/employeeApi.js';
 import { isAdminUser, isL2OrL3User } from '../utils/accessControl.js';
 
 let currentLoginSettingsView = 'accounts';
 let cachedLoginAccounts = [];
 let cachedLoginActivitySummary = [];
+let cachedAuthSessionEvents = [];
 let loginAccountNameIndex = {};
 let cachedEmployeeDirectory = [];
 
@@ -292,6 +293,7 @@ const buildLoginAccountNameIndex = (accounts = [], employees = []) => {
             `${emp.first_name || ''} ${emp.last_name || ''}`.trim();
         addToIndex(id, displayName);
     });
+
 };
 
 const resolveEmployeeName = (employeeId) => {
@@ -375,6 +377,85 @@ const buildLoginActivityHTML = (dailySummary = []) => {
     `;
 };
 
+const formatAuthEventType = (eventType = '') => {
+    const normalized = String(eventType || '').trim().toLowerCase();
+    if (normalized === 'login') return 'Login';
+    if (normalized === 'logout') return 'Logout';
+    if (normalized === 'force_logout') return 'Force Logout';
+    return normalized || '-';
+};
+
+const formatAuthEventTime = (value) => {
+    if (!value) return '-';
+    try {
+        const d = new Date(value);
+        if (!isNaN(d.getTime())) {
+            return d.toLocaleString('en-IN', {
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit',
+            });
+        }
+    } catch {
+    }
+    return String(value);
+};
+
+const buildAuthSessionsHTML = (events = []) => {
+    if (!events.length) {
+        return `
+            <div class="card" style="margin-top: 24px;">
+                <h3><i class="fa-solid fa-right-to-bracket"></i> Auth Session Activity</h3>
+                <p class="allocation-description">Actual login/logout events (not check-in/check-out).</p>
+                <p class="placeholder-text">No auth session activity recorded yet.</p>
+            </div>
+        `;
+    }
+
+    const rows = events.map((item) => `
+        <tr>
+            <td>${item.employee_id || '-'}</td>
+            <td>${item.employee_name || '-'}</td>
+            <td>${item.username || '-'}</td>
+            <td><span class="status-badge">${formatAuthEventType(item.event_type)}</span></td>
+            <td>${formatAuthEventTime(item.occurred_at_utc)}</td>
+            <td>${item.reason || '-'}</td>
+        </tr>
+    `).join('');
+
+    return `
+        <div class="card" style="margin-top: 24px;">
+            <h3><i class="fa-solid fa-right-to-bracket"></i> Auth Session Activity</h3>
+            <p class="allocation-description">Actual login/logout events (not check-in/check-out).</p>
+            <div style="display:flex; gap:10px; margin-bottom:12px;">
+                <button id="force-logout-all-btn" class="btn btn-outline" style="border-color:#dc2626; color:#dc2626;">
+                    <i class="fa-solid fa-power-off"></i> Force Logout All Users
+                </button>
+            </div>
+            <div class="table-container login-settings-table">
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>Employee ID</th>
+                            <th>Name</th>
+                            <th>Username</th>
+                            <th>Event</th>
+                            <th>Time</th>
+                            <th>Reason</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${rows}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    `;
+};
+
 const buildTableHTML = (accounts = []) => {
     const rows = accounts.map((acc) => `
         <tr>
@@ -390,6 +471,9 @@ const buildTableHTML = (accounts = []) => {
                 <div class="table-actions">
                     <button class="icon-btn login-edit-btn" title="Edit" data-id="${acc.id}">
                         <i class="fa-solid fa-pen-to-square"></i>
+                    </button>
+                    <button class="icon-btn login-force-logout-btn" title="Force Logout" data-id="${acc.id}" style="color:#dc2626;">
+                        <i class="fa-solid fa-power-off"></i>
                     </button>
                     <button class="icon-btn login-delete-btn" title="Delete" data-id="${acc.id}">
                         <i class="fa-solid fa-trash"></i>
@@ -425,14 +509,17 @@ const buildTableHTML = (accounts = []) => {
     `;
 };
 
-const getLoginSettingsContentHTML = (view, accounts = [], dailySummary = []) => {
+const getLoginSettingsContentHTML = (view, accounts = [], dailySummary = [], authEvents = []) => {
     if (view === 'activity') {
         return buildLoginActivityHTML(dailySummary);
+    }
+    if (view === 'sessions') {
+        return buildAuthSessionsHTML(authEvents);
     }
     return buildTableHTML(accounts);
 };
 
-const buildLoginSettingsLayout = (accounts = [], dailySummary = []) => {
+const buildLoginSettingsLayout = (accounts = [], dailySummary = [], authEvents = []) => {
     const sidebarOption = (view, label, icon) => {
         const isActive = currentLoginSettingsView === view;
         const countMarkup =
@@ -445,11 +532,15 @@ const buildLoginSettingsLayout = (accounts = [], dailySummary = []) => {
                     `;
                   })()
                 : `<span style="margin-left:auto; font-size:12px; color:#cbd5f5;">${accounts.length}</span>`;
+        const count = view === 'sessions' ? authEvents.length : (view === 'activity' ? '' : accounts.length);
+        const defaultCountMarkup = view === 'sessions'
+            ? `<span style="margin-left:auto; font-size:12px; color:#cbd5f5;">${count}</span>`
+            : `<span style="margin-left:auto; font-size:12px; color:#cbd5f5;">${accounts.length}</span>`;
         return `
             <div class="inbox-category login-settings-view ${isActive ? 'active' : ''}" data-view="${view}">
                 <i class="fa-solid ${icon}" style="margin-right:8px;"></i>
                 <span>${label}</span>
-                ${countMarkup}
+                ${view === 'activity' ? countMarkup : defaultCountMarkup}
             </div>
         `;
     };
@@ -459,6 +550,7 @@ const buildLoginSettingsLayout = (accounts = [], dailySummary = []) => {
             <div class="inbox-sidebar login-settings-sidebar">
                 ${sidebarOption('accounts', 'Login Accounts', 'fa-user-shield')}
                 ${sidebarOption('activity', 'Login Activity', 'fa-clock-rotate-left')}
+                ${sidebarOption('sessions', 'Auth Sessions', 'fa-right-to-bracket')}
             </div>
             <div class="inbox-content login-settings-content">
                 <div class="login-settings-content-body"></div>
@@ -473,7 +565,8 @@ const refreshLoginSettingsContent = () => {
     container.innerHTML = getLoginSettingsContentHTML(
         currentLoginSettingsView,
         cachedLoginAccounts,
-        cachedLoginActivitySummary
+        cachedLoginActivitySummary,
+        cachedAuthSessionEvents
     );
 
     if (currentLoginSettingsView === 'accounts') {
@@ -483,6 +576,25 @@ const refreshLoginSettingsContent = () => {
     const addBtn = document.getElementById('add-login-account-btn');
     if (addBtn) {
         addBtn.style.display = currentLoginSettingsView === 'accounts' ? 'inline-flex' : 'none';
+    }
+
+    const forceAllBtn = document.getElementById('force-logout-all-btn');
+    if (forceAllBtn) {
+        forceAllBtn.onclick = async () => {
+            if (!confirm('Force logout all currently logged-in users?')) return;
+            try {
+                await triggerForceLogout({
+                    requested_by: state.user?.email || state.user?.id || 'admin',
+                    reason: 'Admin forced logout for all users',
+                });
+                alert('Force logout triggered for all users. Active sessions will be redirected to login.');
+                const authData = await fetchAuthSessionEvents({ limit: 200 }).catch(() => ({ items: [] }));
+                cachedAuthSessionEvents = authData.items || [];
+                refreshLoginSettingsContent();
+            } catch (err) {
+                alert(err.message || 'Failed to force logout all users');
+            }
+        };
     }
 };
 
@@ -499,6 +611,7 @@ const attachLoginSettingsViewHandlers = () => {
             refreshLoginSettingsContent();
         });
     });
+
 };
 
 const openAddLoginModal = () => {
@@ -704,6 +817,34 @@ const attachRowHandlers = (accounts) => {
             }
         });
     });
+
+    const forceLogoutButtons = document.querySelectorAll('.login-force-logout-btn');
+    forceLogoutButtons.forEach((btn) => {
+        btn.addEventListener('click', async () => {
+            const id = btn.getAttribute('data-id');
+            const acc = accounts.find((a) => String(a.id) === String(id));
+            const employeeId = String(acc?.userId || '').trim().toUpperCase();
+            if (!employeeId) {
+                alert('Employee ID missing for this login account.');
+                return;
+            }
+            if (!confirm(`Force logout ${acc?.username || employeeId}?`)) return;
+            try {
+                await triggerForceLogout({
+                    employee_id: employeeId,
+                    username: acc?.username || '',
+                    employee_name: acc?.employeeName || '',
+                    requested_by: state.user?.email || state.user?.id || 'admin',
+                    reason: 'Admin forced logout',
+                });
+                alert(`Force logout triggered for ${acc?.username || employeeId}`);
+                const authData = await fetchAuthSessionEvents({ limit: 200 }).catch(() => ({ items: [] }));
+                cachedAuthSessionEvents = authData.items || [];
+            } catch (err) {
+                alert(err.message || 'Failed to force logout user');
+            }
+        });
+    });
 };
 
 export const renderLoginSettingsPage = async () => {
@@ -746,18 +887,20 @@ export const renderLoginSettingsPage = async () => {
 
     try {
         // Fetch login accounts and login events in parallel
-        const [accounts, loginEventsData, employeeDirectory] = await Promise.all([
+        const [accounts, loginEventsData, employeeDirectory, authEventsData] = await Promise.all([
             listLoginAccounts(),
             fetchLoginEvents().catch(() => ({ daily_summary: [] })),
-            listAllEmployees().catch(() => [])
+            listAllEmployees().catch(() => []),
+            fetchAuthSessionEvents({ limit: 200 }).catch(() => ({ items: [] }))
         ]);
         
         cachedLoginAccounts = accounts;
         cachedLoginActivitySummary = loginEventsData.daily_summary || [];
+        cachedAuthSessionEvents = authEventsData.items || [];
         cachedEmployeeDirectory = employeeDirectory;
         buildLoginAccountNameIndex(cachedLoginAccounts, cachedEmployeeDirectory);
 
-        const layoutHTML = buildLoginSettingsLayout(cachedLoginAccounts, cachedLoginActivitySummary);
+        const layoutHTML = buildLoginSettingsLayout(cachedLoginAccounts, cachedLoginActivitySummary, cachedAuthSessionEvents);
         document.getElementById('app-content').innerHTML = getPageContentHTML('Login Settings', layoutHTML, controls);
 
         const addBtn = document.getElementById('add-login-account-btn');

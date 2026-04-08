@@ -30,12 +30,77 @@ import { deriveRoleInfo } from './utils/accessHelpers.js';
 import { runWithSubmissionLoading } from './utils/submissionLoading.js';
 import { API_BASE_URL as CONFIG_API_BASE_URL } from './config.js';
 import { initFaceAuthAlerts, refreshFaceAuthStatus, getFaceAuthReturnUrl } from './features/faceAuthAlert.js';
+import { createAuthSessionEvent, fetchAuthSessionPolicy } from './features/loginSettingsApi.js';
 
 const normalizeApiBase = () => String(CONFIG_API_BASE_URL).replace(/\/$/, '');
 
 const THEME_STORAGE_KEY = 'theme';
 const THEME_OVERRIDE_KEY = 'theme_override';
 let themeAutoTimer = null;
+let authPolicyPollTimer = null;
+
+const AUTH_SESSION_STARTED_AT_KEY = 'auth_session_started_at';
+
+const getCurrentAuthUser = () => {
+  try {
+    const raw = localStorage.getItem('auth');
+    const parsed = raw ? JSON.parse(raw) : null;
+    return parsed?.user || state.user || null;
+  } catch {
+    return state.user || null;
+  }
+};
+
+const ensureAuthSessionStartedAt = () => {
+  try {
+    const existing = localStorage.getItem(AUTH_SESSION_STARTED_AT_KEY);
+    if (existing) return existing;
+    const nowIso = new Date().toISOString();
+    localStorage.setItem(AUTH_SESSION_STARTED_AT_KEY, nowIso);
+    return nowIso;
+  } catch {
+    return new Date().toISOString();
+  }
+};
+
+const reportAuthEvent = (eventType = 'logout', reason = '') => {
+  try {
+    const user = getCurrentAuthUser() || {};
+    const payload = {
+      event_type: eventType,
+      employee_id: user.employee_id || user.id || '',
+      username: user.email || '',
+      employee_name: user.name || '',
+      reason: reason || '',
+      source: 'client',
+    };
+    try {
+      const beaconUrl = `${normalizeApiBase()}/api/auth-events`;
+      if (typeof navigator !== 'undefined' && typeof navigator.sendBeacon === 'function') {
+        const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
+        navigator.sendBeacon(beaconUrl, blob);
+      } else {
+        createAuthSessionEvent(payload).catch(() => {});
+      }
+    } catch {
+      createAuthSessionEvent(payload).catch(() => {});
+    }
+  } catch {}
+};
+
+const isPolicyNewerThanSession = (policyTs, sessionTs) => {
+  const p = Date.parse(policyTs || '');
+  const s = Date.parse(sessionTs || '');
+  if (Number.isNaN(p) || Number.isNaN(s)) return false;
+  return p > s;
+};
+
+const stopAuthPolicyPolling = () => {
+  if (authPolicyPollTimer) {
+    clearInterval(authPolicyPollTimer);
+    authPolicyPollTimer = null;
+  }
+};
 
 const readTimerStateFromStorage = (key) => {
   try {
@@ -837,6 +902,7 @@ const handleFaceAuthCallback = () => {
       localStorage.setItem('role', user.role || 'L1');
       // Store login date for midnight force-logout guard (IST)
       { const _io = 5.5*60*60*1000; localStorage.setItem('login_date', new Date(Date.now()+(new Date().getTimezoneOffset()*60000)+_io).toISOString().slice(0,10)); }
+      localStorage.setItem(AUTH_SESSION_STARTED_AT_KEY, new Date().toISOString());
       localStorage.removeItem('pending_user');
       
       // Store the current timestamp as last verification time (resets the 2-hour timer)
@@ -887,6 +953,7 @@ const handleFaceAuthTokenFromUrl = () => {
         localStorage.setItem('authToken', token);
         // Store login date for midnight force-logout guard (IST)
         { const _io = 5.5*60*60*1000; localStorage.setItem('login_date', new Date(Date.now()+(new Date().getTimezoneOffset()*60000)+_io).toISOString().slice(0,10)); }
+        localStorage.setItem(AUTH_SESSION_STARTED_AT_KEY, new Date().toISOString());
         localStorage.removeItem('pending_user');
       }
       
@@ -901,33 +968,43 @@ const handleFaceAuthTokenFromUrl = () => {
 };
 
 // ── Force Logout at Midnight IST ──────────────────────────────
-const forceLogoutNow = (reason) => {
+const forceLogoutNow = (reason, eventType = 'logout') => {
   console.warn(`[AUTH] Force logout: ${reason}`);
+  reportAuthEvent(eventType, reason);
   try { localStorage.removeItem('auth'); } catch {}
   try { localStorage.removeItem('role'); } catch {}
   try { localStorage.removeItem('authToken'); } catch {}
   try { localStorage.removeItem('face_auth_token'); } catch {}
   try { localStorage.removeItem('auth_version'); } catch {}
   try { localStorage.removeItem('login_date'); } catch {}
+  try { localStorage.removeItem(AUTH_SESSION_STARTED_AT_KEY); } catch {}
+  stopAuthPolicyPolling();
   state.authenticated = false;
   state.user = { name: 'Guest', initials: 'GU', id: '' };
   window.location.href = '/login.html';
 };
 
-let _midnightLogoutTimer = null;
-const scheduleMidnightLogout = () => {
-  if (_midnightLogoutTimer) clearTimeout(_midnightLogoutTimer);
-  // Calculate ms until next 00:00:00 IST
-  const now = new Date();
-  const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
-  const nowIST = new Date(now.getTime() + (now.getTimezoneOffset() * 60000) + IST_OFFSET_MS);
-  const tomorrowMidnightIST = new Date(nowIST);
-  tomorrowMidnightIST.setHours(24, 0, 0, 0);
-  const msUntilMidnight = tomorrowMidnightIST.getTime() - nowIST.getTime();
-  console.log(`[AUTH] Midnight logout scheduled in ${Math.round(msUntilMidnight / 1000)}s (${Math.round(msUntilMidnight / 60000)}m)`);
-  _midnightLogoutTimer = setTimeout(() => {
-    forceLogoutNow('Midnight IST session expiry');
-  }, msUntilMidnight);
+const checkForceLogoutPolicyOnce = async () => {
+  try {
+    if (!state.authenticated) return;
+    const user = getCurrentAuthUser() || {};
+    const employeeId = String(user.employee_id || user.id || '').trim().toUpperCase();
+    const sessionStartedAt = ensureAuthSessionStartedAt();
+    const policy = await fetchAuthSessionPolicy(employeeId);
+    const globalTs = policy?.global_force_logout_at;
+    const targetTs = policy?.target_force_logout_at;
+    if (isPolicyNewerThanSession(globalTs, sessionStartedAt) || isPolicyNewerThanSession(targetTs, sessionStartedAt)) {
+      forceLogoutNow('Admin force logout policy applied', 'force_logout');
+    }
+  } catch {
+  }
+};
+
+const startAuthPolicyPolling = () => {
+  stopAuthPolicyPolling();
+  authPolicyPollTimer = setInterval(() => {
+    checkForceLogoutPolicyOnce();
+  }, 30000);
 };
 
 const getTodayIST = () => {
@@ -988,39 +1065,21 @@ const init = async () => {
         try {
           localStorage.setItem('role', role);
         } catch {}
-        // If saved id looks like an email or not canonical, try to resolve employee_id once
-        const idStr = String(state.user.id || '');
-        const looksEmail = idStr.includes('@');
-        const notEmp = !idStr.toUpperCase().startsWith('EMP');
-        if (looksEmail || notEmp) {
-          try {
-            const all = await listEmployees(1, 5000);
-            const emailToMatch = (state.user.email || (looksEmail ? idStr : '')).toLowerCase();
-            if (emailToMatch) {
-              const match = (all.items || []).find(e => (e.email || '').toLowerCase() === emailToMatch);
-              if (match && match.employee_id) {
-                const previousId = state.user.id;
-                state.user.id = match.employee_id;
-                migrateTimerStateKey(previousId, state.user.id);
-                // hydrate avatar from employee directory (crc6f_profilepicture)
-                if (match.photo) state.user.avatarUrl = match.photo;
-                try { localStorage.setItem('auth', JSON.stringify({ authenticated: true, user: state.user })); } catch { }
-                // reflect in header immediately
-                updateHeaderAvatar();
-              }
-            }
-          } catch { }
-        }
       }
     }
     if (state.authenticated) {
       await syncAccessLevelFromServer();
     }
-  } catch { }
+  } catch {}
+
   if (!state.authenticated) {
     window.location.href = '/login.html';
     return;
   }
+
+  ensureAuthSessionStartedAt();
+  checkForceLogoutPolicyOnce();
+  startAuthPolicyPolling();
 
   // Schedule automatic logout at midnight IST
   scheduleMidnightLogout();
@@ -1078,12 +1137,7 @@ const init = async () => {
     if (target.closest("#timer-btn")) handleTimerClick();
     // Explicit logout option
     if (target.closest("#logout-btn")) {
-      try {
-        localStorage.removeItem("auth");
-      } catch { }
-      state.authenticated = false;
-      state.user = { name: "Guest", initials: "GU", id: "" };
-      window.location.href = "/login.html";
+      forceLogoutNow('User clicked logout', 'logout');
       return;
     }
     // Open profile panel (handle before toggling dropdown to avoid early return)

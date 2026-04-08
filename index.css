@@ -8708,13 +8708,9 @@ body.dark-theme .onboarding-main-stepper .stepper-item.completed .stepper-label-
   display: flex;
   gap: 18px;
   overflow-x: auto;
-  /* <-- FIX horizontal movement */
   padding-bottom: 10px;
   scrollbar-width: thin;
-  overflow-y: visible !important;
-  height: auto !important;
-  padding-bottom: 250px !important;
-  /* allows down-drag scrolling */
+  overflow-y: hidden;
 }
 
 .kan-col {
@@ -8723,12 +8719,8 @@ body.dark-theme .onboarding-main-stepper .stepper-item.completed .stepper-label-
   border-radius: 12px;
   padding: 10px;
   border: none;
-  height: auto !important;
-  overflow: visible !important;
-  /* max-height: 75vh;
-  overflow-y: auto;
-  scroll-behavior: smooth;
-*/
+  height: auto;
+  overflow: hidden;
 }
 
 .kan-list {
@@ -8736,9 +8728,9 @@ body.dark-theme .onboarding-main-stepper .stepper-item.completed .stepper-label-
   /* ensures a drop zone even if empty */
   padding: 8px;
   border-radius: 6px;
-  height: auto !important;
-  max-height: none !important;
-  overflow: visible !important;
+  height: auto;
+  max-height: none;
+  overflow: hidden;
 }
 
 .kan-card {

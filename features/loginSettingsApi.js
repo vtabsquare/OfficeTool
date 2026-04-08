@@ -68,6 +68,58 @@ export async function fetchLoginEvents(options = {}) {
   return data;
 }
 
+export async function fetchAuthSessionEvents(options = {}) {
+  const params = new URLSearchParams();
+  if (options.employee_id) params.set('employee_id', options.employee_id);
+  if (options.event_type) params.set('event_type', options.event_type);
+  if (options.limit) params.set('limit', String(options.limit));
+  const url = `${BASE_URL}/api/auth-events${params.toString() ? '?' + params.toString() : ''}`;
+  const res = await fetch(url);
+  const data = await res.json();
+  if (!res.ok || !data.success) {
+    throw new Error(data.error || 'Failed to fetch auth session events');
+  }
+  return data;
+}
+
+export async function createAuthSessionEvent(payload) {
+  const res = await fetch(`${BASE_URL}/api/auth-events`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload || {}),
+  });
+  const data = await res.json();
+  if (!res.ok || !data.success) {
+    throw new Error(data.error || 'Failed to create auth event');
+  }
+  return data;
+}
+
+export async function fetchAuthSessionPolicy(employee_id = '') {
+  const params = new URLSearchParams();
+  if (employee_id) params.set('employee_id', employee_id);
+  const url = `${BASE_URL}/api/auth/session-policy${params.toString() ? '?' + params.toString() : ''}`;
+  const res = await fetch(url);
+  const data = await res.json();
+  if (!res.ok || !data.success) {
+    throw new Error(data.error || 'Failed to fetch auth session policy');
+  }
+  return data.policy || {};
+}
+
+export async function triggerForceLogout(payload) {
+  const res = await fetch(`${BASE_URL}/api/auth/force-logout`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload || {}),
+  });
+  const data = await res.json();
+  if (!res.ok || !data.success) {
+    throw new Error(data.error || 'Failed to force logout');
+  }
+  return data;
+}
+
 export async function updateLoginActivity(payload) {
   const res = await fetch(`${BASE_URL}/api/login-activity`, {
     method: 'PUT',
