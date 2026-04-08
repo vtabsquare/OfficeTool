@@ -984,6 +984,20 @@ const forceLogoutNow = (reason, eventType = 'logout') => {
   window.location.href = '/login.html';
 };
 
+let _midnightLogoutTimer = null;
+const scheduleMidnightLogout = () => {
+  if (_midnightLogoutTimer) { clearTimeout(_midnightLogoutTimer); _midnightLogoutTimer = null; }
+  const now = new Date();
+  const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+  const nowIST = new Date(now.getTime() + (now.getTimezoneOffset() * 60000) + IST_OFFSET_MS);
+  const midnightIST = new Date(nowIST);
+  midnightIST.setHours(24, 0, 0, 0);
+  const msUntilMidnight = midnightIST.getTime() - nowIST.getTime();
+  _midnightLogoutTimer = setTimeout(() => {
+    forceLogoutNow('Midnight IST session expiry');
+  }, msUntilMidnight);
+};
+
 const checkForceLogoutPolicyOnce = async () => {
   try {
     if (!state.authenticated) return;
