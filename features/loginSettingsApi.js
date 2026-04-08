@@ -99,7 +99,13 @@ export async function fetchAuthSessionPolicy(employee_id = '') {
   const params = new URLSearchParams();
   if (employee_id) params.set('employee_id', employee_id);
   const url = `${BASE_URL}/api/auth/session-policy${params.toString() ? '?' + params.toString() : ''}`;
-  const res = await fetch(url);
+  const headers = {};
+  try {
+    const auth = JSON.parse(localStorage.getItem('auth') || '{}');
+    const token = auth.token || auth.authToken || localStorage.getItem('authToken') || '';
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+  } catch (_) {}
+  const res = await fetch(url, { headers });
   const data = await res.json();
   if (!res.ok || !data.success) {
     throw new Error(data.error || 'Failed to fetch auth session policy');
