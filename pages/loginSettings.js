@@ -404,32 +404,42 @@ const formatAuthEventTime = (value) => {
     return String(value);
 };
 
-const buildAuthSessionsHTML = (events = []) => {
-    if (!events.length) {
-        return `
-            <div class="card" style="margin-top: 24px;">
-                <h3><i class="fa-solid fa-right-to-bracket"></i> Auth Session Activity</h3>
-                <p class="allocation-description">Actual login/logout events (not check-in/check-out).</p>
-                <p class="placeholder-text">No auth session activity recorded yet.</p>
-            </div>
-        `;
-    }
+const buildAuthSessionsHTML = (events = [], accounts = []) => {
+    const activeAccounts = accounts.filter(a => String(a.userStatus || '').toLowerCase() === 'active');
 
-    const rows = events.map((item) => `
-        <tr>
-            <td>${item.employee_id || '-'}</td>
-            <td>${item.employee_name || '-'}</td>
-            <td>${item.username || '-'}</td>
-            <td><span class="status-badge">${formatAuthEventType(item.event_type)}</span></td>
-            <td>${formatAuthEventTime(item.occurred_at_utc)}</td>
-            <td>${item.reason || '-'}</td>
-        </tr>
-    `).join('');
+    const activeRows = activeAccounts.length
+        ? activeAccounts.map((acc) => `
+            <tr>
+                <td>${acc.username || '-'}</td>
+                <td>${acc.employeeName || '-'}</td>
+                <td>${formatAccessLevelLabel(acc.accessLevel)}</td>
+                <td>${formatLastLogin(acc.lastLogin)}</td>
+                <td><span class="status-badge active">ACTIVE</span></td>
+                <td>
+                    <button class="btn btn-outline session-force-logout-btn" data-id="${acc.id}" data-username="${acc.username || ''}" data-employee-name="${acc.employeeName || ''}" data-employee-id="${acc.userId || ''}" style="border-color:#dc2626; color:#dc2626; padding:4px 10px; font-size:12px;">
+                        <i class="fa-solid fa-power-off"></i> Force Logout
+                    </button>
+                </td>
+            </tr>
+        `).join('')
+        : '<tr><td colspan="6" class="placeholder-text">No active users found.</td></tr>';
+
+    const eventRows = events.length
+        ? events.map((item) => `
+            <tr>
+                <td>${item.employee_name || '-'}</td>
+                <td>${item.username || '-'}</td>
+                <td><span class="status-badge">${formatAuthEventType(item.event_type)}</span></td>
+                <td>${formatAuthEventTime(item.occurred_at_utc)}</td>
+                <td>${item.reason || '-'}</td>
+            </tr>
+        `).join('')
+        : '<tr><td colspan="5" class="placeholder-text">No auth session events recorded yet.</td></tr>';
 
     return `
         <div class="card" style="margin-top: 24px;">
-            <h3><i class="fa-solid fa-right-to-bracket"></i> Auth Session Activity</h3>
-            <p class="allocation-description">Actual login/logout events (not check-in/check-out).</p>
+            <h3><i class="fa-solid fa-users"></i> Currently Logged-In Users</h3>
+            <p class="allocation-description">Users with active login accounts. Force logout will end their session on next check.</p>
             <div style="display:flex; gap:10px; margin-bottom:12px;">
                 <button id="force-logout-all-btn" class="btn btn-outline" style="border-color:#dc2626; color:#dc2626;">
                     <i class="fa-solid fa-power-off"></i> Force Logout All Users
@@ -439,7 +449,27 @@ const buildAuthSessionsHTML = (events = []) => {
                 <table class="table">
                     <thead>
                         <tr>
-                            <th>Employee ID</th>
+                            <th>Username</th>
+                            <th>Employee Name</th>
+                            <th>Access Level</th>
+                            <th>Last Login</th>
+                            <th>Status</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${activeRows}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        <div class="card" style="margin-top: 16px;">
+            <h3><i class="fa-solid fa-right-to-bracket"></i> Auth Session Log</h3>
+            <p class="allocation-description">Historical login/logout events (not check-in/check-out).</p>
+            <div class="table-container login-settings-table">
+                <table class="table">
+                    <thead>
+                        <tr>
                             <th>Name</th>
                             <th>Username</th>
                             <th>Event</th>
@@ -448,7 +478,7 @@ const buildAuthSessionsHTML = (events = []) => {
                         </tr>
                     </thead>
                     <tbody>
-                        ${rows}
+                        ${eventRows}
                     </tbody>
                 </table>
             </div>
@@ -514,7 +544,7 @@ const getLoginSettingsContentHTML = (view, accounts = [], dailySummary = [], aut
         return buildLoginActivityHTML(dailySummary);
     }
     if (view === 'sessions') {
-        return buildAuthSessionsHTML(authEvents);
+        return buildAuthSessionsHTML(authEvents, accounts);
     }
     return buildTableHTML(accounts);
 };
@@ -595,6 +625,37 @@ const refreshLoginSettingsContent = () => {
                 alert(err.message || 'Failed to force logout all users');
             }
         };
+    }
+
+    if (currentLoginSettingsView === 'sessions') {
+        const sessionLogoutBtns = document.querySelectorAll('.session-force-logout-btn');
+        sessionLogoutBtns.forEach((btn) => {
+            btn.addEventListener('click', async () => {
+                const employeeId = String(btn.getAttribute('data-employee-id') || '').trim().toUpperCase();
+                const username = btn.getAttribute('data-username') || '';
+                const employeeName = btn.getAttribute('data-employee-name') || '';
+                if (!employeeId) {
+                    alert('Employee ID missing for this user.');
+                    return;
+                }
+                if (!confirm(`Force logout ${username || employeeName || employeeId}?`)) return;
+                try {
+                    await triggerForceLogout({
+                        employee_id: employeeId,
+                        username: username,
+                        employee_name: employeeName,
+                        requested_by: state.user?.email || state.user?.id || 'admin',
+                        reason: 'Admin forced logout',
+                    });
+                    alert(`Force logout triggered for ${username || employeeName || employeeId}`);
+                    const authData = await fetchAuthSessionEvents({ limit: 200 }).catch(() => ({ items: [] }));
+                    cachedAuthSessionEvents = authData.items || [];
+                    refreshLoginSettingsContent();
+                } catch (err) {
+                    alert(err.message || 'Failed to force logout user');
+                }
+            });
+        });
     }
 };
 

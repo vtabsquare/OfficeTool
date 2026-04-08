@@ -1058,6 +1058,10 @@ def admin_active_tasks_snapshot():
         if not _resolve_admin_access(headers):
             return jsonify({"success": False, "error": "Admin access required", "items": []}), 403
 
+        MAX_ACTIVE_HOURS = 16
+        stale_cutoff = now_utc - timedelta(hours=MAX_ACTIVE_HOURS)
+        stale_stopped = False
+
         latest_by_user = {}
         for rec in entries:
             if rec.get("end"):
@@ -1074,6 +1078,14 @@ def admin_active_tasks_snapshot():
             except Exception:
                 start_dt = now_utc
 
+            if getattr(start_dt, "tzinfo", None) is None:
+                start_dt = start_dt.replace(tzinfo=timezone.utc)
+
+            if start_dt < stale_cutoff:
+                rec["end"] = now_utc.isoformat()
+                stale_stopped = True
+                continue
+
             existing = latest_by_user.get(user_id)
             if (not existing) or (start_dt > existing["_start_dt"]):
                 latest_by_user[user_id] = {
@@ -1082,6 +1094,9 @@ def admin_active_tasks_snapshot():
                     "start": start_raw,
                     "_start_dt": start_dt,
                 }
+
+        if stale_stopped:
+            _write_entries(entries)
 
         active_rows = list(latest_by_user.values())
         if not active_rows:
