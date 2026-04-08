@@ -266,6 +266,8 @@ const syncAccessLevelFromServer = async () => {
 
 if (typeof window !== 'undefined' && typeof window.fetch === 'function') {
   const originalFetch = window.fetch.bind(window);
+  const _apiBase = String(CONFIG_API_BASE_URL).replace(/\/$/, '');
+
   window.fetch = (input, init) => {
     try {
       let urlString = null;
@@ -287,16 +289,33 @@ if (typeof window !== 'undefined' && typeof window.fetch === 'function') {
       }
 
       if (urlString && (urlString.startsWith('http://localhost:5000') || urlString.startsWith('http://127.0.0.1:5000'))) {
-        const normalizedBase = String(CONFIG_API_BASE_URL).replace(/\/$/, '');
         const path = urlString.replace(/^https?:\/\/(localhost|127\.0\.0\.1):5000/, '');
-        const resolved = normalizedBase + path;
+        const resolved = _apiBase + path;
 
         if (isStringInput) {
           input = resolved;
+          urlString = resolved;
         } else if (isURLInput) {
           input.href = resolved;
+          urlString = resolved;
         } else if (isRequestInput && typeof Request !== 'undefined') {
           input = new Request(resolved, input);
+          urlString = resolved;
+        }
+      }
+
+      // Auto-inject Authorization header for all backend API calls
+      if (urlString && (urlString.startsWith(_apiBase) || urlString.startsWith('/api'))) {
+        const existingHeaders = (init && init.headers) || {};
+        const hasAuth = existingHeaders['Authorization'] || existingHeaders['authorization'];
+        if (!hasAuth) {
+          try {
+            const tk = localStorage.getItem('authToken') || '';
+            if (tk) {
+              init = Object.assign({}, init || {});
+              init.headers = Object.assign({}, existingHeaders, { 'Authorization': 'Bearer ' + tk });
+            }
+          } catch (_) {}
         }
       }
     } catch (e) {
