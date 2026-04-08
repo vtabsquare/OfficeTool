@@ -86,13 +86,19 @@ def _check_force_logout_policy():
         decoded = decode_token(token_str)
         if not decoded:
             return
+        user_email = str(decoded.get("email") or "").strip().lower()
         emp_id = str(decoded.get("employee_id") or "").strip().upper()
-        if not emp_id:
+        if not user_email and not emp_id:
             return
         policy = _get_auth_session_policy()
         global_ts = policy.get("global_force_logout_at")
-        target_map = policy.get("target_force_logout_at") or {}
-        target_ts = target_map.get(emp_id)
+        target_by_email = policy.get("target_force_logout_by_email") or {}
+        target_by_id = policy.get("target_force_logout_at") or {}
+        target_ts = None
+        if user_email:
+            target_ts = target_by_email.get(user_email)
+        if not target_ts and emp_id:
+            target_ts = target_by_id.get(emp_id)
         iat = decoded.get("iat")
         if isinstance(iat, (int, float)):
             session_ts = datetime.fromtimestamp(iat, tz=timezone.utc).isoformat()
@@ -118,8 +124,10 @@ def _check_force_logout_policy():
             except Exception:
                 pass
         if forced:
+            print(f"[FORCE-LOGOUT] Blocking request for {user_email or emp_id} on {path}")
             return jsonify({"success": False, "error": "force_logout", "message": "Your session has been terminated by an administrator."}), 401
-    except Exception:
+    except Exception as flx:
+        print(f"[FORCE-LOGOUT] Middleware error: {flx}")
         pass
 
 @app.before_request
@@ -935,6 +943,7 @@ def _get_auth_session_policy():
     policy = {
         "global_force_logout_at": raw.get("global_force_logout_at"),
         "target_force_logout_at": raw.get("target_force_logout_at") if isinstance(raw.get("target_force_logout_at"), dict) else {},
+        "target_force_logout_by_email": raw.get("target_force_logout_by_email") if isinstance(raw.get("target_force_logout_by_email"), dict) else {},
         "updated_at": raw.get("updated_at"),
         "updated_by": raw.get("updated_by"),
     }
@@ -945,6 +954,7 @@ def _save_auth_session_policy(policy):
     safe_policy = {
         "global_force_logout_at": policy.get("global_force_logout_at"),
         "target_force_logout_at": policy.get("target_force_logout_at") if isinstance(policy.get("target_force_logout_at"), dict) else {},
+        "target_force_logout_by_email": policy.get("target_force_logout_by_email") if isinstance(policy.get("target_force_logout_by_email"), dict) else {},
         "updated_at": policy.get("updated_at"),
         "updated_by": policy.get("updated_by"),
     }
@@ -15609,19 +15619,27 @@ def trigger_force_logout():
     try:
         data = request.get_json(force=True) or {}
         employee_id = (data.get("employee_id") or "").strip().upper()
+        username = (data.get("username") or "").strip().lower()
         reason = (data.get("reason") or "").strip() or "Admin force logout"
         actor = (data.get("requested_by") or "").strip() or "admin"
 
         now_iso = datetime.now(timezone.utc).isoformat()
         policy = _get_auth_session_policy()
-        target_map = policy.get("target_force_logout_at") if isinstance(policy.get("target_force_logout_at"), dict) else {}
+        target_by_id = policy.get("target_force_logout_at") if isinstance(policy.get("target_force_logout_at"), dict) else {}
+        target_by_email = policy.get("target_force_logout_by_email") if isinstance(policy.get("target_force_logout_by_email"), dict) else {}
 
-        if employee_id:
-            target_map[employee_id] = now_iso
+        if employee_id or username:
+            if employee_id:
+                target_by_id[employee_id] = now_iso
+            if username:
+                target_by_email[username] = now_iso
+            print(f"[FORCE-LOGOUT] Target: emp_id={employee_id}, username={username}")
         else:
             policy["global_force_logout_at"] = now_iso
+            print(f"[FORCE-LOGOUT] Global force-logout triggered")
 
-        policy["target_force_logout_at"] = target_map
+        policy["target_force_logout_at"] = target_by_id
+        policy["target_force_logout_by_email"] = target_by_email
         policy["updated_at"] = now_iso
         policy["updated_by"] = actor
 
@@ -15633,7 +15651,7 @@ def trigger_force_logout():
                 "force_logout",
                 req=request,
                 employee_id=employee_id,
-                username=data.get("username"),
+                username=username,
                 employee_name=data.get("employee_name"),
                 reason=reason,
                 source="admin",
@@ -15643,7 +15661,7 @@ def trigger_force_logout():
 
         return jsonify({
             "success": True,
-            "forced": "all" if not employee_id else employee_id,
+            "forced": "all" if (not employee_id and not username) else (username or employee_id),
             "forced_at": now_iso,
             "reason": reason,
         })

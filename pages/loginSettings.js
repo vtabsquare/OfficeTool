@@ -632,10 +632,10 @@ const refreshLoginSettingsContent = () => {
         sessionLogoutBtns.forEach((btn) => {
             btn.addEventListener('click', async () => {
                 const employeeId = String(btn.getAttribute('data-employee-id') || '').trim().toUpperCase();
-                const username = btn.getAttribute('data-username') || '';
+                const username = (btn.getAttribute('data-username') || '').trim();
                 const employeeName = btn.getAttribute('data-employee-name') || '';
-                if (!employeeId) {
-                    alert('Employee ID missing for this user.');
+                if (!employeeId && !username) {
+                    alert('Employee ID and username both missing for this user.');
                     return;
                 }
                 if (!confirm(`Force logout ${username || employeeName || employeeId}?`)) return;
