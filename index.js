@@ -302,7 +302,17 @@ if (typeof window !== 'undefined' && typeof window.fetch === 'function') {
     } catch (e) {
       // ignore rewrite errors and fall back to original fetch
     }
-    return originalFetch(input, init);
+    return originalFetch(input, init).then((response) => {
+      if (response.status === 401) {
+        const cloned = response.clone();
+        cloned.json().then((body) => {
+          if (body && body.error === 'force_logout') {
+            forceLogoutNow('Session terminated by administrator', 'force_logout');
+          }
+        }).catch(() => {});
+      }
+      return response;
+    });
   };
 
   try {

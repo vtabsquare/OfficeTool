@@ -63,6 +63,65 @@ def add_cors_headers(response):
 # ── Performance logging middleware ──────────────────────────────────
 import time as _time
 
+_FORCE_LOGOUT_SKIP_PATHS = {
+    "/api/login", "/api/auth/face-verified", "/api/auth/session-policy",
+    "/api/auth/force-logout", "/api/auth-events", "/api/password-reset",
+    "/api/password-reset/verify", "/api/password-reset/change",
+}
+
+@app.before_request
+def _check_force_logout_policy():
+    if request.method == "OPTIONS":
+        return
+    path = request.path.rstrip("/")
+    if path in _FORCE_LOGOUT_SKIP_PATHS or not path.startswith("/api"):
+        return
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        return
+    token_str = auth_header[7:].strip()
+    if not token_str:
+        return
+    try:
+        decoded = decode_token(token_str)
+        if not decoded:
+            return
+        emp_id = str(decoded.get("employee_id") or "").strip().upper()
+        if not emp_id:
+            return
+        policy = _get_auth_session_policy()
+        global_ts = policy.get("global_force_logout_at")
+        target_map = policy.get("target_force_logout_at") or {}
+        target_ts = target_map.get(emp_id)
+        iat = decoded.get("iat")
+        if isinstance(iat, (int, float)):
+            session_ts = datetime.fromtimestamp(iat, tz=timezone.utc).isoformat()
+        else:
+            session_ts = None
+        if not session_ts:
+            return
+        def _parse_iso(s):
+            s = str(s).replace("Z", "+00:00")
+            return datetime.fromisoformat(s)
+        session_dt = _parse_iso(session_ts)
+        forced = False
+        if global_ts:
+            try:
+                if _parse_iso(global_ts) > session_dt:
+                    forced = True
+            except Exception:
+                pass
+        if not forced and target_ts:
+            try:
+                if _parse_iso(target_ts) > session_dt:
+                    forced = True
+            except Exception:
+                pass
+        if forced:
+            return jsonify({"success": False, "error": "force_logout", "message": "Your session has been terminated by an administrator."}), 401
+    except Exception:
+        pass
+
 @app.before_request
 def _perf_start():
     request._perf_start = _time.monotonic()
@@ -15448,12 +15507,20 @@ def get_login_events():
             dates.append(cur.isoformat())
             cur = cur + timedelta(days=1)
 
+        emp_name_cache = {}
+        for eid in employee_ids:
+            try:
+                emp_name_cache[eid] = get_employee_name(eid) or eid
+            except Exception:
+                emp_name_cache[eid] = eid
+
         daily_summary = []
         for dt in dates:
             for emp_id in employee_ids:
                 rec = record_map.get(f"{emp_id}|{dt}") or {}
                 daily_summary.append({
                     "employee_id": emp_id,
+                    "employee_name": emp_name_cache.get(emp_id, emp_id),
                     "date": dt,
                     "check_in_time": rec.get(LA_FIELD_CHECKIN_TIME),
                     "check_in_location": rec.get(LA_FIELD_CHECKIN_LOCATION),
